@@ -432,6 +432,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#SPTnano.uniqueID_microns_and_seconds" class="md-nav__link">
+    <span class="md-ellipsis">
+      uniqueID_microns_and_seconds
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#SPTnano.helper_scripts" class="md-nav__link">
+    <span class="md-ellipsis">
+      helper_scripts
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="helper_scripts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#SPTnano.helper_scripts.uniqueID_microns_and_seconds" class="md-nav__link">
+    <span class="md-ellipsis">
+      uniqueID_microns_and_seconds
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#SPTnano.visualization" class="md-nav__link">
     <span class="md-ellipsis">
       visualization
@@ -681,6 +714,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#SPTnano.uniqueID_microns_and_seconds" class="md-nav__link">
+    <span class="md-ellipsis">
+      uniqueID_microns_and_seconds
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#SPTnano.helper_scripts" class="md-nav__link">
+    <span class="md-ellipsis">
+      helper_scripts
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="helper_scripts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#SPTnano.helper_scripts.uniqueID_microns_and_seconds" class="md-nav__link">
+    <span class="md-ellipsis">
+      uniqueID_microns_and_seconds
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#SPTnano.visualization" class="md-nav__link">
     <span class="md-ellipsis">
       visualization
@@ -856,11 +922,7 @@ cmap : colormap, optional
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/visualization.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">226</span>
-<span class="normal">227</span>
-<span class="normal">228</span>
-<span class="normal">229</span>
-<span class="normal">230</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">230</span>
 <span class="normal">231</span>
 <span class="normal">232</span>
 <span class="normal">233</span>
@@ -910,7 +972,11 @@ cmap : colormap, optional
 <span class="normal">277</span>
 <span class="normal">278</span>
 <span class="normal">279</span>
-<span class="normal">280</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">batch_plot_trajectories</span><span class="p">(</span><span class="n">master_folder</span><span class="p">,</span> <span class="n">traj_df</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">colorby</span><span class="o">=</span><span class="s1">&#39;particle&#39;</span><span class="p">,</span> <span class="n">mpp</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="normal">280</span>
+<span class="normal">281</span>
+<span class="normal">282</span>
+<span class="normal">283</span>
+<span class="normal">284</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">batch_plot_trajectories</span><span class="p">(</span><span class="n">master_folder</span><span class="p">,</span> <span class="n">traj_df</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">colorby</span><span class="o">=</span><span class="s1">&#39;particle&#39;</span><span class="p">,</span> <span class="n">mpp</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Batch plot trajectories for all replicates across several conditions.</span>
 
@@ -1087,7 +1153,7 @@ cmap : colormap, optional
 
 
 <h2 id="SPTnano.plot_histograms" class="doc doc-heading">
-            <code class="highlight language-python"><span class="n">plot_histograms</span><span class="p">(</span><span class="n">traj_df</span><span class="p">,</span> <span class="n">framerate</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span></code>
+            <code class="highlight language-python"><span class="n">plot_histograms</span><span class="p">(</span><span class="n">traj_df</span><span class="p">,</span> <span class="n">framerate</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">coltoseparate</span><span class="o">=</span><span class="s1">&#39;tracker&#39;</span><span class="p">,</span> <span class="n">xlimit</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
 
 </h2>
 
@@ -1105,8 +1171,7 @@ bins : int, optional
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/visualization.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 71</span>
-<span class="normal"> 72</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 72</span>
 <span class="normal"> 73</span>
 <span class="normal"> 74</span>
 <span class="normal"> 75</span>
@@ -1149,7 +1214,11 @@ bins : int, optional
 <span class="normal">112</span>
 <span class="normal">113</span>
 <span class="normal">114</span>
-<span class="normal">115</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">plot_histograms</span><span class="p">(</span><span class="n">traj_df</span><span class="p">,</span> <span class="n">framerate</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="mi">100</span><span class="p">):</span>
+<span class="normal">115</span>
+<span class="normal">116</span>
+<span class="normal">117</span>
+<span class="normal">118</span>
+<span class="normal">119</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">plot_histograms</span><span class="p">(</span><span class="n">traj_df</span><span class="p">,</span> <span class="n">framerate</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">coltoseparate</span> <span class="o">=</span> <span class="s1">&#39;tracker&#39;</span><span class="p">,</span> <span class="n">xlimit</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Plot histograms of track lengths in seconds for each tracker, with consistent binning.</span>
 
@@ -1170,8 +1239,8 @@ bins : int, optional
     <span class="n">max_track_length</span> <span class="o">=</span> <span class="n">traj_df</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">value_counts</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">*</span> <span class="n">framerate</span>
     <span class="n">bin_edges</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">max_track_length</span><span class="p">,</span> <span class="n">bins</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
 
-    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">tracker</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">traj_df</span><span class="p">[</span><span class="s1">&#39;tracker&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()):</span>
-        <span class="n">subset</span> <span class="o">=</span> <span class="n">traj_df</span><span class="p">[</span><span class="n">traj_df</span><span class="p">[</span><span class="s1">&#39;tracker&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">tracker</span><span class="p">]</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">tracker</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">traj_df</span><span class="p">[</span><span class="n">coltoseparate</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()):</span>
+        <span class="n">subset</span> <span class="o">=</span> <span class="n">traj_df</span><span class="p">[</span><span class="n">traj_df</span><span class="p">[</span><span class="n">coltoseparate</span><span class="p">]</span> <span class="o">==</span> <span class="n">tracker</span><span class="p">]</span>
         <span class="n">subsetvalues</span> <span class="o">=</span> <span class="n">subset</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">value_counts</span><span class="p">()</span>
         <span class="n">subsetvalues_seconds</span> <span class="o">=</span> <span class="n">subsetvalues</span> <span class="o">*</span> <span class="n">framerate</span>
 
@@ -1186,13 +1255,16 @@ bins : int, optional
         <span class="n">subset_median</span> <span class="o">=</span> <span class="n">subsetvalues_seconds</span><span class="o">.</span><span class="n">median</span><span class="p">()</span>
         <span class="n">subset_number_of_tracks</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">subset</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">())</span>
         <span class="n">shift</span> <span class="o">=</span> <span class="n">i</span> <span class="o">*</span> <span class="mf">0.05</span>
-        <span class="n">plt</span><span class="o">.</span><span class="n">text</span><span class="p">(</span><span class="mf">0.55</span><span class="p">,</span> <span class="mf">0.8</span> <span class="o">-</span> <span class="n">shift</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">tracker</span><span class="si">}</span><span class="s2">: mean: </span><span class="si">{</span><span class="n">subset_mean</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> seconds from </span><span class="si">{</span><span class="n">subset_number_of_tracks</span><span class="si">}</span><span class="s2"> tracks&quot;</span><span class="p">,</span> <span class="n">transform</span><span class="o">=</span><span class="n">plt</span><span class="o">.</span><span class="n">gca</span><span class="p">()</span><span class="o">.</span><span class="n">transAxes</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">10</span> <span class="o">*</span> <span class="n">multiplier</span><span class="p">)</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">text</span><span class="p">(</span><span class="mf">0.4</span><span class="p">,</span> <span class="mf">0.6</span> <span class="o">-</span> <span class="n">shift</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">tracker</span><span class="si">}</span><span class="s2">: mean: </span><span class="si">{</span><span class="n">subset_mean</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> seconds from </span><span class="si">{</span><span class="n">subset_number_of_tracks</span><span class="si">}</span><span class="s2"> tracks&quot;</span><span class="p">,</span> <span class="n">transform</span><span class="o">=</span><span class="n">plt</span><span class="o">.</span><span class="n">gca</span><span class="p">()</span><span class="o">.</span><span class="n">transAxes</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">10</span> <span class="o">*</span> <span class="n">multiplier</span><span class="p">)</span>
 
     <span class="n">plt</span><span class="o">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s1">&#39;Track length (seconds)&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">size</span> <span class="o">*</span> <span class="n">multiplier</span><span class="p">)</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s1">&#39;Percentage&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">size</span> <span class="o">*</span> <span class="n">multiplier</span><span class="p">)</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">size</span> <span class="o">*</span> <span class="n">multiplier</span><span class="p">)</span>
     <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">gca</span><span class="p">()</span>
-    <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">max_track_length</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">xlimit</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">xlimit</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">max_track_length</span><span class="p">)</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 </code></pre></div></td></tr></table></div>
             </details>
@@ -1238,11 +1310,7 @@ plot_style : dictionary
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/visualization.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">129</span>
-<span class="normal">130</span>
-<span class="normal">131</span>
-<span class="normal">132</span>
-<span class="normal">133</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">133</span>
 <span class="normal">134</span>
 <span class="normal">135</span>
 <span class="normal">136</span>
@@ -1333,7 +1401,11 @@ plot_style : dictionary
 <span class="normal">221</span>
 <span class="normal">222</span>
 <span class="normal">223</span>
-<span class="normal">224</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">plot_trajectory</span><span class="p">(</span><span class="n">traj</span><span class="p">,</span> <span class="n">colorby</span><span class="o">=</span><span class="s1">&#39;particle&#39;</span><span class="p">,</span> <span class="n">mpp</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="normal">224</span>
+<span class="normal">225</span>
+<span class="normal">226</span>
+<span class="normal">227</span>
+<span class="normal">228</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">plot_trajectory</span><span class="p">(</span><span class="n">traj</span><span class="p">,</span> <span class="n">colorby</span><span class="o">=</span><span class="s1">&#39;particle&#39;</span><span class="p">,</span> <span class="n">mpp</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
                     <span class="n">superimpose</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">t_column</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
                     <span class="n">pos_columns</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">plot_style</span><span class="o">=</span><span class="p">{},</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
@@ -1435,6 +1507,130 @@ plot_style : dictionary
 
 </div>
 
+<div class="doc doc-object doc-function">
+
+
+<h2 id="SPTnano.uniqueID_microns_and_seconds" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">uniqueID_microns_and_seconds</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">pixelsize_microns</span><span class="p">,</span> <span class="n">time_between_frames</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+      <p>Adds columns to the DataFrame with positions in microns and time in seconds</p>
+
+            <details class="quote">
+              <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">22</span>
+<span class="normal">23</span>
+<span class="normal">24</span>
+<span class="normal">25</span>
+<span class="normal">26</span>
+<span class="normal">27</span>
+<span class="normal">28</span>
+<span class="normal">29</span>
+<span class="normal">30</span>
+<span class="normal">31</span>
+<span class="normal">32</span>
+<span class="normal">33</span>
+<span class="normal">34</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">uniqueID_microns_and_seconds</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">pixelsize_microns</span><span class="p">,</span> <span class="n">time_between_frames</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;Adds columns to the DataFrame with positions in microns and time in seconds&#39;&#39;&#39;</span>
+    <span class="c1"># unique id and file identifier</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;file_id&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Categorical</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s1">&#39;filename&#39;</span><span class="p">])</span><span class="o">.</span><span class="n">codes</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;file_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span> <span class="o">+</span> <span class="s1">&#39;_&#39;</span> <span class="o">+</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;particle&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    <span class="c1">#space transformations</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;x_um&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span> <span class="o">*</span> <span class="n">pixelsize_microns</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;y_um&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span> <span class="o">*</span> <span class="n">pixelsize_microns</span>
+    <span class="c1"># time transformations</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;frame_zeroed&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="s1">&#39;unique_id&#39;</span><span class="p">)[</span><span class="s1">&#39;frame&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span> <span class="o">-</span> <span class="n">x</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;time_s&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;frame&#39;</span><span class="p">]</span> <span class="o">*</span> <span class="n">time_between_frames</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;time_s_zeroed&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="s1">&#39;unique_id&#39;</span><span class="p">)[</span><span class="s1">&#39;time_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span> <span class="o">-</span> <span class="n">x</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">df</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="SPTnano.helper_scripts" class="doc doc-heading">
+            <code>helper_scripts</code>
+
+
+</h2>
+
+    <div class="doc doc-contents ">
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="SPTnano.helper_scripts.uniqueID_microns_and_seconds" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">uniqueID_microns_and_seconds</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">pixelsize_microns</span><span class="p">,</span> <span class="n">time_between_frames</span><span class="p">)</span></code>
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+
+      <p>Adds columns to the DataFrame with positions in microns and time in seconds</p>
+
+            <details class="quote">
+              <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">22</span>
+<span class="normal">23</span>
+<span class="normal">24</span>
+<span class="normal">25</span>
+<span class="normal">26</span>
+<span class="normal">27</span>
+<span class="normal">28</span>
+<span class="normal">29</span>
+<span class="normal">30</span>
+<span class="normal">31</span>
+<span class="normal">32</span>
+<span class="normal">33</span>
+<span class="normal">34</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">uniqueID_microns_and_seconds</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">pixelsize_microns</span><span class="p">,</span> <span class="n">time_between_frames</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;Adds columns to the DataFrame with positions in microns and time in seconds&#39;&#39;&#39;</span>
+    <span class="c1"># unique id and file identifier</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;file_id&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Categorical</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s1">&#39;filename&#39;</span><span class="p">])</span><span class="o">.</span><span class="n">codes</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;file_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span> <span class="o">+</span> <span class="s1">&#39;_&#39;</span> <span class="o">+</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;particle&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    <span class="c1">#space transformations</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;x_um&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span> <span class="o">*</span> <span class="n">pixelsize_microns</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;y_um&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span> <span class="o">*</span> <span class="n">pixelsize_microns</span>
+    <span class="c1"># time transformations</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;frame_zeroed&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="s1">&#39;unique_id&#39;</span><span class="p">)[</span><span class="s1">&#39;frame&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span> <span class="o">-</span> <span class="n">x</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;time_s&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;frame&#39;</span><span class="p">]</span> <span class="o">*</span> <span class="n">time_between_frames</span>
+    <span class="n">df</span><span class="p">[</span><span class="s1">&#39;time_s_zeroed&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="s1">&#39;unique_id&#39;</span><span class="p">)[</span><span class="s1">&#39;time_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span> <span class="o">-</span> <span class="n">x</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">df</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
 
 <div class="doc doc-object doc-module">
 
@@ -1493,11 +1689,7 @@ cmap : colormap, optional
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/visualization.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">226</span>
-<span class="normal">227</span>
-<span class="normal">228</span>
-<span class="normal">229</span>
-<span class="normal">230</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">230</span>
 <span class="normal">231</span>
 <span class="normal">232</span>
 <span class="normal">233</span>
@@ -1547,7 +1739,11 @@ cmap : colormap, optional
 <span class="normal">277</span>
 <span class="normal">278</span>
 <span class="normal">279</span>
-<span class="normal">280</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">batch_plot_trajectories</span><span class="p">(</span><span class="n">master_folder</span><span class="p">,</span> <span class="n">traj_df</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">colorby</span><span class="o">=</span><span class="s1">&#39;particle&#39;</span><span class="p">,</span> <span class="n">mpp</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="normal">280</span>
+<span class="normal">281</span>
+<span class="normal">282</span>
+<span class="normal">283</span>
+<span class="normal">284</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">batch_plot_trajectories</span><span class="p">(</span><span class="n">master_folder</span><span class="p">,</span> <span class="n">traj_df</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">colorby</span><span class="o">=</span><span class="s1">&#39;particle&#39;</span><span class="p">,</span> <span class="n">mpp</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Batch plot trajectories for all replicates across several conditions.</span>
 
@@ -1612,7 +1808,7 @@ cmap : colormap, optional
 
 
 <h3 id="SPTnano.visualization.plot_histograms" class="doc doc-heading">
-            <code class="highlight language-python"><span class="n">plot_histograms</span><span class="p">(</span><span class="n">traj_df</span><span class="p">,</span> <span class="n">framerate</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span></code>
+            <code class="highlight language-python"><span class="n">plot_histograms</span><span class="p">(</span><span class="n">traj_df</span><span class="p">,</span> <span class="n">framerate</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">coltoseparate</span><span class="o">=</span><span class="s1">&#39;tracker&#39;</span><span class="p">,</span> <span class="n">xlimit</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
 
 </h3>
 
@@ -1630,8 +1826,7 @@ bins : int, optional
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/visualization.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 71</span>
-<span class="normal"> 72</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 72</span>
 <span class="normal"> 73</span>
 <span class="normal"> 74</span>
 <span class="normal"> 75</span>
@@ -1674,7 +1869,11 @@ bins : int, optional
 <span class="normal">112</span>
 <span class="normal">113</span>
 <span class="normal">114</span>
-<span class="normal">115</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">plot_histograms</span><span class="p">(</span><span class="n">traj_df</span><span class="p">,</span> <span class="n">framerate</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="mi">100</span><span class="p">):</span>
+<span class="normal">115</span>
+<span class="normal">116</span>
+<span class="normal">117</span>
+<span class="normal">118</span>
+<span class="normal">119</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">plot_histograms</span><span class="p">(</span><span class="n">traj_df</span><span class="p">,</span> <span class="n">framerate</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">coltoseparate</span> <span class="o">=</span> <span class="s1">&#39;tracker&#39;</span><span class="p">,</span> <span class="n">xlimit</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Plot histograms of track lengths in seconds for each tracker, with consistent binning.</span>
 
@@ -1695,8 +1894,8 @@ bins : int, optional
     <span class="n">max_track_length</span> <span class="o">=</span> <span class="n">traj_df</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">value_counts</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">*</span> <span class="n">framerate</span>
     <span class="n">bin_edges</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">max_track_length</span><span class="p">,</span> <span class="n">bins</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
 
-    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">tracker</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">traj_df</span><span class="p">[</span><span class="s1">&#39;tracker&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()):</span>
-        <span class="n">subset</span> <span class="o">=</span> <span class="n">traj_df</span><span class="p">[</span><span class="n">traj_df</span><span class="p">[</span><span class="s1">&#39;tracker&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">tracker</span><span class="p">]</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">tracker</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">traj_df</span><span class="p">[</span><span class="n">coltoseparate</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()):</span>
+        <span class="n">subset</span> <span class="o">=</span> <span class="n">traj_df</span><span class="p">[</span><span class="n">traj_df</span><span class="p">[</span><span class="n">coltoseparate</span><span class="p">]</span> <span class="o">==</span> <span class="n">tracker</span><span class="p">]</span>
         <span class="n">subsetvalues</span> <span class="o">=</span> <span class="n">subset</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">value_counts</span><span class="p">()</span>
         <span class="n">subsetvalues_seconds</span> <span class="o">=</span> <span class="n">subsetvalues</span> <span class="o">*</span> <span class="n">framerate</span>
 
@@ -1711,13 +1910,16 @@ bins : int, optional
         <span class="n">subset_median</span> <span class="o">=</span> <span class="n">subsetvalues_seconds</span><span class="o">.</span><span class="n">median</span><span class="p">()</span>
         <span class="n">subset_number_of_tracks</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">subset</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">())</span>
         <span class="n">shift</span> <span class="o">=</span> <span class="n">i</span> <span class="o">*</span> <span class="mf">0.05</span>
-        <span class="n">plt</span><span class="o">.</span><span class="n">text</span><span class="p">(</span><span class="mf">0.55</span><span class="p">,</span> <span class="mf">0.8</span> <span class="o">-</span> <span class="n">shift</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">tracker</span><span class="si">}</span><span class="s2">: mean: </span><span class="si">{</span><span class="n">subset_mean</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> seconds from </span><span class="si">{</span><span class="n">subset_number_of_tracks</span><span class="si">}</span><span class="s2"> tracks&quot;</span><span class="p">,</span> <span class="n">transform</span><span class="o">=</span><span class="n">plt</span><span class="o">.</span><span class="n">gca</span><span class="p">()</span><span class="o">.</span><span class="n">transAxes</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">10</span> <span class="o">*</span> <span class="n">multiplier</span><span class="p">)</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">text</span><span class="p">(</span><span class="mf">0.4</span><span class="p">,</span> <span class="mf">0.6</span> <span class="o">-</span> <span class="n">shift</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">tracker</span><span class="si">}</span><span class="s2">: mean: </span><span class="si">{</span><span class="n">subset_mean</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> seconds from </span><span class="si">{</span><span class="n">subset_number_of_tracks</span><span class="si">}</span><span class="s2"> tracks&quot;</span><span class="p">,</span> <span class="n">transform</span><span class="o">=</span><span class="n">plt</span><span class="o">.</span><span class="n">gca</span><span class="p">()</span><span class="o">.</span><span class="n">transAxes</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">10</span> <span class="o">*</span> <span class="n">multiplier</span><span class="p">)</span>
 
     <span class="n">plt</span><span class="o">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s1">&#39;Track length (seconds)&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">size</span> <span class="o">*</span> <span class="n">multiplier</span><span class="p">)</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s1">&#39;Percentage&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">size</span> <span class="o">*</span> <span class="n">multiplier</span><span class="p">)</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">size</span> <span class="o">*</span> <span class="n">multiplier</span><span class="p">)</span>
     <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">gca</span><span class="p">()</span>
-    <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">max_track_length</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">xlimit</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">xlimit</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">max_track_length</span><span class="p">)</span>
     <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 </code></pre></div></td></tr></table></div>
             </details>
@@ -1763,11 +1965,7 @@ plot_style : dictionary
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/visualization.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">129</span>
-<span class="normal">130</span>
-<span class="normal">131</span>
-<span class="normal">132</span>
-<span class="normal">133</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">133</span>
 <span class="normal">134</span>
 <span class="normal">135</span>
 <span class="normal">136</span>
@@ -1858,7 +2056,11 @@ plot_style : dictionary
 <span class="normal">221</span>
 <span class="normal">222</span>
 <span class="normal">223</span>
-<span class="normal">224</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">plot_trajectory</span><span class="p">(</span><span class="n">traj</span><span class="p">,</span> <span class="n">colorby</span><span class="o">=</span><span class="s1">&#39;particle&#39;</span><span class="p">,</span> <span class="n">mpp</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="normal">224</span>
+<span class="normal">225</span>
+<span class="normal">226</span>
+<span class="normal">227</span>
+<span class="normal">228</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">plot_trajectory</span><span class="p">(</span><span class="n">traj</span><span class="p">,</span> <span class="n">colorby</span><span class="o">=</span><span class="s1">&#39;particle&#39;</span><span class="p">,</span> <span class="n">mpp</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
                     <span class="n">superimpose</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">ax</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">t_column</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
                     <span class="n">pos_columns</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">plot_style</span><span class="o">=</span><span class="p">{},</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
