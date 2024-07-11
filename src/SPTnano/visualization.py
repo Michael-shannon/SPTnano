@@ -3,6 +3,7 @@ import pims
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
+import seaborn as sns
 
 def overlay_tracks_with_movie(tracks_df, movie_path, colormap=None):
     # Load the raw movie
@@ -68,7 +69,7 @@ def overlay_tracks_with_movie(tracks_df, movie_path, colormap=None):
         plt.close(fig)
 
 
-def plot_histograms(traj_df, framerate=0.1, bins=100):
+def plot_histograms(traj_df, framerate=0.1, bins=100, coltoseparate = 'tracker', xlimit=None):
     """
     Plot histograms of track lengths in seconds for each tracker, with consistent binning.
 
@@ -89,8 +90,8 @@ def plot_histograms(traj_df, framerate=0.1, bins=100):
     max_track_length = traj_df['unique_id'].value_counts().max() * framerate
     bin_edges = np.linspace(0, max_track_length, bins + 1)
     
-    for i, tracker in enumerate(traj_df['tracker'].unique()):
-        subset = traj_df[traj_df['tracker'] == tracker]
+    for i, tracker in enumerate(traj_df[coltoseparate].unique()):
+        subset = traj_df[traj_df[coltoseparate] == tracker]
         subsetvalues = subset['unique_id'].value_counts()
         subsetvalues_seconds = subsetvalues * framerate
         
@@ -105,13 +106,16 @@ def plot_histograms(traj_df, framerate=0.1, bins=100):
         subset_median = subsetvalues_seconds.median()
         subset_number_of_tracks = len(subset['unique_id'].unique())
         shift = i * 0.05
-        plt.text(0.55, 0.8 - shift, f"{tracker}: mean: {subset_mean:.2f} seconds from {subset_number_of_tracks} tracks", transform=plt.gca().transAxes, fontsize=10 * multiplier)
+        plt.text(0.4, 0.6 - shift, f"{tracker}: mean: {subset_mean:.2f} seconds from {subset_number_of_tracks} tracks", transform=plt.gca().transAxes, fontsize=10 * multiplier)
     
     plt.xlabel('Track length (seconds)', fontsize=size * multiplier)
     plt.ylabel('Percentage', fontsize=size * multiplier)
     plt.legend(title='', fontsize=size * multiplier)
     ax = plt.gca()
-    ax.set_xlim(0, max_track_length)
+    if xlimit is not None:
+        ax.set_xlim(0, xlimit)
+    else:
+        ax.set_xlim(0, max_track_length)
     plt.show()
 
 
