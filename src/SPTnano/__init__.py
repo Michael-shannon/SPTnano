@@ -6,6 +6,8 @@ from .batch_roi_selector import ROISelector, process_directory
 
 from .helper_scripts import *
 
+from .features import ParticleMetrics
+
 from .visualization import *
 # from .helper_scripts import generate_file_tree, display_file_tree
 
