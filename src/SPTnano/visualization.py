@@ -10,6 +10,8 @@ import pandas as pd
 import skimage.io as io
 import napari
 import numpy as np
+from scipy.stats import sem
+
 
 
 def overlay_tracks_with_movie(tracks_df, movie_path, colormap=None):
@@ -176,7 +178,112 @@ def plot_histograms_seconds(traj_df, bins=100, coltoseparate='tracker', xlimit=N
     plt.show()
 
 
-def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind'):
+# def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind'):
+#     """
+#     Plot histograms of a specified feature for each category in coltoseparate, with consistent binning.
+
+#     Parameters
+#     ----------
+#     data_df : DataFrame
+#         DataFrame containing track data with the specified feature and optionally a separating column.
+#     feature : str
+#         The feature to plot histograms for.
+#     bins : int, optional
+#         Number of bins for the histogram. Default is 100.
+#     coltoseparate : str, optional
+#         Column to separate the data by. If None, all data will be plotted together. Default is None.
+#     xlimit : float, optional
+#         Upper limit for the x-axis. Default is None.
+#     small_multiples : bool, optional
+#         Whether to plot each category separately as small multiples. Default is False.
+#     """
+#     unique_categories = data_df[separate].unique() if separate else [None]
+#     color_palette = sns.color_palette(palette, len(unique_categories))
+
+#     if small_multiples and separate is not None:
+#         num_categories = len(unique_categories)
+#         fig, axes = plt.subplots(num_categories, 1, figsize=(20, 6 * num_categories), sharex=True)
+        
+#         if num_categories == 1:
+#             axes = [axes]  # To handle the case with only one subplot
+        
+#         for i, category in enumerate(unique_categories):
+#             subset = data_df[data_df[separate] == category]
+#             subsetvalues = subset[feature]
+            
+#             max_value = subsetvalues.max()
+#             bin_edges = np.linspace(0, max_value, bins + 1)
+            
+#             # Plot histogram
+#             sns.histplot(subsetvalues, bins=bin_edges, kde=True, ax=axes[i], stat="percent", color=color_palette[i])
+#             axes[i].set_title(f'{category}', fontsize=14)
+            
+#             mean_value = subsetvalues.mean()
+#             median_value = subsetvalues.median()
+#             number_of_tracks = len(subset['unique_id'].unique())
+#             axes[i].text(0.4, 0.6, f"Mean: {mean_value:.2f}, Median: {median_value:.2f}, Tracks: {number_of_tracks}", transform=axes[i].transAxes, fontsize=10)
+            
+#             if xlimit is not None:
+#                 axes[i].set_xlim(0, xlimit)
+#             else:
+#                 axes[i].set_xlim(0, max_value)
+        
+#         plt.xlabel(f'{feature}', fontsize=12)
+#         plt.tight_layout()
+#         plt.show()
+    
+#     else:
+#         plt.figure(figsize=(20, 12))
+#         size = 10
+#         multiplier = 2
+#         sns.set_context("notebook", rc={"xtick.labelsize": size * multiplier, "ytick.labelsize": size * multiplier})
+        
+#         max_value = data_df[feature].max()
+#         bin_edges = np.linspace(0, max_value, bins + 1)
+        
+#         if separate is None:
+#             subsetvalues = data_df[feature]
+            
+#             # Calculate percentage counts
+#             counts, _ = np.histogram(subsetvalues, bins=bin_edges)
+#             percentage_counts = (counts / counts.sum()) * 100
+            
+#             # Plot histogram
+#             sns.histplot(subsetvalues, bins=bin_edges, kde=True, alpha=0.5, stat="percent", color=color_palette[0])
+            
+#             mean_value = subsetvalues.mean()
+#             median_value = subsetvalues.median()
+#             plt.text(0.4, 0.6, f"Overall: mean: {mean_value:.2f}, median: {median_value:.2f}", transform=plt.gca().transAxes, fontsize=10 * multiplier)
+        
+#         else:
+#             for i, category in enumerate(unique_categories):
+#                 subset = data_df[data_df[separate] == category]
+#                 subsetvalues = subset[feature]
+                
+#                 # Calculate percentage counts
+#                 counts, _ = np.histogram(subsetvalues, bins=bin_edges)
+#                 percentage_counts = (counts / counts.sum()) * 100
+                
+#                 # Plot histogram
+#                 sns.histplot(subsetvalues, bins=bin_edges, kde=True, label=category, alpha=0.5, stat="percent", color=color_palette[i])
+                
+#                 mean_value = subsetvalues.mean()
+#                 median_value = subsetvalues.median()
+#                 number_of_tracks = len(subset['unique_id'].unique())
+#                 shift = i * 0.05
+#                 plt.text(0.4, 0.6 - shift, f"{category}: mean: {mean_value:.2f} from {number_of_tracks} tracks", transform=plt.gca().transAxes, fontsize=10 * multiplier)
+        
+#         plt.xlabel(f'{feature}', fontsize=size * multiplier)
+#         plt.ylabel('Percentage', fontsize=size * multiplier)
+#         plt.legend(title='', fontsize=size * multiplier)
+#         ax = plt.gca()
+#         if xlimit is not None:
+#             ax.set_xlim(0, xlimit)
+#         else:
+#             ax.set_xlim(0, max_value)
+#         plt.show()
+
+def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind', use_kde=False):
     """
     Plot histograms of a specified feature for each category in coltoseparate, with consistent binning.
 
@@ -188,12 +295,14 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
         The feature to plot histograms for.
     bins : int, optional
         Number of bins for the histogram. Default is 100.
-    coltoseparate : str, optional
+    separate : str, optional
         Column to separate the data by. If None, all data will be plotted together. Default is None.
     xlimit : float, optional
         Upper limit for the x-axis. Default is None.
     small_multiples : bool, optional
         Whether to plot each category separately as small multiples. Default is False.
+    use_kde : bool, optional
+        Whether to use KDE plot instead of histogram. Default is False.
     """
     unique_categories = data_df[separate].unique() if separate else [None]
     color_palette = sns.color_palette(palette, len(unique_categories))
@@ -212,8 +321,12 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
             max_value = subsetvalues.max()
             bin_edges = np.linspace(0, max_value, bins + 1)
             
-            # Plot histogram
-            sns.histplot(subsetvalues, bins=bin_edges, kde=True, ax=axes[i], stat="percent", color=color_palette[i])
+            # Plot histogram or KDE
+            if use_kde:
+                sns.kdeplot(subsetvalues, fill=True, ax=axes[i], color=color_palette[i])
+            else:
+                sns.histplot(subsetvalues, bins=bin_edges, kde=True, ax=axes[i], stat="percent", color=color_palette[i])
+            
             axes[i].set_title(f'{category}', fontsize=14)
             
             mean_value = subsetvalues.mean()
@@ -242,12 +355,11 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
         if separate is None:
             subsetvalues = data_df[feature]
             
-            # Calculate percentage counts
-            counts, _ = np.histogram(subsetvalues, bins=bin_edges)
-            percentage_counts = (counts / counts.sum()) * 100
-            
-            # Plot histogram
-            sns.histplot(subsetvalues, bins=bin_edges, kde=True, alpha=0.5, stat="percent", color=color_palette[0])
+            # Plot histogram or KDE
+            if use_kde:
+                sns.kdeplot(subsetvalues, fill=True, alpha=0.5, color=color_palette[0])
+            else:
+                sns.histplot(subsetvalues, bins=bin_edges, kde=True, alpha=0.5, stat="percent", color=color_palette[0])
             
             mean_value = subsetvalues.mean()
             median_value = subsetvalues.median()
@@ -258,12 +370,11 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
                 subset = data_df[data_df[separate] == category]
                 subsetvalues = subset[feature]
                 
-                # Calculate percentage counts
-                counts, _ = np.histogram(subsetvalues, bins=bin_edges)
-                percentage_counts = (counts / counts.sum()) * 100
-                
-                # Plot histogram
-                sns.histplot(subsetvalues, bins=bin_edges, kde=True, label=category, alpha=0.5, stat="percent", color=color_palette[i])
+                # Plot histogram or KDE
+                if use_kde:
+                    sns.kdeplot(subsetvalues, fill=True, label=category, alpha=0.5, color=color_palette[i])
+                else:
+                    sns.histplot(subsetvalues, bins=bin_edges, kde=True, label=category, alpha=0.5, stat="percent", color=color_palette[i])
                 
                 mean_value = subsetvalues.mean()
                 median_value = subsetvalues.median()
@@ -580,3 +691,115 @@ def napari_visualize_image_with_tracks(tracked_filename, tracks_df, master_dir):
     viewer.add_tracks(tracks_new_df, name='Tracks')
 
     napari.run()
+
+
+
+def bootstrap_ci_mean(data, num_samples=1000, alpha=0.05):
+    n = len(data)
+    samples = np.random.choice(data, size=(num_samples, n), replace=True)
+    means = np.mean(samples, axis=1)
+    lower_bound = np.percentile(means, 100 * alpha / 2)
+    upper_bound = np.percentile(means, 100 * (1 - alpha / 2))
+    return upper_bound - lower_bound
+
+### Vectorized bootstrap median
+
+def bootstrap_ci_median(data, num_samples=1000, alpha=0.05):
+    n = len(data)
+    samples = np.random.choice(data, size=(num_samples, n), replace=True)
+    medians = np.median(samples, axis=1)
+    lower_bound = np.percentile(medians, 100 * alpha / 2)
+    upper_bound = np.percentile(medians, 100 * (1 - alpha / 2))
+    return upper_bound - lower_bound
+
+def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_by='condition', palette='colorblind', meanormedian='mean', multiplot=False):
+    """
+    Plot time series of a specified factor, with mean as a thick line and confidence intervals as shaded areas.
+    
+    Parameters
+    ----------
+    data_df : DataFrame
+        DataFrame containing the time series data.
+    factor_col : str, optional
+        The column representing the factor to be plotted on the y-axis. Default is 'speed_um_s'.
+    absolute : bool, optional
+        Whether to use absolute time values or time zeroed values. Default is True.
+    separate_by : str, optional
+        Column to separate the data by, for coloring. If None, all data will be plotted together. Default is None.
+    palette : str, optional
+        Color palette for the plot. Default is 'colorblind'.
+    meanormedian : str, optional
+        Whether to use mean or median for aggregation. Default is 'mean'.
+    multiplot : bool, optional
+        Whether to generate separate small multiple plots for each category. Default is False.
+    """
+    if not absolute:
+        time_col = 'time_s_zeroed'
+        x_label = 'Time zeroed (s)'
+    else:
+        time_col = 'time_s'
+        x_label = 'Time (s)'
+
+    # if not absolute:
+    #     data_df['relative_time'] = data_df[time_col] - data_df[time_col].min()
+    #     time_col = 'relative_time'
+        
+    unique_categories = data_df[separate_by].unique() if separate_by else [None]
+    color_palette = sns.color_palette(palette, len(unique_categories))
+    
+    if multiplot and separate_by:
+        fig, axes = plt.subplots(len(unique_categories), 1, figsize=(10, 5 * len(unique_categories)), sharex=False)
+        sns.set_context("notebook", rc={"lines.linewidth": 2.5})
+        for i, category in enumerate(unique_categories):
+            ax = axes[i] if len(unique_categories) > 1 else axes
+            subset = data_df[data_df[separate_by] == category]
+            times = subset[time_col]
+            factors = subset[factor_col]
+
+            if meanormedian == 'mean':
+                avg_factors = subset.groupby(time_col)[factor_col].mean()
+                ci = subset.groupby(time_col)[factor_col].apply(lambda x: bootstrap_ci_mean(x, num_samples=1000, alpha=0.05))
+            else:
+                avg_factors = subset.groupby(time_col)[factor_col].median()
+                ci = subset.groupby(time_col)[factor_col].apply(lambda x: bootstrap_ci_median(x, num_samples=1000, alpha=0.05))
+
+            color = color_palette[i]
+            label = category
+
+            ax.plot(avg_factors.index, avg_factors.values, label=label, color=color, linewidth=0.5)
+            ax.fill_between(avg_factors.index, avg_factors - ci, avg_factors + ci, color=color, alpha=0.3)
+            ax.set_xlabel(x_label, fontsize=14)
+            ax.set_ylabel(factor_col, fontsize=14)
+            ax.legend(title=separate_by, fontsize=12)
+            ax.set_title(f'Time Series of {factor_col} - {category}', fontsize=16)
+        
+        plt.tight_layout()
+    else:
+        plt.figure(figsize=(20, 12))
+        sns.set_context("notebook", rc={"lines.linewidth": 2.5})
+        
+        for i, category in enumerate(unique_categories):
+            subset = data_df if category is None else data_df[data_df[separate_by] == category]
+            times = subset[time_col]
+            factors = subset[factor_col]
+
+            if meanormedian == 'mean':
+                avg_factors = subset.groupby(time_col)[factor_col].mean()
+                ci = subset.groupby(time_col)[factor_col].apply(lambda x: bootstrap_ci_mean(x, num_samples=1000, alpha=0.05))
+            else:
+                avg_factors = subset.groupby(time_col)[factor_col].median()
+                ci = subset.groupby(time_col)[factor_col].apply(lambda x: bootstrap_ci_median(x, num_samples=1000, alpha=0.05))
+
+            color = color_palette[i]
+            label = 'Overall' if category is None else category
+
+            plt.plot(avg_factors.index, avg_factors.values, label=label, color=color, linewidth=0.5)
+            plt.fill_between(avg_factors.index, avg_factors - ci, avg_factors + ci, color=color, alpha=0.3)
+
+        plt.xlabel(x_label, fontsize=14)
+        plt.ylabel(factor_col, fontsize=14)
+        plt.legend(title=separate_by, fontsize=12)
+        plt.title(f'Time Series of {factor_col}', fontsize=16)
+        plt.tight_layout()
+    
+    plt.show()
