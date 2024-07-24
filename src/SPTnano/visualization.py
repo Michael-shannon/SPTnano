@@ -6,6 +6,12 @@ import matplotlib.colors as mcolors
 import seaborn as sns
 import numpy as np
 
+import pandas as pd
+import skimage.io as io
+import napari
+import numpy as np
+
+
 def overlay_tracks_with_movie(tracks_df, movie_path, colormap=None):
     # Load the raw movie
     frames = pims.open(movie_path)
@@ -522,3 +528,55 @@ def plot_multiple_particles(combined_df, particles_per_condition=2, plot_size=No
     
     plt.tight_layout()
     plt.show()
+
+
+    # Build this into a function
+
+
+
+def load_image(file_path):
+    return io.imread(file_path)
+
+def load_tracks(df, filename):
+    tracks = df[df['filename'] == filename]
+    return tracks
+
+def get_condition_from_filename(df, filename):
+    try:
+        condition = df[df['filename'] == filename]['condition'].iloc[0]
+    except IndexError:
+        print(f"Error: Filename '{filename}' not found in the dataframe.")
+        raise
+    return condition
+
+def napari_visualize_image_with_tracks(tracked_filename, tracks_df, master_dir):
+    # Get the condition from the dataframe based on the tracked filename
+    condition = get_condition_from_filename(tracks_df, tracked_filename)
+    
+    # Construct the full file path by removing '_tracked' and adding '.tif'
+    image_filename = tracked_filename.replace('_tracked', '') + '.tif'
+    image_path = os.path.join(master_dir, condition, image_filename)
+    
+    # Load the image
+    image = load_image(image_path)
+
+    # Load the tracks
+    tracks = load_tracks(tracks_df, tracked_filename)
+
+    print(tracks.columns)
+
+    tracks_new_df = tracks[["particle", "frame", "y", "x"]]
+
+    # Extract x, y, and frame information for the tracks
+    coords = np.array([tracks['x'].values, tracks['y'].values, tracks['frame'].values]).T
+    
+    # Start Napari viewer
+    viewer = napari.Viewer()
+
+    # Add image layer
+    viewer.add_image(image, name='Raw Image')
+
+    # Add tracks layer
+    viewer.add_tracks(tracks_new_df, name='Tracks')
+
+    napari.run()
