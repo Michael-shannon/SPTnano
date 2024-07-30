@@ -137,3 +137,26 @@ def filter_high_speeds(metrics_df, speed_threshold):
     metrics_df_filtered = metrics_df[~metrics_df['unique_id'].isin(high_speed_particles)].copy()
     return metrics_df_filtered
 
+def sample_dataframe(df, percent_samples):
+    # isolate each condition
+    conditions = df.condition.unique()
+    # initialize a list to store the sampled dataframes
+    sampled_dfs = []
+    # loop through each condition
+    for condition in conditions:
+        # isolate the dataframe for that condition
+        condition_df = df[df.condition == condition]
+        # extract a list of the unique_ids in that df
+        unique_ids = condition_df.unique_id.unique()
+        # sample those unique ids
+        sampled_ids = np.random.choice(unique_ids, int(len(unique_ids) * percent_samples), replace=False)
+        # filter the dataframe to only include those unique ids
+        sampled_df = condition_df[condition_df.unique_id.isin(sampled_ids)]
+        # append the sampled dataframe to the list
+        sampled_dfs.append(sampled_df)
+    # concatenate the list of dataframes into a single dataframe
+    sampled_df = pd.concat(sampled_dfs, ignore_index=True)
+    # report on the sampling and the original dataframe
+    print('Original dataframe contains {} tracks'.format(len(df)))
+    print('Sampled dataframe contains {} tracks'.format(len(sampled_df)))
+    return sampled_df
