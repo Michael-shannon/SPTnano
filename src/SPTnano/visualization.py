@@ -13,6 +13,9 @@ import numpy as np
 from scipy.stats import sem
 
 
+from matplotlib.ticker import FixedLocator
+
+
 
 def overlay_tracks_with_movie(tracks_df, movie_path, colormap=None):
     # Load the raw movie
@@ -660,6 +663,9 @@ def get_condition_from_filename(df, filename):
         raise
     return condition
 
+
+
+
 def napari_visualize_image_with_tracks(tracked_filename, tracks_df, master_dir):
     # Get the condition from the dataframe based on the tracked filename
     condition = get_condition_from_filename(tracks_df, tracked_filename)
@@ -685,12 +691,64 @@ def napari_visualize_image_with_tracks(tracked_filename, tracks_df, master_dir):
     viewer = napari.Viewer()
 
     # Add image layer
-    viewer.add_image(image, name='Raw Image')
+    viewer.add_image(image, name=f'Raw {tracked_filename}')
 
     # Add tracks layer
-    viewer.add_tracks(tracks_new_df, name='Tracks')
+    viewer.add_tracks(tracks_new_df, name=f'Tracks{tracked_filename}')
 
     napari.run()
+
+
+
+# def napari_visualize_image_with_tracks(tracked_filename, tracks_df, master_dir):
+#     # Get the condition from the dataframe based on the tracked filename
+#     condition = get_condition_from_filename(tracks_df, tracked_filename)
+    
+#     # Construct the full file path for the image by removing '_tracked' and adding '.tif'
+#     image_filename = tracked_filename.replace('_tracked', '') + '.tif'
+#     image_path = os.path.join(master_dir, condition, image_filename)
+    
+#     # Debugging: Print the constructed file paths
+#     print(f"Tracked filename: {tracked_filename}")
+#     print(f"Condition: {condition}")
+#     print(f"Image filename: {image_filename}")
+#     print(f"Image path: {image_path}")
+    
+#     # Load the image
+#     try:
+#         image = io.imread(image_path)
+#     except FileNotFoundError:
+#         print(f"Error: Image file not found at path '{image_path}'")
+#         return
+
+#     # Load the tracks
+#     tracks = tracks_df[tracks_df['filename'] == tracked_filename]
+
+#     print(tracks.columns)
+
+#     tracks_new_df = tracks[["particle", "frame", "y", "x"]]
+
+#     # Extract x, y, and frame information for the tracks
+#     coords = np.array([tracks['x'].values, tracks['y'].values, tracks['frame'].values]).T
+    
+#     # Start Napari viewer
+#     viewer = napari.Viewer()
+
+#     # Add image layer
+#     viewer.add_image(image, name='Raw Image')
+
+#     # Add tracks layer
+#     viewer.add_tracks(tracks_new_df, name='Tracks')
+
+#     napari.run()
+
+
+
+
+
+
+
+
 
 
 
@@ -712,7 +770,99 @@ def bootstrap_ci_median(data, num_samples=1000, alpha=0.05):
     upper_bound = np.percentile(medians, 100 * (1 - alpha / 2))
     return upper_bound - lower_bound
 
-def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_by='condition', palette='colorblind', meanormedian='mean', multiplot=False):
+# def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_by='condition', palette='colorblind', meanormedian='mean', multiplot=False):
+#     """
+#     Plot time series of a specified factor, with mean as a thick line and confidence intervals as shaded areas.
+    
+#     Parameters
+#     ----------
+#     data_df : DataFrame
+#         DataFrame containing the time series data.
+#     factor_col : str, optional
+#         The column representing the factor to be plotted on the y-axis. Default is 'speed_um_s'.
+#     absolute : bool, optional
+#         Whether to use absolute time values or time zeroed values. Default is True.
+#     separate_by : str, optional
+#         Column to separate the data by, for coloring. If None, all data will be plotted together. Default is None.
+#     palette : str, optional
+#         Color palette for the plot. Default is 'colorblind'.
+#     meanormedian : str, optional
+#         Whether to use mean or median for aggregation. Default is 'mean'.
+#     multiplot : bool, optional
+#         Whether to generate separate small multiple plots for each category. Default is False.
+#     """
+#     if not absolute:
+#         time_col = 'time_s_zeroed'
+#         x_label = 'Time zeroed (s)'
+#     else:
+#         time_col = 'time_s'
+#         x_label = 'Time (s)'
+
+#     # if not absolute:
+#     #     data_df['relative_time'] = data_df[time_col] - data_df[time_col].min()
+#     #     time_col = 'relative_time'
+        
+#     unique_categories = data_df[separate_by].unique() if separate_by else [None]
+#     color_palette = sns.color_palette(palette, len(unique_categories))
+    
+#     if multiplot and separate_by:
+#         fig, axes = plt.subplots(len(unique_categories), 1, figsize=(10, 5 * len(unique_categories)), sharex=False)
+#         sns.set_context("notebook", rc={"lines.linewidth": 2.5})
+#         for i, category in enumerate(unique_categories):
+#             ax = axes[i] if len(unique_categories) > 1 else axes
+#             subset = data_df[data_df[separate_by] == category]
+#             times = subset[time_col]
+#             factors = subset[factor_col]
+
+#             if meanormedian == 'mean':
+#                 avg_factors = subset.groupby(time_col)[factor_col].mean()
+#                 ci = subset.groupby(time_col)[factor_col].apply(lambda x: bootstrap_ci_mean(x, num_samples=1000, alpha=0.05))
+#             else:
+#                 avg_factors = subset.groupby(time_col)[factor_col].median()
+#                 ci = subset.groupby(time_col)[factor_col].apply(lambda x: bootstrap_ci_median(x, num_samples=1000, alpha=0.05))
+
+#             color = color_palette[i]
+#             label = category
+
+#             ax.plot(avg_factors.index, avg_factors.values, label=label, color=color, linewidth=0.5)
+#             ax.fill_between(avg_factors.index, avg_factors - ci, avg_factors + ci, color=color, alpha=0.3)
+#             ax.set_xlabel(x_label, fontsize=14)
+#             ax.set_ylabel(factor_col, fontsize=14)
+#             ax.legend(title=separate_by, fontsize=12)
+#             ax.set_title(f'Time Series of {factor_col} - {category}', fontsize=16)
+        
+#         plt.tight_layout()
+#     else:
+#         plt.figure(figsize=(20, 12))
+#         sns.set_context("notebook", rc={"lines.linewidth": 2.5})
+        
+#         for i, category in enumerate(unique_categories):
+#             subset = data_df if category is None else data_df[data_df[separate_by] == category]
+#             times = subset[time_col]
+#             factors = subset[factor_col]
+
+#             if meanormedian == 'mean':
+#                 avg_factors = subset.groupby(time_col)[factor_col].mean()
+#                 ci = subset.groupby(time_col)[factor_col].apply(lambda x: bootstrap_ci_mean(x, num_samples=1000, alpha=0.05))
+#             else:
+#                 avg_factors = subset.groupby(time_col)[factor_col].median()
+#                 ci = subset.groupby(time_col)[factor_col].apply(lambda x: bootstrap_ci_median(x, num_samples=1000, alpha=0.05))
+
+#             color = color_palette[i]
+#             label = 'Overall' if category is None else category
+
+#             plt.plot(avg_factors.index, avg_factors.values, label=label, color=color, linewidth=0.5)
+#             plt.fill_between(avg_factors.index, avg_factors - ci, avg_factors + ci, color=color, alpha=0.3)
+
+#         plt.xlabel(x_label, fontsize=14)
+#         plt.ylabel(factor_col, fontsize=14)
+#         plt.legend(title=separate_by, fontsize=12)
+#         plt.title(f'Time Series of {factor_col}', fontsize=16)
+#         plt.tight_layout()
+    
+#     plt.show()
+
+def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_by='condition', palette='colorblind', meanormedian='mean', multiplot=False, talk=False):
     """
     Plot time series of a specified factor, with mean as a thick line and confidence intervals as shaded areas.
     
@@ -732,7 +882,10 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
         Whether to use mean or median for aggregation. Default is 'mean'.
     multiplot : bool, optional
         Whether to generate separate small multiple plots for each category. Default is False.
+    talk : bool, optional
+        Whether to set the figure size to the original large size or a smaller size. Default is False.
     """
+    
     if not absolute:
         time_col = 'time_s_zeroed'
         x_label = 'Time zeroed (s)'
@@ -740,16 +893,25 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
         time_col = 'time_s'
         x_label = 'Time (s)'
 
-    # if not absolute:
-    #     data_df['relative_time'] = data_df[time_col] - data_df[time_col].min()
-    #     time_col = 'relative_time'
-        
     unique_categories = data_df[separate_by].unique() if separate_by else [None]
     color_palette = sns.color_palette(palette, len(unique_categories))
     
+    # Set figure size and font size based on the `talk` parameter
+    if talk:
+        fig_size = (40, 12)
+        font_size = 35
+    else:
+        if multiplot and separate_by:
+            fig_size = (10, 5 * len(unique_categories))
+        else:
+            fig_size = (5, 3)
+        font_size = 14
+    
+    sns.set_context("notebook", rc={"lines.linewidth": 2.5, "font.size": font_size, "axes.titlesize": font_size, "axes.labelsize": font_size, "xtick.labelsize": font_size, "ytick.labelsize": font_size})
+    
     if multiplot and separate_by:
-        fig, axes = plt.subplots(len(unique_categories), 1, figsize=(10, 5 * len(unique_categories)), sharex=False)
-        sns.set_context("notebook", rc={"lines.linewidth": 2.5})
+        fig, axes = plt.subplots(len(unique_categories), 1, figsize=fig_size, sharex=True)
+        
         for i, category in enumerate(unique_categories):
             ax = axes[i] if len(unique_categories) > 1 else axes
             subset = data_df[data_df[separate_by] == category]
@@ -768,15 +930,14 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
 
             ax.plot(avg_factors.index, avg_factors.values, label=label, color=color, linewidth=0.5)
             ax.fill_between(avg_factors.index, avg_factors - ci, avg_factors + ci, color=color, alpha=0.3)
-            ax.set_xlabel(x_label, fontsize=14)
-            ax.set_ylabel(factor_col, fontsize=14)
-            ax.legend(title=separate_by, fontsize=12)
-            ax.set_title(f'Time Series of {factor_col} - {category}', fontsize=16)
+            ax.set_xlabel(x_label, fontsize=font_size)
+            ax.set_ylabel(factor_col, fontsize=font_size, labelpad=20)
+            ax.legend(title=separate_by, fontsize=font_size, loc='upper left', bbox_to_anchor=(1, 1))
+            ax.set_title(f'Time Series of {factor_col} - {category}', fontsize=font_size)
         
         plt.tight_layout()
     else:
-        plt.figure(figsize=(20, 12))
-        sns.set_context("notebook", rc={"lines.linewidth": 2.5})
+        fig, ax = plt.subplots(figsize=fig_size)
         
         for i, category in enumerate(unique_categories):
             subset = data_df if category is None else data_df[data_df[separate_by] == category]
@@ -793,13 +954,132 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
             color = color_palette[i]
             label = 'Overall' if category is None else category
 
-            plt.plot(avg_factors.index, avg_factors.values, label=label, color=color, linewidth=0.5)
-            plt.fill_between(avg_factors.index, avg_factors - ci, avg_factors + ci, color=color, alpha=0.3)
+            ax.plot(avg_factors.index, avg_factors.values, label=label, color=color, linewidth=0.5)
+            ax.fill_between(avg_factors.index, avg_factors - ci, avg_factors + ci, color=color, alpha=0.3)
 
-        plt.xlabel(x_label, fontsize=14)
-        plt.ylabel(factor_col, fontsize=14)
-        plt.legend(title=separate_by, fontsize=12)
-        plt.title(f'Time Series of {factor_col}', fontsize=16)
-        plt.tight_layout()
+        ax.set_xlabel(x_label, fontsize=font_size)
+        ax.set_ylabel(factor_col, fontsize=font_size, labelpad=20)
+        ax.legend(title=separate_by, fontsize=font_size, loc='upper left', bbox_to_anchor=(1, 1))
+        ax.set_title(f'Time Series of {factor_col}', fontsize=font_size)
+        plt.tight_layout(rect=[0, 0, 0.85, 1])  # Adjust layout to fit legend
+    
+    plt.show()
+
+
+def plot_barplots(data_df, factor_col='speed_um_s', separate_by='condition', palette='colorblind', meanormedian='mean', talk=False):
+    """
+    Plot bar plots of a specified factor, with bootstrapped confidence intervals.
+    
+    Parameters
+    ----------
+    data_df : DataFrame
+        DataFrame containing the data.
+    factor_col : str, optional
+        The column representing the factor to be plotted on the y-axis. Default is 'speed_um_s'.
+    separate_by : str, optional
+        Column to separate the data by, for coloring. If None, all data will be plotted together. Default is 'condition'.
+    palette : str, optional
+        Color palette for the plot. Default is 'colorblind'.
+    meanormedian : str, optional
+        Whether to use mean or median for aggregation. Default is 'mean'.
+    talk : bool, optional
+        Whether to set the figure size to the original large size or a smaller size. Default is False.
+    """
+    
+    unique_categories = data_df[separate_by].unique() if separate_by else [None]
+    color_palette = sns.color_palette(palette, len(unique_categories))
+    
+    # Set figure size based on the `talk` parameter
+    if talk:
+        fig_size = (20, 12)
+        font_size = 35
+    else:
+        fig_size = (5, 3)
+        font_size = 14
+    
+    fig, ax = plt.subplots(figsize=fig_size)
+    sns.set_context("notebook", rc={"lines.linewidth": 2.5, "font.size": font_size, "axes.titlesize": font_size, "axes.labelsize": font_size, "xtick.labelsize": font_size, "ytick.labelsize": font_size})
+    
+    avg_factors_list = []
+    ci_intervals = []
+    
+    for i, category in enumerate(unique_categories):
+        subset = data_df if category is None else data_df[data_df[separate_by] == category]
+        
+        if meanormedian == 'mean':
+            avg_factors = subset[factor_col].mean()
+            ci_interval = bootstrap_ci_mean(subset[factor_col], num_samples=1000, alpha=0.05)
+        else:
+            avg_factors = subset[factor_col].median()
+            ci_interval = bootstrap_ci_median(subset[factor_col], num_samples=1000, alpha=0.05)
+        
+        avg_factors_list.append(avg_factors)
+        ci_intervals.append(ci_interval)
+    
+    categories = unique_categories if separate_by else ['Overall']
+    ax.bar(categories, avg_factors_list, yerr=ci_intervals, color=color_palette, capsize=5, edgecolor='black')
+    
+    # Remove 'Condition_' prefix from x tick labels
+    new_labels = [label.replace('Condition_', '') for label in categories]
+    if talk:
+        ax.set_xticklabels(new_labels, fontsize=font_size)
+    else:
+        ax.set_xticklabels(new_labels, fontsize=font_size, rotation=90)
+
+    
+    ax.set_ylabel(factor_col, fontsize=font_size)
+    ax.tick_params(axis='both', which='major', labelsize=font_size)
+    plt.tight_layout()
+    
+    plt.show()
+
+
+
+
+
+def plot_violinplots(data_df, factor_col='speed_um_s', separate_by='condition', palette='colorblind', talk=False):
+    """
+    Plot violin plots of a specified factor, with data separated by categories.
+    
+    Parameters
+    ----------
+    data_df : DataFrame
+        DataFrame containing the data.
+    factor_col : str, optional
+        The column representing the factor to be plotted on the y-axis. Default is 'speed_um_s'.
+    separate_by : str, optional
+        Column to separate the data by, for coloring. If None, all data will be plotted together. Default is 'condition'.
+    palette : str, optional
+        Color palette for the plot. Default is 'colorblind'.
+    talk : bool, optional
+        Whether to set the figure size to the original large size or a smaller size. Default is False.
+    """
+    
+    unique_categories = data_df[separate_by].unique() if separate_by else [None]
+    color_palette = sns.color_palette(palette, len(unique_categories))
+    
+    # Set figure size based on the `talk` parameter
+    if talk:
+        fig_size = (20, 12)
+        font_size = 35
+    else:
+        fig_size = (5, 3)
+        font_size = 14
+    
+    fig, ax = plt.subplots(figsize=fig_size)
+    sns.set_context("notebook", rc={"lines.linewidth": 2.5, "font.size": font_size, "axes.titlesize": font_size, "axes.labelsize": font_size, "xtick.labelsize": font_size, "ytick.labelsize": font_size})
+    
+    # Plot violin plot
+    sns.violinplot(x=separate_by, y=factor_col, hue=separate_by, data=data_df, palette=color_palette, ax=ax, legend=False, alpha=0.79)
+    
+    # Remove 'Condition_' prefix from x tick labels
+    new_labels = [label.replace('Condition_', '') for label in unique_categories]
+    ax.set_xticks(range(len(new_labels)))
+    ax.set_xticklabels(new_labels, fontsize=font_size)
+
+    ax.set_ylabel(factor_col, fontsize=font_size, labelpad=20)
+    ax.set_xlabel(None)
+    ax.tick_params(axis='both', which='major', labelsize=font_size)
+    plt.tight_layout()
     
     plt.show()
