@@ -29,7 +29,7 @@
 
 Pipeline for easy single particle detection, linking/tracking, and analysis
 
-This project is developed in collaboration with the
+The structure for this repo was made using a cookiecutter from the
 [Centre for Advanced Research Computing](https://ucl.ac.uk/arc), University
 College London.
 
@@ -43,16 +43,7 @@ Michael Shannon ([m.j.shannon@pm.me](mailto:m.j.shannon@pm.me))
 
 ### Research Software Engineering Contact
 
-Centre for Advanced Research Computing, University College London
-([arc.collaborations@ucl.ac.uk](mailto:arc.collaborations@ucl.ac.uk))
-
-## Built With
-
-<!-- TODO: can cookiecutter make a list of frameworks? -->
-
-- [Framework 1](https://something.com)
-- [Framework 2](https://something.com)
-- [Framework 3](https://something.com)
+Michael Shannon ([m.j.shannon@pm.me](mailto:m.j.shannon@pm.me))
 
 ## Getting Started
 
