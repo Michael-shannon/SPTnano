@@ -3884,21 +3884,7 @@ talk : bool, optional
 
               <details class="quote">
                 <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">509</span>
-<span class="normal">510</span>
-<span class="normal">511</span>
-<span class="normal">512</span>
-<span class="normal">513</span>
-<span class="normal">514</span>
-<span class="normal">515</span>
-<span class="normal">516</span>
-<span class="normal">517</span>
-<span class="normal">518</span>
-<span class="normal">519</span>
-<span class="normal">520</span>
-<span class="normal">521</span>
-<span class="normal">522</span>
-<span class="normal">523</span>
+                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">523</span>
 <span class="normal">524</span>
 <span class="normal">525</span>
 <span class="normal">526</span>
@@ -4309,7 +4295,41 @@ talk : bool, optional
 <span class="normal">931</span>
 <span class="normal">932</span>
 <span class="normal">933</span>
-<span class="normal">934</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span> <span class="nc">ParticleMetrics</span><span class="p">:</span>
+<span class="normal">934</span>
+<span class="normal">935</span>
+<span class="normal">936</span>
+<span class="normal">937</span>
+<span class="normal">938</span>
+<span class="normal">939</span>
+<span class="normal">940</span>
+<span class="normal">941</span>
+<span class="normal">942</span>
+<span class="normal">943</span>
+<span class="normal">944</span>
+<span class="normal">945</span>
+<span class="normal">946</span>
+<span class="normal">947</span>
+<span class="normal">948</span>
+<span class="normal">949</span>
+<span class="normal">950</span>
+<span class="normal">951</span>
+<span class="normal">952</span>
+<span class="normal">953</span>
+<span class="normal">954</span>
+<span class="normal">955</span>
+<span class="normal">956</span>
+<span class="normal">957</span>
+<span class="normal">958</span>
+<span class="normal">959</span>
+<span class="normal">960</span>
+<span class="normal">961</span>
+<span class="normal">962</span>
+<span class="normal">963</span>
+<span class="normal">964</span>
+<span class="normal">965</span>
+<span class="normal">966</span>
+<span class="normal">967</span>
+<span class="normal">968</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span> <span class="nc">ParticleMetrics</span><span class="p">:</span>
     <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">df</span><span class="p">):</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">df</span><span class="p">[</span><span class="s1">&#39;Location&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">df</span><span class="p">[</span><span class="s1">&#39;filename&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">extract_location</span><span class="p">)</span>  <span class="c1"># Add Location column</span>
@@ -4318,13 +4338,17 @@ talk : bool, optional
             <span class="s1">&#39;x_um_start&#39;</span><span class="p">,</span> <span class="s1">&#39;y_um_start&#39;</span><span class="p">,</span> <span class="s1">&#39;x_um_end&#39;</span><span class="p">,</span> <span class="s1">&#39;y_um_end&#39;</span><span class="p">,</span> 
             <span class="s1">&#39;particle&#39;</span><span class="p">,</span> <span class="s1">&#39;condition&#39;</span><span class="p">,</span> <span class="s1">&#39;filename&#39;</span><span class="p">,</span> <span class="s1">&#39;file_id&#39;</span><span class="p">,</span> <span class="s1">&#39;unique_id&#39;</span><span class="p">,</span>
             <span class="s1">&#39;avg_msd&#39;</span><span class="p">,</span> <span class="s1">&#39;n_frames&#39;</span><span class="p">,</span> <span class="s1">&#39;total_time_s&#39;</span><span class="p">,</span> <span class="s1">&#39;Location&#39;</span><span class="p">,</span> 
-            <span class="s1">&#39;diffusion_coefficient&#39;</span><span class="p">,</span> <span class="s1">&#39;anomalous_exponent&#39;</span><span class="p">,</span> <span class="s1">&#39;motion_class&#39;</span>  <span class="c1"># Add columns for diffusion coefficient, anomalous exponent, and motion class</span>
+            <span class="s1">&#39;diffusion_coefficient&#39;</span><span class="p">,</span> <span class="s1">&#39;anomalous_exponent&#39;</span><span class="p">,</span> <span class="s1">&#39;motion_class&#39;</span><span class="p">,</span>
+            <span class="s1">&#39;avg_speed_um_s&#39;</span><span class="p">,</span> <span class="s1">&#39;avg_acceleration_um_s2&#39;</span><span class="p">,</span> <span class="s1">&#39;avg_jerk_um_s3&#39;</span><span class="p">,</span>
+            <span class="s1">&#39;avg_normalized_curvature&#39;</span><span class="p">,</span> <span class="s1">&#39;avg_angle_normalized_curvature&#39;</span>  <span class="c1"># Add average normalized curvature and angle normalized curvature</span>
         <span class="p">])</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">time_windowed_df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="p">[</span>
             <span class="s1">&#39;time_window&#39;</span><span class="p">,</span> <span class="s1">&#39;x_um_start&#39;</span><span class="p">,</span> <span class="s1">&#39;y_um_start&#39;</span><span class="p">,</span> <span class="s1">&#39;x_um_end&#39;</span><span class="p">,</span> <span class="s1">&#39;y_um_end&#39;</span><span class="p">,</span>
             <span class="s1">&#39;particle&#39;</span><span class="p">,</span> <span class="s1">&#39;condition&#39;</span><span class="p">,</span> <span class="s1">&#39;filename&#39;</span><span class="p">,</span> <span class="s1">&#39;file_id&#39;</span><span class="p">,</span> <span class="s1">&#39;unique_id&#39;</span><span class="p">,</span>
             <span class="s1">&#39;avg_msd&#39;</span><span class="p">,</span> <span class="s1">&#39;n_frames&#39;</span><span class="p">,</span> <span class="s1">&#39;total_time_s&#39;</span><span class="p">,</span> <span class="s1">&#39;Location&#39;</span><span class="p">,</span>
-            <span class="s1">&#39;diffusion_coefficient&#39;</span><span class="p">,</span> <span class="s1">&#39;anomalous_exponent&#39;</span><span class="p">,</span> <span class="s1">&#39;motion_class&#39;</span>  <span class="c1"># Add columns for diffusion coefficient, anomalous exponent, and motion class</span>
+            <span class="s1">&#39;diffusion_coefficient&#39;</span><span class="p">,</span> <span class="s1">&#39;anomalous_exponent&#39;</span><span class="p">,</span> <span class="s1">&#39;motion_class&#39;</span><span class="p">,</span>
+            <span class="s1">&#39;avg_speed_um_s&#39;</span><span class="p">,</span> <span class="s1">&#39;avg_acceleration_um_s2&#39;</span><span class="p">,</span> <span class="s1">&#39;avg_jerk_um_s3&#39;</span><span class="p">,</span>
+            <span class="s1">&#39;avg_normalized_curvature&#39;</span><span class="p">,</span> <span class="s1">&#39;avg_angle_normalized_curvature&#39;</span>  <span class="c1"># Add average normalized curvature and angle normalized curvature</span>
         <span class="p">])</span>
 
     <span class="nd">@staticmethod</span>
@@ -4363,8 +4387,6 @@ talk : bool, optional
         <span class="bp">self</span><span class="o">.</span><span class="n">metrics_df</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">metrics_df</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">replace</span><span class="p">([</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">,</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">metrics_df</span>
 
-
-
     <span class="k">def</span> <span class="nf">calculate_directions</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Calculate the direction of motion between consecutive frames for each particle in radians.</span>
@@ -4376,7 +4398,6 @@ talk : bool, optional
         <span class="c1"># Fill NaN values with 0</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">metrics_df</span><span class="p">[</span><span class="s1">&#39;direction_rad&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">metrics_df</span><span class="p">[</span><span class="s1">&#39;direction_rad&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">metrics_df</span>
-
 
     <span class="k">def</span> <span class="nf">calculate_accelerations</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
@@ -4451,7 +4472,6 @@ talk : bool, optional
         <span class="bp">self</span><span class="o">.</span><span class="n">metrics_df</span><span class="p">[</span><span class="s1">&#39;instant_velocity_y_um_s&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">metrics_df</span><span class="p">[</span><span class="s1">&#39;instant_velocity_y_um_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">replace</span><span class="p">([</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">,</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">metrics_df</span>
 
-
     <span class="k">def</span> <span class="nf">calculate_msd_for_track</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">track_data</span><span class="p">,</span> <span class="n">max_lagtime</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Calculate the MSD for a single track.</span>
@@ -4512,6 +4532,13 @@ talk : bool, optional
             <span class="c1"># Calculate total time in seconds for the track</span>
             <span class="n">total_time_s</span> <span class="o">=</span> <span class="p">(</span><span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;time_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;time_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
 
+            <span class="c1"># Calculate average instantaneous metrics for the track</span>
+            <span class="n">avg_speed</span> <span class="o">=</span> <span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+            <span class="n">avg_acceleration</span> <span class="o">=</span> <span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;acceleration_um_s2&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+            <span class="n">avg_jerk</span> <span class="o">=</span> <span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;jerk_um_s3&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+            <span class="n">avg_norm_curvature</span> <span class="o">=</span> <span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;normalized_curvature&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+            <span class="n">avg_angle_norm_curvature</span> <span class="o">=</span> <span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;angle_normalized_curvature&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
             <span class="c1"># Add track-level summary information to time_averaged_df</span>
             <span class="n">start_row</span> <span class="o">=</span> <span class="n">track_data</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
             <span class="n">end_row</span> <span class="o">=</span> <span class="n">track_data</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
@@ -4532,8 +4559,11 @@ talk : bool, optional
                 <span class="s1">&#39;diffusion_coefficient&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">D</span><span class="p">],</span>  <span class="c1"># Add the diffusion coefficient</span>
                 <span class="s1">&#39;anomalous_exponent&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">alpha</span><span class="p">],</span>  <span class="c1"># Add the anomalous exponent</span>
                 <span class="s1">&#39;motion_class&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">motion_class</span><span class="p">],</span>  <span class="c1"># Add the motion class</span>
-                <span class="c1"># Placeholder for additional metrics</span>
-                <span class="c1"># &#39;additional_metric&#39;: None,</span>
+                <span class="s1">&#39;avg_speed_um_s&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_speed</span><span class="p">],</span>  <span class="c1"># Add average speed</span>
+                <span class="s1">&#39;avg_acceleration_um_s2&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_acceleration</span><span class="p">],</span>  <span class="c1"># Add average acceleration</span>
+                <span class="s1">&#39;avg_jerk_um_s3&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_jerk</span><span class="p">],</span>  <span class="c1"># Add average jerk</span>
+                <span class="s1">&#39;avg_normalized_curvature&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_norm_curvature</span><span class="p">],</span>  <span class="c1"># Add average normalized curvature</span>
+                <span class="s1">&#39;avg_angle_normalized_curvature&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_angle_norm_curvature</span><span class="p">],</span>  <span class="c1"># Add average angle normalized curvature</span>
             <span class="p">})</span>
 
             <span class="n">time_averaged_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">track_summary</span><span class="p">)</span>
@@ -4574,6 +4604,13 @@ talk : bool, optional
                 <span class="c1"># Calculate total time in seconds for the window</span>
                 <span class="n">total_time_s</span> <span class="o">=</span> <span class="p">(</span><span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;time_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;time_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
 
+                <span class="c1"># Calculate average instantaneous metrics for the window</span>
+                <span class="n">avg_speed</span> <span class="o">=</span> <span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+                <span class="n">avg_acceleration</span> <span class="o">=</span> <span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;acceleration_um_s2&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+                <span class="n">avg_jerk</span> <span class="o">=</span> <span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;jerk_um_s3&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+                <span class="n">avg_norm_curvature</span> <span class="o">=</span> <span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;normalized_curvature&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+                <span class="n">avg_angle_norm_curvature</span> <span class="o">=</span> <span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;angle_normalized_curvature&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
                 <span class="c1"># Add window-level summary information to time_windowed_df</span>
                 <span class="n">start_row</span> <span class="o">=</span> <span class="n">window_data</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
                 <span class="n">end_row</span> <span class="o">=</span> <span class="n">window_data</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
@@ -4595,8 +4632,11 @@ talk : bool, optional
                     <span class="s1">&#39;diffusion_coefficient&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">D</span><span class="p">],</span>  <span class="c1"># Add the diffusion coefficient</span>
                     <span class="s1">&#39;anomalous_exponent&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">alpha</span><span class="p">],</span>  <span class="c1"># Add the anomalous exponent</span>
                     <span class="s1">&#39;motion_class&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">motion_class</span><span class="p">],</span>  <span class="c1"># Add the motion class</span>
-                    <span class="c1"># Placeholder for additional metrics</span>
-                    <span class="c1"># &#39;additional_metric&#39;: None,</span>
+                    <span class="s1">&#39;avg_speed_um_s&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_speed</span><span class="p">],</span>  <span class="c1"># Add average speed</span>
+                    <span class="s1">&#39;avg_acceleration_um_s2&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_acceleration</span><span class="p">],</span>  <span class="c1"># Add average acceleration</span>
+                    <span class="s1">&#39;avg_jerk_um_s3&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_jerk</span><span class="p">],</span>  <span class="c1"># Add average jerk</span>
+                    <span class="s1">&#39;avg_normalized_curvature&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_norm_curvature</span><span class="p">],</span>  <span class="c1"># Add average normalized curvature</span>
+                    <span class="s1">&#39;avg_angle_normalized_curvature&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_angle_norm_curvature</span><span class="p">],</span>  <span class="c1"># Add average angle normalized curvature</span>
                 <span class="p">})</span>
 
                 <span class="n">windowed_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">window_summary</span><span class="p">)</span>
@@ -4734,7 +4774,7 @@ talk : bool, optional
             <span class="s1">&#39;x_um_prev&#39;</span><span class="p">,</span> <span class="s1">&#39;y_um_prev&#39;</span><span class="p">,</span> <span class="s1">&#39;time_s_prev&#39;</span><span class="p">,</span> <span class="s1">&#39;delta_time_s&#39;</span><span class="p">,</span> 
             <span class="s1">&#39;speed_um_s_prev&#39;</span><span class="p">,</span> <span class="s1">&#39;acceleration_um_s2_prev&#39;</span><span class="p">,</span> <span class="s1">&#39;direction_rad_prev&#39;</span><span class="p">,</span>
             <span class="s1">&#39;instant_velocity_x_um_s&#39;</span><span class="p">,</span> <span class="s1">&#39;instant_velocity_y_um_s&#39;</span><span class="p">,</span>
-            <span class="p">],</span> <span class="n">inplace</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="p">],</span> <span class="n">inplace</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
               </details>
 
@@ -4765,15 +4805,15 @@ talk : bool, optional
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">578</span>
-<span class="normal">579</span>
-<span class="normal">580</span>
-<span class="normal">581</span>
-<span class="normal">582</span>
-<span class="normal">583</span>
-<span class="normal">584</span>
-<span class="normal">585</span>
-<span class="normal">586</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_accelerations</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">593</span>
+<span class="normal">594</span>
+<span class="normal">595</span>
+<span class="normal">596</span>
+<span class="normal">597</span>
+<span class="normal">598</span>
+<span class="normal">599</span>
+<span class="normal">600</span>
+<span class="normal">601</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_accelerations</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the acceleration between consecutive frames for each particle in micrometers per second squared.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -4807,41 +4847,7 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">846</span>
-<span class="normal">847</span>
-<span class="normal">848</span>
-<span class="normal">849</span>
-<span class="normal">850</span>
-<span class="normal">851</span>
-<span class="normal">852</span>
-<span class="normal">853</span>
-<span class="normal">854</span>
-<span class="normal">855</span>
-<span class="normal">856</span>
-<span class="normal">857</span>
-<span class="normal">858</span>
-<span class="normal">859</span>
-<span class="normal">860</span>
-<span class="normal">861</span>
-<span class="normal">862</span>
-<span class="normal">863</span>
-<span class="normal">864</span>
-<span class="normal">865</span>
-<span class="normal">866</span>
-<span class="normal">867</span>
-<span class="normal">868</span>
-<span class="normal">869</span>
-<span class="normal">870</span>
-<span class="normal">871</span>
-<span class="normal">872</span>
-<span class="normal">873</span>
-<span class="normal">874</span>
-<span class="normal">875</span>
-<span class="normal">876</span>
-<span class="normal">877</span>
-<span class="normal">878</span>
-<span class="normal">879</span>
-<span class="normal">880</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">880</span>
 <span class="normal">881</span>
 <span class="normal">882</span>
 <span class="normal">883</span>
@@ -4857,7 +4863,41 @@ Parameters:
 <span class="normal">893</span>
 <span class="normal">894</span>
 <span class="normal">895</span>
-<span class="normal">896</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_all_features</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_lagtime</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">calculate_time_windowed</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="normal">896</span>
+<span class="normal">897</span>
+<span class="normal">898</span>
+<span class="normal">899</span>
+<span class="normal">900</span>
+<span class="normal">901</span>
+<span class="normal">902</span>
+<span class="normal">903</span>
+<span class="normal">904</span>
+<span class="normal">905</span>
+<span class="normal">906</span>
+<span class="normal">907</span>
+<span class="normal">908</span>
+<span class="normal">909</span>
+<span class="normal">910</span>
+<span class="normal">911</span>
+<span class="normal">912</span>
+<span class="normal">913</span>
+<span class="normal">914</span>
+<span class="normal">915</span>
+<span class="normal">916</span>
+<span class="normal">917</span>
+<span class="normal">918</span>
+<span class="normal">919</span>
+<span class="normal">920</span>
+<span class="normal">921</span>
+<span class="normal">922</span>
+<span class="normal">923</span>
+<span class="normal">924</span>
+<span class="normal">925</span>
+<span class="normal">926</span>
+<span class="normal">927</span>
+<span class="normal">928</span>
+<span class="normal">929</span>
+<span class="normal">930</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_all_features</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_lagtime</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">calculate_time_windowed</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate all features for the particle tracking data.</span>
 <span class="sd">    This method will call all individual feature calculation methods.</span>
@@ -4929,17 +4969,17 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">608</span>
-<span class="normal">609</span>
-<span class="normal">610</span>
-<span class="normal">611</span>
-<span class="normal">612</span>
-<span class="normal">613</span>
-<span class="normal">614</span>
-<span class="normal">615</span>
-<span class="normal">616</span>
-<span class="normal">617</span>
-<span class="normal">618</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_angle_normalized_curvature</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">623</span>
+<span class="normal">624</span>
+<span class="normal">625</span>
+<span class="normal">626</span>
+<span class="normal">627</span>
+<span class="normal">628</span>
+<span class="normal">629</span>
+<span class="normal">630</span>
+<span class="normal">631</span>
+<span class="normal">632</span>
+<span class="normal">633</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_angle_normalized_curvature</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the curvature (change in direction) normalized to the range [-pi, pi] between consecutive frames for each particle.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -4971,13 +5011,13 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">910</span>
-<span class="normal">911</span>
-<span class="normal">912</span>
-<span class="normal">913</span>
-<span class="normal">914</span>
-<span class="normal">915</span>
-<span class="normal">916</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_default_max_lagtime</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">944</span>
+<span class="normal">945</span>
+<span class="normal">946</span>
+<span class="normal">947</span>
+<span class="normal">948</span>
+<span class="normal">949</span>
+<span class="normal">950</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_default_max_lagtime</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the default maximum lag time based on the shortest track in the dataset.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5005,13 +5045,13 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">838</span>
-<span class="normal">839</span>
-<span class="normal">840</span>
-<span class="normal">841</span>
-<span class="normal">842</span>
-<span class="normal">843</span>
-<span class="normal">844</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_default_window_size</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">872</span>
+<span class="normal">873</span>
+<span class="normal">874</span>
+<span class="normal">875</span>
+<span class="normal">876</span>
+<span class="normal">877</span>
+<span class="normal">878</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_default_window_size</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the default window size based on the average length of tracks in the dataset.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5039,17 +5079,17 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">565</span>
-<span class="normal">566</span>
-<span class="normal">567</span>
-<span class="normal">568</span>
-<span class="normal">569</span>
-<span class="normal">570</span>
-<span class="normal">571</span>
-<span class="normal">572</span>
-<span class="normal">573</span>
-<span class="normal">574</span>
-<span class="normal">575</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_directions</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">581</span>
+<span class="normal">582</span>
+<span class="normal">583</span>
+<span class="normal">584</span>
+<span class="normal">585</span>
+<span class="normal">586</span>
+<span class="normal">587</span>
+<span class="normal">588</span>
+<span class="normal">589</span>
+<span class="normal">590</span>
+<span class="normal">591</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_directions</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the direction of motion between consecutive frames for each particle in radians.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5081,19 +5121,19 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">538</span>
-<span class="normal">539</span>
-<span class="normal">540</span>
-<span class="normal">541</span>
-<span class="normal">542</span>
-<span class="normal">543</span>
-<span class="normal">544</span>
-<span class="normal">545</span>
-<span class="normal">546</span>
-<span class="normal">547</span>
-<span class="normal">548</span>
-<span class="normal">549</span>
-<span class="normal">550</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_distances</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">556</span>
+<span class="normal">557</span>
+<span class="normal">558</span>
+<span class="normal">559</span>
+<span class="normal">560</span>
+<span class="normal">561</span>
+<span class="normal">562</span>
+<span class="normal">563</span>
+<span class="normal">564</span>
+<span class="normal">565</span>
+<span class="normal">566</span>
+<span class="normal">567</span>
+<span class="normal">568</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_distances</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the distances between consecutive frames for each particle in micrometers.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5127,14 +5167,14 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">631</span>
-<span class="normal">632</span>
-<span class="normal">633</span>
-<span class="normal">634</span>
-<span class="normal">635</span>
-<span class="normal">636</span>
-<span class="normal">637</span>
-<span class="normal">638</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_instantaneous_diffusion_coefficient</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">646</span>
+<span class="normal">647</span>
+<span class="normal">648</span>
+<span class="normal">649</span>
+<span class="normal">650</span>
+<span class="normal">651</span>
+<span class="normal">652</span>
+<span class="normal">653</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_instantaneous_diffusion_coefficient</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the instantaneous diffusion coefficient for each particle in square micrometers per second.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5163,16 +5203,16 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">640</span>
-<span class="normal">641</span>
-<span class="normal">642</span>
-<span class="normal">643</span>
-<span class="normal">644</span>
-<span class="normal">645</span>
-<span class="normal">646</span>
-<span class="normal">647</span>
-<span class="normal">648</span>
-<span class="normal">649</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_instantaneous_velocity</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">655</span>
+<span class="normal">656</span>
+<span class="normal">657</span>
+<span class="normal">658</span>
+<span class="normal">659</span>
+<span class="normal">660</span>
+<span class="normal">661</span>
+<span class="normal">662</span>
+<span class="normal">663</span>
+<span class="normal">664</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_instantaneous_velocity</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the instantaneous velocity between consecutive frames for each particle in micrometers per second.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5203,15 +5243,15 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">588</span>
-<span class="normal">589</span>
-<span class="normal">590</span>
-<span class="normal">591</span>
-<span class="normal">592</span>
-<span class="normal">593</span>
-<span class="normal">594</span>
-<span class="normal">595</span>
-<span class="normal">596</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_jerk</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">603</span>
+<span class="normal">604</span>
+<span class="normal">605</span>
+<span class="normal">606</span>
+<span class="normal">607</span>
+<span class="normal">608</span>
+<span class="normal">609</span>
+<span class="normal">610</span>
+<span class="normal">611</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_jerk</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the jerk between consecutive frames for each particle in micrometers per second cubed.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5241,40 +5281,40 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">803</span>
-<span class="normal">804</span>
-<span class="normal">805</span>
-<span class="normal">806</span>
-<span class="normal">807</span>
-<span class="normal">808</span>
-<span class="normal">809</span>
-<span class="normal">810</span>
-<span class="normal">811</span>
-<span class="normal">812</span>
-<span class="normal">813</span>
-<span class="normal">814</span>
-<span class="normal">815</span>
-<span class="normal">816</span>
-<span class="normal">817</span>
-<span class="normal">818</span>
-<span class="normal">819</span>
-<span class="normal">820</span>
-<span class="normal">821</span>
-<span class="normal">822</span>
-<span class="normal">823</span>
-<span class="normal">824</span>
-<span class="normal">825</span>
-<span class="normal">826</span>
-<span class="normal">827</span>
-<span class="normal">828</span>
-<span class="normal">829</span>
-<span class="normal">830</span>
-<span class="normal">831</span>
-<span class="normal">832</span>
-<span class="normal">833</span>
-<span class="normal">834</span>
-<span class="normal">835</span>
-<span class="normal">836</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_metrics_for_window</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">window_data</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">837</span>
+<span class="normal">838</span>
+<span class="normal">839</span>
+<span class="normal">840</span>
+<span class="normal">841</span>
+<span class="normal">842</span>
+<span class="normal">843</span>
+<span class="normal">844</span>
+<span class="normal">845</span>
+<span class="normal">846</span>
+<span class="normal">847</span>
+<span class="normal">848</span>
+<span class="normal">849</span>
+<span class="normal">850</span>
+<span class="normal">851</span>
+<span class="normal">852</span>
+<span class="normal">853</span>
+<span class="normal">854</span>
+<span class="normal">855</span>
+<span class="normal">856</span>
+<span class="normal">857</span>
+<span class="normal">858</span>
+<span class="normal">859</span>
+<span class="normal">860</span>
+<span class="normal">861</span>
+<span class="normal">862</span>
+<span class="normal">863</span>
+<span class="normal">864</span>
+<span class="normal">865</span>
+<span class="normal">866</span>
+<span class="normal">867</span>
+<span class="normal">868</span>
+<span class="normal">869</span>
+<span class="normal">870</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_metrics_for_window</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">window_data</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate metrics for a given window of data.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5331,13 +5371,13 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">918</span>
-<span class="normal">919</span>
-<span class="normal">920</span>
-<span class="normal">921</span>
-<span class="normal">922</span>
-<span class="normal">923</span>
-<span class="normal">924</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_msd_for_all_tracks</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_lagtime</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">952</span>
+<span class="normal">953</span>
+<span class="normal">954</span>
+<span class="normal">955</span>
+<span class="normal">956</span>
+<span class="normal">957</span>
+<span class="normal">958</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_msd_for_all_tracks</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_lagtime</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the MSD for all tracks and produce the time-averaged DataFrame.</span>
 <span class="sd">    Parameters:</span>
@@ -5373,21 +5413,7 @@ Returns:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">652</span>
-<span class="normal">653</span>
-<span class="normal">654</span>
-<span class="normal">655</span>
-<span class="normal">656</span>
-<span class="normal">657</span>
-<span class="normal">658</span>
-<span class="normal">659</span>
-<span class="normal">660</span>
-<span class="normal">661</span>
-<span class="normal">662</span>
-<span class="normal">663</span>
-<span class="normal">664</span>
-<span class="normal">665</span>
-<span class="normal">666</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">666</span>
 <span class="normal">667</span>
 <span class="normal">668</span>
 <span class="normal">669</span>
@@ -5414,7 +5440,21 @@ Returns:
 <span class="normal">690</span>
 <span class="normal">691</span>
 <span class="normal">692</span>
-<span class="normal">693</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_msd_for_track</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">track_data</span><span class="p">,</span> <span class="n">max_lagtime</span><span class="p">):</span>
+<span class="normal">693</span>
+<span class="normal">694</span>
+<span class="normal">695</span>
+<span class="normal">696</span>
+<span class="normal">697</span>
+<span class="normal">698</span>
+<span class="normal">699</span>
+<span class="normal">700</span>
+<span class="normal">701</span>
+<span class="normal">702</span>
+<span class="normal">703</span>
+<span class="normal">704</span>
+<span class="normal">705</span>
+<span class="normal">706</span>
+<span class="normal">707</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_msd_for_track</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">track_data</span><span class="p">,</span> <span class="n">max_lagtime</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the MSD for a single track.</span>
 <span class="sd">    Parameters:</span>
@@ -5477,16 +5517,16 @@ Returns:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">620</span>
-<span class="normal">621</span>
-<span class="normal">622</span>
-<span class="normal">623</span>
-<span class="normal">624</span>
-<span class="normal">625</span>
-<span class="normal">626</span>
-<span class="normal">627</span>
-<span class="normal">628</span>
-<span class="normal">629</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_net_displacement</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">635</span>
+<span class="normal">636</span>
+<span class="normal">637</span>
+<span class="normal">638</span>
+<span class="normal">639</span>
+<span class="normal">640</span>
+<span class="normal">641</span>
+<span class="normal">642</span>
+<span class="normal">643</span>
+<span class="normal">644</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_net_displacement</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the net displacement from the starting point for each particle in micrometers.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5517,15 +5557,15 @@ Returns:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">598</span>
-<span class="normal">599</span>
-<span class="normal">600</span>
-<span class="normal">601</span>
-<span class="normal">602</span>
-<span class="normal">603</span>
-<span class="normal">604</span>
-<span class="normal">605</span>
-<span class="normal">606</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_normalized_curvature</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">613</span>
+<span class="normal">614</span>
+<span class="normal">615</span>
+<span class="normal">616</span>
+<span class="normal">617</span>
+<span class="normal">618</span>
+<span class="normal">619</span>
+<span class="normal">620</span>
+<span class="normal">621</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_normalized_curvature</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the curvature normalized by distance between consecutive frames for each particle.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5555,16 +5595,16 @@ Returns:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">552</span>
-<span class="normal">553</span>
-<span class="normal">554</span>
-<span class="normal">555</span>
-<span class="normal">556</span>
-<span class="normal">557</span>
-<span class="normal">558</span>
-<span class="normal">559</span>
-<span class="normal">560</span>
-<span class="normal">561</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_speeds</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">570</span>
+<span class="normal">571</span>
+<span class="normal">572</span>
+<span class="normal">573</span>
+<span class="normal">574</span>
+<span class="normal">575</span>
+<span class="normal">576</span>
+<span class="normal">577</span>
+<span class="normal">578</span>
+<span class="normal">579</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_speeds</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate the speed between consecutive frames for each particle in micrometers per second.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5598,31 +5638,7 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">740</span>
-<span class="normal">741</span>
-<span class="normal">742</span>
-<span class="normal">743</span>
-<span class="normal">744</span>
-<span class="normal">745</span>
-<span class="normal">746</span>
-<span class="normal">747</span>
-<span class="normal">748</span>
-<span class="normal">749</span>
-<span class="normal">750</span>
-<span class="normal">751</span>
-<span class="normal">752</span>
-<span class="normal">753</span>
-<span class="normal">754</span>
-<span class="normal">755</span>
-<span class="normal">756</span>
-<span class="normal">757</span>
-<span class="normal">758</span>
-<span class="normal">759</span>
-<span class="normal">760</span>
-<span class="normal">761</span>
-<span class="normal">762</span>
-<span class="normal">763</span>
-<span class="normal">764</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">764</span>
 <span class="normal">765</span>
 <span class="normal">766</span>
 <span class="normal">767</span>
@@ -5659,7 +5675,41 @@ Parameters:
 <span class="normal">798</span>
 <span class="normal">799</span>
 <span class="normal">800</span>
-<span class="normal">801</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_time_windowed_metrics</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">window_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">overlap</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="normal">801</span>
+<span class="normal">802</span>
+<span class="normal">803</span>
+<span class="normal">804</span>
+<span class="normal">805</span>
+<span class="normal">806</span>
+<span class="normal">807</span>
+<span class="normal">808</span>
+<span class="normal">809</span>
+<span class="normal">810</span>
+<span class="normal">811</span>
+<span class="normal">812</span>
+<span class="normal">813</span>
+<span class="normal">814</span>
+<span class="normal">815</span>
+<span class="normal">816</span>
+<span class="normal">817</span>
+<span class="normal">818</span>
+<span class="normal">819</span>
+<span class="normal">820</span>
+<span class="normal">821</span>
+<span class="normal">822</span>
+<span class="normal">823</span>
+<span class="normal">824</span>
+<span class="normal">825</span>
+<span class="normal">826</span>
+<span class="normal">827</span>
+<span class="normal">828</span>
+<span class="normal">829</span>
+<span class="normal">830</span>
+<span class="normal">831</span>
+<span class="normal">832</span>
+<span class="normal">833</span>
+<span class="normal">834</span>
+<span class="normal">835</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">calculate_time_windowed_metrics</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">window_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">overlap</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Calculate metrics for each time window.</span>
 <span class="sd">    Parameters:</span>
@@ -5693,6 +5743,13 @@ Parameters:
             <span class="c1"># Calculate total time in seconds for the window</span>
             <span class="n">total_time_s</span> <span class="o">=</span> <span class="p">(</span><span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;time_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;time_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
 
+            <span class="c1"># Calculate average instantaneous metrics for the window</span>
+            <span class="n">avg_speed</span> <span class="o">=</span> <span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+            <span class="n">avg_acceleration</span> <span class="o">=</span> <span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;acceleration_um_s2&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+            <span class="n">avg_jerk</span> <span class="o">=</span> <span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;jerk_um_s3&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+            <span class="n">avg_norm_curvature</span> <span class="o">=</span> <span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;normalized_curvature&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+            <span class="n">avg_angle_norm_curvature</span> <span class="o">=</span> <span class="n">window_data</span><span class="p">[</span><span class="s1">&#39;angle_normalized_curvature&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+
             <span class="c1"># Add window-level summary information to time_windowed_df</span>
             <span class="n">start_row</span> <span class="o">=</span> <span class="n">window_data</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
             <span class="n">end_row</span> <span class="o">=</span> <span class="n">window_data</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
@@ -5714,8 +5771,11 @@ Parameters:
                 <span class="s1">&#39;diffusion_coefficient&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">D</span><span class="p">],</span>  <span class="c1"># Add the diffusion coefficient</span>
                 <span class="s1">&#39;anomalous_exponent&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">alpha</span><span class="p">],</span>  <span class="c1"># Add the anomalous exponent</span>
                 <span class="s1">&#39;motion_class&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">motion_class</span><span class="p">],</span>  <span class="c1"># Add the motion class</span>
-                <span class="c1"># Placeholder for additional metrics</span>
-                <span class="c1"># &#39;additional_metric&#39;: None,</span>
+                <span class="s1">&#39;avg_speed_um_s&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_speed</span><span class="p">],</span>  <span class="c1"># Add average speed</span>
+                <span class="s1">&#39;avg_acceleration_um_s2&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_acceleration</span><span class="p">],</span>  <span class="c1"># Add average acceleration</span>
+                <span class="s1">&#39;avg_jerk_um_s3&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_jerk</span><span class="p">],</span>  <span class="c1"># Add average jerk</span>
+                <span class="s1">&#39;avg_normalized_curvature&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_norm_curvature</span><span class="p">],</span>  <span class="c1"># Add average normalized curvature</span>
+                <span class="s1">&#39;avg_angle_normalized_curvature&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_angle_norm_curvature</span><span class="p">],</span>  <span class="c1"># Add average angle normalized curvature</span>
             <span class="p">})</span>
 
             <span class="n">windowed_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">window_summary</span><span class="p">)</span>
@@ -5742,15 +5802,15 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">926</span>
-<span class="normal">927</span>
-<span class="normal">928</span>
-<span class="normal">929</span>
-<span class="normal">930</span>
-<span class="normal">931</span>
-<span class="normal">932</span>
-<span class="normal">933</span>
-<span class="normal">934</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">cleanup</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">960</span>
+<span class="normal">961</span>
+<span class="normal">962</span>
+<span class="normal">963</span>
+<span class="normal">964</span>
+<span class="normal">965</span>
+<span class="normal">966</span>
+<span class="normal">967</span>
+<span class="normal">968</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">cleanup</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Cleanup the dataframe by dropping unnecessary columns after all features are calculated.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5758,7 +5818,7 @@ Parameters:
         <span class="s1">&#39;x_um_prev&#39;</span><span class="p">,</span> <span class="s1">&#39;y_um_prev&#39;</span><span class="p">,</span> <span class="s1">&#39;time_s_prev&#39;</span><span class="p">,</span> <span class="s1">&#39;delta_time_s&#39;</span><span class="p">,</span> 
         <span class="s1">&#39;speed_um_s_prev&#39;</span><span class="p">,</span> <span class="s1">&#39;acceleration_um_s2_prev&#39;</span><span class="p">,</span> <span class="s1">&#39;direction_rad_prev&#39;</span><span class="p">,</span>
         <span class="s1">&#39;instant_velocity_x_um_s&#39;</span><span class="p">,</span> <span class="s1">&#39;instant_velocity_y_um_s&#39;</span><span class="p">,</span>
-        <span class="p">],</span> <span class="n">inplace</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="p">],</span> <span class="n">inplace</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -5780,11 +5840,11 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">898</span>
-<span class="normal">899</span>
-<span class="normal">900</span>
-<span class="normal">901</span>
-<span class="normal">902</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">get_time_averaged_df</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">932</span>
+<span class="normal">933</span>
+<span class="normal">934</span>
+<span class="normal">935</span>
+<span class="normal">936</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">get_time_averaged_df</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Return the DataFrame with time-averaged metrics.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5810,11 +5870,11 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">904</span>
-<span class="normal">905</span>
-<span class="normal">906</span>
-<span class="normal">907</span>
-<span class="normal">908</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">get_time_windowed_df</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">938</span>
+<span class="normal">939</span>
+<span class="normal">940</span>
+<span class="normal">941</span>
+<span class="normal">942</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">get_time_windowed_df</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Return the DataFrame with time-windowed metrics.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
@@ -5842,21 +5902,7 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/features.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">695</span>
-<span class="normal">696</span>
-<span class="normal">697</span>
-<span class="normal">698</span>
-<span class="normal">699</span>
-<span class="normal">700</span>
-<span class="normal">701</span>
-<span class="normal">702</span>
-<span class="normal">703</span>
-<span class="normal">704</span>
-<span class="normal">705</span>
-<span class="normal">706</span>
-<span class="normal">707</span>
-<span class="normal">708</span>
-<span class="normal">709</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">709</span>
 <span class="normal">710</span>
 <span class="normal">711</span>
 <span class="normal">712</span>
@@ -5885,7 +5931,31 @@ Parameters:
 <span class="normal">735</span>
 <span class="normal">736</span>
 <span class="normal">737</span>
-<span class="normal">738</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">produce_time_averaged_df</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_lagtime</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="normal">738</span>
+<span class="normal">739</span>
+<span class="normal">740</span>
+<span class="normal">741</span>
+<span class="normal">742</span>
+<span class="normal">743</span>
+<span class="normal">744</span>
+<span class="normal">745</span>
+<span class="normal">746</span>
+<span class="normal">747</span>
+<span class="normal">748</span>
+<span class="normal">749</span>
+<span class="normal">750</span>
+<span class="normal">751</span>
+<span class="normal">752</span>
+<span class="normal">753</span>
+<span class="normal">754</span>
+<span class="normal">755</span>
+<span class="normal">756</span>
+<span class="normal">757</span>
+<span class="normal">758</span>
+<span class="normal">759</span>
+<span class="normal">760</span>
+<span class="normal">761</span>
+<span class="normal">762</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">produce_time_averaged_df</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_lagtime</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Produce the time-averaged DataFrame.</span>
 <span class="sd">    Parameters:</span>
@@ -5901,6 +5971,13 @@ Parameters:
 
         <span class="c1"># Calculate total time in seconds for the track</span>
         <span class="n">total_time_s</span> <span class="o">=</span> <span class="p">(</span><span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;time_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;time_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+        <span class="c1"># Calculate average instantaneous metrics for the track</span>
+        <span class="n">avg_speed</span> <span class="o">=</span> <span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+        <span class="n">avg_acceleration</span> <span class="o">=</span> <span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;acceleration_um_s2&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+        <span class="n">avg_jerk</span> <span class="o">=</span> <span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;jerk_um_s3&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+        <span class="n">avg_norm_curvature</span> <span class="o">=</span> <span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;normalized_curvature&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+        <span class="n">avg_angle_norm_curvature</span> <span class="o">=</span> <span class="n">track_data</span><span class="p">[</span><span class="s1">&#39;angle_normalized_curvature&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
 
         <span class="c1"># Add track-level summary information to time_averaged_df</span>
         <span class="n">start_row</span> <span class="o">=</span> <span class="n">track_data</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
@@ -5922,8 +5999,11 @@ Parameters:
             <span class="s1">&#39;diffusion_coefficient&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">D</span><span class="p">],</span>  <span class="c1"># Add the diffusion coefficient</span>
             <span class="s1">&#39;anomalous_exponent&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">alpha</span><span class="p">],</span>  <span class="c1"># Add the anomalous exponent</span>
             <span class="s1">&#39;motion_class&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">motion_class</span><span class="p">],</span>  <span class="c1"># Add the motion class</span>
-            <span class="c1"># Placeholder for additional metrics</span>
-            <span class="c1"># &#39;additional_metric&#39;: None,</span>
+            <span class="s1">&#39;avg_speed_um_s&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_speed</span><span class="p">],</span>  <span class="c1"># Add average speed</span>
+            <span class="s1">&#39;avg_acceleration_um_s2&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_acceleration</span><span class="p">],</span>  <span class="c1"># Add average acceleration</span>
+            <span class="s1">&#39;avg_jerk_um_s3&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_jerk</span><span class="p">],</span>  <span class="c1"># Add average jerk</span>
+            <span class="s1">&#39;avg_normalized_curvature&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_norm_curvature</span><span class="p">],</span>  <span class="c1"># Add average normalized curvature</span>
+            <span class="s1">&#39;avg_angle_normalized_curvature&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">avg_angle_norm_curvature</span><span class="p">],</span>  <span class="c1"># Add average angle normalized curvature</span>
         <span class="p">})</span>
 
         <span class="n">time_averaged_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">track_summary</span><span class="p">)</span>
