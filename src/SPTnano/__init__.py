@@ -9,6 +9,8 @@ from .helper_scripts import *
 from .features import ParticleMetrics
 
 from .visualization import *
+
+import config
 # from .helper_scripts import generate_file_tree, display_file_tree
 
 def example_function(argument: str, keyword_argument: str = "default") -> str:
