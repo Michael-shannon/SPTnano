@@ -334,6 +334,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+# from .. import config
 
 def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind', use_kde=False, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None, grid=False):
     """
@@ -404,7 +405,12 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
             subsetvalues = subset[feature]
             
             max_value = subsetvalues.max()
-            bin_edges = np.linspace(0, max_value, bins + 1)
+
+            # Determine bin edges for the entire data range, including negative values
+            min_value = data_df[feature].min()
+            max_value = data_df[feature].max()
+            bin_edges = np.linspace(min_value, max_value, bins + 1)
+            # bin_edges = np.linspace(0, max_value, bins + 1)
             
             # Plot histogram or KDE
             if use_kde:
@@ -434,9 +440,10 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
             axes[i].set_ylabel('Percentage', fontsize=16)
             
             if xlimit is not None:
-                axes[i].set_xlim(0, xlimit)
+                x_lower = min_value if min_value < 0 else 0
+                axes[i].set_xlim(x_lower, xlimit)
             else:
-                axes[i].set_xlim(0, max_value)
+                axes[i].set_xlim(min_value, max_value)
         
         # Set common y-axis limits for all subplots
         for ax in axes:
@@ -500,9 +507,10 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
         plt.legend(title='', fontsize=16)
         ax = plt.gca()
         if xlimit is not None:
-            ax.set_xlim(0, xlimit)
+            x_lower = min_value if min_value < 0 else 0
+            axes[i].set_xlim(x_lower, xlimit)
         else:
-            ax.set_xlim(0, max_value)
+            axes[i].set_xlim(min_value, max_value)
         
         ax.set_xticks(np.arange(0, max_value + 1, tick_interval))  # Ensure ticks are at integer intervals
         ax.set_xlim(0, xlimit or max_value)  # Start x-axis at 0
@@ -671,7 +679,7 @@ def batch_plot_trajectories(master_folder, traj_df, batch=True, filename=None, c
         Colormap to use for coloring tracks.
     """
     data_folder = os.path.join(master_folder, 'data')
-    vis_folder = os.path.join(master_folder, 'visualization')
+    vis_folder = os.path.join(master_folder, 'visualization/trajectories')
     os.makedirs(vis_folder, exist_ok=True)
 
     if batch:
@@ -902,9 +910,12 @@ def bootstrap_ci_median(data, num_samples=1000, alpha=0.05):
     upper_bound = np.percentile(medians, 100 * (1 - alpha / 2))
     return upper_bound - lower_bound
 
-# def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_by='condition', palette='colorblind', meanormedian='mean', multiplot=False, talk=False):
+
+
+
+# def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_by='condition', palette='colorblind', meanormedian='mean', multiplot=False, talk=False, bootstrap=True, show_plot=True, master_dir=None):
 #     """
-#     Plot time series of a specified factor, with mean as a thick line and confidence intervals as shaded areas.
+#     Plot time series of a specified factor, with mean/median as a line and confidence intervals as shaded areas.
     
 #     Parameters
 #     ----------
@@ -924,14 +935,30 @@ def bootstrap_ci_median(data, num_samples=1000, alpha=0.05):
 #         Whether to generate separate small multiple plots for each category. Default is False.
 #     talk : bool, optional
 #         Whether to set the figure size to the original large size or a smaller size. Default is False.
+#     bootstrap : bool, optional
+#         Whether to use bootstrapping for confidence intervals. Default is True.
+#     show_plot : bool, optional
+#         Whether to display the plot in the notebook. Default is True.
+#     master_dir : str, optional
+#         The directory where the plots folder will be created and the plot will be saved. Default is None.
 #     """
+#     # max_time = data_df['time_s'].max()
+#     # max_time_zeroed = data_df['time_s_zeroed'].max()
+#     xmin=0.2 #### A FIX FOR NOW because really this should be the same as the shortest track (filteres to 0.2 s during filterstubs)
     
+#     if master_dir is None:
+#         master_dir = config.master  # Use the master directory from config if not provided
+
 #     if not absolute:
 #         time_col = 'time_s_zeroed'
+#         max_time_zeroed = data_df['time_s_zeroed'].max()
 #         x_label = 'Time zeroed (s)'
+#         xmax = max_time_zeroed
 #     else:
 #         time_col = 'time_s'
+#         max_time = data_df['time_s'].max()
 #         x_label = 'Time (s)'
+#         xmax = max_time
 
 #     unique_categories = data_df[separate_by].unique() if separate_by else [None]
 #     color_palette = sns.color_palette(palette, len(unique_categories))
@@ -960,21 +987,31 @@ def bootstrap_ci_median(data, num_samples=1000, alpha=0.05):
 
 #             if meanormedian == 'mean':
 #                 avg_factors = subset.groupby(time_col)[factor_col].mean()
-#                 ci = subset.groupby(time_col)[factor_col].apply(lambda x: bootstrap_ci_mean(x, num_samples=1000, alpha=0.05))
+#                 ci_func = bootstrap_ci_mean if bootstrap else lambda x: sem(x) * 1.96
 #             else:
 #                 avg_factors = subset.groupby(time_col)[factor_col].median()
-#                 ci = subset.groupby(time_col)[factor_col].apply(lambda x: bootstrap_ci_median(x, num_samples=1000, alpha=0.05))
+#                 ci_func = bootstrap_ci_median if bootstrap else lambda x: sem(x) * 1.96
+
+#             ci = subset.groupby(time_col)[factor_col].apply(ci_func)
 
 #             color = color_palette[i]
 #             label = category
 
-#             ax.plot(avg_factors.index, avg_factors.values, label=label, color=color, linewidth=0.5)
-#             ax.fill_between(avg_factors.index, avg_factors - ci, avg_factors + ci, color=color, alpha=0.3)
+#             # Exclude the first time point (time zero)
+#             valid_indices = avg_factors.index > 0
+
+#             ax.plot(avg_factors.index[valid_indices], avg_factors.values[valid_indices], label=label, color=color, linewidth=2.5)
+#             ax.fill_between(avg_factors.index[valid_indices], (avg_factors - ci)[valid_indices], (avg_factors + ci)[valid_indices], color=color, alpha=0.3)
 #             ax.set_xlabel(x_label, fontsize=font_size)
 #             ax.set_ylabel(factor_col, fontsize=font_size, labelpad=20)
-#             ax.legend(title=separate_by, fontsize=font_size, loc='upper left', bbox_to_anchor=(1, 1))
-#             ax.set_title(f'Time Series of {factor_col} - {category}', fontsize=font_size)
-        
+#             ax.legend(fontsize=font_size, loc='upper left', bbox_to_anchor=(1, 1))
+#             # ax.set_title(f'Time Series of {factor_col} - {category}', fontsize=font_size)
+#             ax.set_xlim(xmin, xmax)
+#             # Add faint gridlines
+#             ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray', alpha=0.7)
+#             ax.spines['top'].set_visible(False)
+#             ax.spines['right'].set_visible(False)
+
 #         plt.tight_layout()
 #     else:
 #         fig, ax = plt.subplots(figsize=fig_size)
@@ -986,27 +1023,64 @@ def bootstrap_ci_median(data, num_samples=1000, alpha=0.05):
 
 #             if meanormedian == 'mean':
 #                 avg_factors = subset.groupby(time_col)[factor_col].mean()
-#                 ci = subset.groupby(time_col)[factor_col].apply(lambda x: bootstrap_ci_mean(x, num_samples=1000, alpha=0.05))
+#                 ci_func = bootstrap_ci_mean if bootstrap else lambda x: sem(x) * 1.96
 #             else:
 #                 avg_factors = subset.groupby(time_col)[factor_col].median()
-#                 ci = subset.groupby(time_col)[factor_col].apply(lambda x: bootstrap_ci_median(x, num_samples=1000, alpha=0.05))
+#                 ci_func = bootstrap_ci_median if bootstrap else lambda x: sem(x) * 1.96
+
+#             ci = subset.groupby(time_col)[factor_col].apply(ci_func)
 
 #             color = color_palette[i]
 #             label = 'Overall' if category is None else category
 
-#             ax.plot(avg_factors.index, avg_factors.values, label=label, color=color, linewidth=0.5)
-#             ax.fill_between(avg_factors.index, avg_factors - ci, avg_factors + ci, color=color, alpha=0.3)
+#             # Exclude the first time point (time zero)
+#             valid_indices = avg_factors.index > 0
+
+#             ax.plot(avg_factors.index[valid_indices], avg_factors.values[valid_indices], label=label, color=color, linewidth=2.5)
+#             ax.fill_between(avg_factors.index[valid_indices], (avg_factors - ci)[valid_indices], (avg_factors + ci)[valid_indices], color=color, alpha=0.3)
 
 #         ax.set_xlabel(x_label, fontsize=font_size)
 #         ax.set_ylabel(factor_col, fontsize=font_size, labelpad=20)
-#         ax.legend(title=separate_by, fontsize=font_size, loc='upper left', bbox_to_anchor=(1.05, 1))
-#         ax.set_title(f'Time Series of {factor_col}', fontsize=font_size)
+#         ax.legend(fontsize=font_size, loc='upper left', bbox_to_anchor=(1.05, 1))
+#         # Add faint gridlines
+#         ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray', alpha=0.7)
+#         ax.spines['top'].set_visible(False)
+#         ax.spines['right'].set_visible(False)
+
+
+#         # ax.set_title(f'Time Series of {factor_col}', fontsize=font_size)
+#         # get the max value of the x
+
+#         #
+
+#         ax.set_xlim(xmin, xmax)
 #         plt.tight_layout(rect=[0, 0, 0.85, 1])  # Adjust layout to fit legend
+
+#     # Create directory for plots if it doesn't exist
+#     plots_dir = os.path.join(master_dir, 'plots')
+#     os.makedirs(plots_dir, exist_ok=True)
     
-#     plt.show()
+#     # Generate filename
+#     time_type = 'absolute' if absolute else 'time_zeroed'
+#     bootstrap_text = 'bootstrapped' if bootstrap else 'nonbootstrapped'
+#     multiplot_text = 'multiplot' if multiplot else 'singleplot'
+#     filename = f"{plots_dir}/{factor_col}_{time_type}_{meanormedian}_{bootstrap_text}_{multiplot_text}.png"
+    
+#     # Save plot
+#     plt.savefig(filename, bbox_inches='tight')
+#     #set xlim
+   
+    
+#     # Show plot if specified
+#     if show_plot:
+#         plt.show()
+#     else:
+#         plt.close()
 
 
-def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_by='condition', palette='colorblind', meanormedian='mean', multiplot=False, talk=False, bootstrap=True, show_plot=True, master_dir=None):
+def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_by='condition', palette='colorblind', 
+                     meanormedian='mean', multiplot=False, talk=False, bootstrap=True, show_plot=True, 
+                     master_dir=None, order=None, grid=True):
     """
     Plot time series of a specified factor, with mean/median as a line and confidence intervals as shaded areas.
     
@@ -1034,43 +1108,80 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
         Whether to display the plot in the notebook. Default is True.
     master_dir : str, optional
         The directory where the plots folder will be created and the plot will be saved. Default is None.
+    order : list, optional
+        Specific order for the conditions. Default is None.
+    grid : bool, optional
+        Whether to display grid lines. Default is True.
     """
-    max_time = data_df['time_s'].max()
-    max_time_zeroed = data_df['time_s_zeroed'].max()
-    xmin=0.2 #### A FIX FOR NOW
+    xmin = 0.2  # A FIX FOR NOW because really this should be the same as the shortest track (filtered to 0.2 s during filterstubs)
     
     if master_dir is None:
-        master_dir = config.master  # Use the master directory from config if not provided
+        master_dir = config.MASTER  # Use the master directory from config if not provided
+
+    if separate_by is not None and order is not None:
+        # Ensure the data is ordered according to the specified order
+        data_df[separate_by] = pd.Categorical(data_df[separate_by], categories=order, ordered=True)
 
     if not absolute:
         time_col = 'time_s_zeroed'
+        max_time_zeroed = data_df['time_s_zeroed'].max()
         x_label = 'Time zeroed (s)'
         xmax = max_time_zeroed
     else:
         time_col = 'time_s'
+        max_time = data_df['time_s'].max()
         x_label = 'Time (s)'
         xmax = max_time
 
-    unique_categories = data_df[separate_by].unique() if separate_by else [None]
+    # Use the categories attribute to maintain the specified order
+    if separate_by is not None:
+        # Convert to categorical if not already
+        if not pd.api.types.is_categorical_dtype(data_df[separate_by]):
+            data_df[separate_by] = pd.Categorical(data_df[separate_by], categories=order, ordered=True)
+        unique_categories = data_df[separate_by].cat.categories
+    else:
+        unique_categories = [None]
+
     color_palette = sns.color_palette(palette, len(unique_categories))
     
-    # Set figure size and font size based on the `talk` parameter
+    # # Set figure size and font size based on the `talk` parameter
+    # if talk:
+    #     fig_size = (40, 12)
+    #     font_size = 35
+    # else:
+    #     if multiplot and separate_by:
+    #         fig_size = (4, 8 * len(unique_categories))
+    #     else:
+    #         fig_size = (5, 3)
+    #     font_size = 14
+
+# Set figure size and font size based on the `talk` and `multiplot` parameters
     if talk:
-        fig_size = (40, 12)
+        base_fig_size = (40, 12)
         font_size = 35
     else:
-        if multiplot and separate_by:
-            fig_size = (10, 5 * len(unique_categories))
-        else:
-            fig_size = (5, 3)
+        base_fig_size = (5, 4)
         font_size = 14
+
+    # Adjust figure size if multiplot is true
+    if multiplot and separate_by:
+        fig_size = (base_fig_size[0], base_fig_size[1] * len(unique_categories))
+    else:
+        fig_size = base_fig_size
     
-    sns.set_context("notebook", rc={"lines.linewidth": 2.5, "font.size": font_size, "axes.titlesize": font_size, "axes.labelsize": font_size, "xtick.labelsize": font_size, "ytick.labelsize": font_size})
+    sns.set_context("notebook", rc={"lines.linewidth": 2.5, "font.size": font_size, "axes.titlesize": font_size, 
+                                    "axes.labelsize": font_size, "xtick.labelsize": font_size, "ytick.labelsize": font_size})
     
     if multiplot and separate_by:
-        fig, axes = plt.subplots(len(unique_categories), 1, figsize=fig_size, sharex=True)
+        num_categories = len(unique_categories)
+        fig, axes = plt.subplots(num_categories, 1, figsize=fig_size, sharex=True)
+        
+        if num_categories == 1:
+            axes = [axes]  # To handle the case with only one subplot
         
         for i, category in enumerate(unique_categories):
+            if pd.isna(category):
+                continue
             ax = axes[i] if len(unique_categories) > 1 else axes
             subset = data_df[data_df[separate_by] == category]
             times = subset[time_col]
@@ -1096,18 +1207,20 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
             ax.set_xlabel(x_label, fontsize=font_size)
             ax.set_ylabel(factor_col, fontsize=font_size, labelpad=20)
             ax.legend(fontsize=font_size, loc='upper left', bbox_to_anchor=(1, 1))
-            # ax.set_title(f'Time Series of {factor_col} - {category}', fontsize=font_size)
             ax.set_xlim(xmin, xmax)
-            # Add faint gridlines
-            ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray', alpha=0.7)
+            if grid:
+                ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray', alpha=0.7)
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
+            ax.set_title(f'{category}', fontsize=font_size)
 
         plt.tight_layout()
     else:
         fig, ax = plt.subplots(figsize=fig_size)
         
         for i, category in enumerate(unique_categories):
+            if pd.isna(category):
+                continue
             subset = data_df if category is None else data_df[data_df[separate_by] == category]
             times = subset[time_col]
             factors = subset[factor_col]
@@ -1133,17 +1246,10 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
         ax.set_xlabel(x_label, fontsize=font_size)
         ax.set_ylabel(factor_col, fontsize=font_size, labelpad=20)
         ax.legend(fontsize=font_size, loc='upper left', bbox_to_anchor=(1.05, 1))
-        # Add faint gridlines
-        ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray', alpha=0.7)
+        if grid:
+            ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray', alpha=0.7)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-
-
-        # ax.set_title(f'Time Series of {factor_col}', fontsize=font_size)
-        # get the max value of the x
-
-        #
-
         ax.set_xlim(xmin, xmax)
         plt.tight_layout(rect=[0, 0, 0.85, 1])  # Adjust layout to fit legend
 
@@ -1159,14 +1265,13 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
     
     # Save plot
     plt.savefig(filename, bbox_inches='tight')
-    #set xlim
-   
     
     # Show plot if specified
     if show_plot:
         plt.show()
     else:
         plt.close()
+
 
 
 
