@@ -519,12 +519,17 @@ import pandas as pd
 from tqdm.notebook import tqdm
 import scipy.optimize
 import re
+import config
 
 class ParticleMetrics:
-    def __init__(self, df):
+    def __init__(self, df, time_between_frames=None):
         self.df = df.copy()
         self.df['Location'] = self.df['filename'].apply(self.extract_location)  # Add Location column
         self.metrics_df = self.df.copy()
+
+        # Retrieve time_between_frames from config if not provided
+        self.time_between_frames = time_between_frames if time_between_frames is not None else config.TIME_BETWEEN_FRAMES
+        
         self.time_averaged_df = pd.DataFrame(columns=[
             'x_um_start', 'y_um_start', 'x_um_end', 'y_um_end', 
             'particle', 'condition', 'filename', 'file_id', 'unique_id',
@@ -618,6 +623,7 @@ class ParticleMetrics:
         self.metrics_df['normalized_curvature'] = (self.metrics_df['direction_rad'] - self.metrics_df['direction_rad_prev']) / self.metrics_df['segment_len_um']
         # Fill NaN and infinite values with 0
         self.metrics_df['normalized_curvature'] = self.metrics_df['normalized_curvature'].replace([np.inf, -np.inf], np.nan).fillna(0)
+        # self.metrics_df['normalized_curvature_deg'] = np.degrees(self.metrics_df['normalized_curvature'])
         return self.metrics_df
     
     def calculate_angle_normalized_curvature(self):
@@ -630,7 +636,27 @@ class ParticleMetrics:
         self.metrics_df['angle_normalized_curvature'] = (self.metrics_df['angle_normalized_curvature'] + np.pi) % (2 * np.pi) - np.pi
         # Fill NaN values with 0
         self.metrics_df['angle_normalized_curvature'] = self.metrics_df['angle_normalized_curvature'].fillna(0)
+        # Convert columns from radians to degrees
+
+        # self.metrics_df['angle_normalized_curvature_deg'] = np.degrees(self.metrics_df['angle_normalized_curvature'])
         return self.metrics_df
+    
+
+    def calculate_persistence_length(self, track_data):
+        """
+        Calculate the persistence length for a given track.
+        Parameters:
+        - track_data: DataFrame containing the track data.
+        Returns:
+        - persistence_length: Calculated persistence length for the track.
+        """
+        directions = track_data['direction_rad']
+        # Calculate directional correlation: <cos(theta_i - theta_j)>
+        direction_diffs = directions.diff().dropna()
+        correlation = np.cos(direction_diffs).mean()
+        persistence_length = -1 / np.log(correlation) if correlation != 0 else np.nan
+        return persistence_length
+
 
     def calculate_net_displacement(self):
         """
@@ -801,6 +827,9 @@ class ParticleMetrics:
                 avg_jerk = window_data['jerk_um_s3'].mean()
                 avg_norm_curvature = window_data['normalized_curvature'].mean()
                 avg_angle_norm_curvature = window_data['angle_normalized_curvature'].mean()
+                # Calculate persistence length for window
+                persistence_length = self.calculate_persistence_length(window_data)
+
 
                 # Add window-level summary information to time_windowed_df
                 start_row = window_data.iloc[0]
@@ -828,11 +857,15 @@ class ParticleMetrics:
                     'avg_jerk_um_s3': [avg_jerk],  # Add average jerk
                     'avg_normalized_curvature': [avg_norm_curvature],  # Add average normalized curvature
                     'avg_angle_normalized_curvature': [avg_angle_norm_curvature],  # Add average angle normalized curvature
+                    'persistence_length': [persistence_length],  # Add persistence length
                 })
 
                 windowed_list.append(window_summary)
 
         self.time_windowed_df = pd.concat(windowed_list).reset_index(drop=True)
+
+        # Use the instance variable for frame duration
+        self.time_windowed_df['time_s'] = self.time_windowed_df['time_window'] * (window_size - overlap) * self.time_between_frames #This added to translate time windows into seconds
 
     def calculate_metrics_for_window(self, window_data):
         """
