@@ -11,8 +11,10 @@ import skimage.io as io
 import napari
 import numpy as np
 from scipy.stats import sem
+import random
 
 import config
+from napari_animation import Animation
 
 
 
@@ -329,14 +331,444 @@ def plot_histograms_seconds(traj_df, bins=100, coltoseparate='tracker', xlimit=N
 #         plt.close()
 
 
-import os
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
+# import os
+# import numpy as np
+# import matplotlib.pyplot as plt
+# import seaborn as sns
+# import pandas as pd
 # from .. import config
 
-def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind', use_kde=False, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None, grid=False):
+# def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind', use_kde=False, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None, grid=False):
+#     """
+#     Plot histograms or KDEs of a specified feature for each category in `separate`, with consistent binning.
+
+#     Parameters
+#     ----------
+#     data_df : DataFrame
+#         DataFrame containing track data with the specified feature and optionally a separating column.
+#     feature : str
+#         The feature to plot histograms for.
+#     bins : int, optional
+#         Number of bins for the histogram. Default is 100.
+#     separate : str, optional
+#         Column to separate the data by. If None, all data will be plotted together. Default is None.
+#     xlimit : float, optional
+#         Upper limit for the x-axis. Default is None.
+#     small_multiples : bool, optional
+#         Whether to plot each category separately as small multiples. Default is False.
+#     palette : str, optional
+#         Color palette for the plot. Default is 'colorblind'.
+#     use_kde : bool, optional
+#         Whether to use KDE plot instead of histogram. Default is False.
+#     show_plot : bool, optional
+#         Whether to display the plot in the notebook. Default is True.
+#     master_dir : str, optional
+#         The directory where the plots folder will be created and the plot will be saved. Default is None.
+#     tick_interval : int, optional
+#         Interval for x-axis ticks. Default is 5.
+#     average : str, optional
+#         Whether to draw 'mean' or 'median' line on the plot. Default is 'mean'.
+#     order : list, optional
+#         Specific order for the conditions. Default is None.
+#     """
+
+#     if master_dir is None:
+#         master_dir = config.master  # Use the master directory from config if not provided
+
+#     if separate is not None and order is not None:
+#         # Ensure the data is ordered according to the specified order
+#         data_df[separate] = pd.Categorical(data_df[separate], categories=order, ordered=True)
+
+#     textpositionx=  0.6
+#     textpositiony= 0.8
+
+#     # Use the categories attribute to maintain the specified order
+#     if separate is not None:
+#         unique_categories = data_df[separate].cat.categories
+#     else:
+#         unique_categories = [None]
+
+#     color_palette = sns.color_palette(palette, len(unique_categories))
+
+#     # Determine global maximum y-value for consistent y-axis limits
+#     global_max_y = 0
+
+#     if small_multiples and separate is not None:
+#         num_categories = len(unique_categories)
+#         fig, axes = plt.subplots(num_categories, 1, figsize=(20, 6 * num_categories), sharex=True)
+        
+#         if num_categories == 1:
+#             axes = [axes]  # To handle the case with only one subplot
+        
+#         for i, category in enumerate(unique_categories):
+#             if pd.isna(category):
+#                 continue
+#             subset = data_df[data_df[separate] == category]
+#             subsetvalues = subset[feature]
+            
+#             max_value = subsetvalues.max()
+
+#             # Determine bin edges for the entire data range, including negative values
+#             min_value = data_df[feature].min()
+#             max_value = data_df[feature].max()
+#             bin_edges = np.linspace(min_value, max_value, bins + 1)
+#             # bin_edges = np.linspace(0, max_value, bins + 1)
+            
+#             # Plot histogram or KDE
+#             if use_kde:
+#                 sns.kdeplot(subsetvalues, fill=True, ax=axes[i], color=color_palette[i])
+#                 current_max_y = axes[i].get_ylim()[1]  # Get the current maximum y-value from the plot
+#             else:
+#                 plot = sns.histplot(subsetvalues, bins=bin_edges, kde=False, ax=axes[i], stat="percent", color=color_palette[i])
+#                 current_max_y = plot.get_ylim()[1]
+            
+#             # Update global maximum y-value
+#             if current_max_y > global_max_y:
+#                 global_max_y = current_max_y
+            
+#             # Plot average line
+#             if average == 'mean':
+#                 avg_value = subsetvalues.mean()
+#                 axes[i].axvline(avg_value, color='black', linestyle='--')
+#                 axes[i].text(textpositionx, textpositiony, f"Mean: {avg_value:.2f}", transform=axes[i].transAxes, fontsize=16)
+#             elif average == 'median':
+#                 avg_value = subsetvalues.median()
+#                 axes[i].axvline(avg_value, color='black', linestyle='--')
+#                 axes[i].text(textpositionx, textpositiony, f"Median: {avg_value:.2f}", transform=axes[i].transAxes, fontsize=16)
+            
+#             axes[i].set_title(f'{category}', fontsize=16)
+#             axes[i].tick_params(axis='both', which='major', labelsize=16)
+#             axes[i].set_xlabel(f'{feature}', fontsize=16)
+#             axes[i].set_ylabel('Percentage', fontsize=16)
+            
+#             if xlimit is not None:
+#                 x_lower = min_value if min_value < 0 else 0
+#                 axes[i].set_xlim(x_lower, xlimit)
+#             else:
+#                 axes[i].set_xlim(min_value, max_value)
+        
+#         # Set common y-axis limits for all subplots
+#         for ax in axes:
+#             ax.set_ylim(0, global_max_y)
+        
+#         plt.tight_layout()
+    
+#     else:
+#         plt.figure(figsize=(20, 12))
+#         sns.set_context("notebook", rc={"xtick.labelsize": 16, "ytick.labelsize": 16})
+        
+#         max_value = data_df[feature].max()
+#         bin_edges = np.linspace(0, max_value, bins + 1)
+        
+#         if separate is None:
+#             subsetvalues = data_df[feature]
+            
+#             # Plot histogram or KDE
+#             if use_kde:
+#                 sns.kdeplot(subsetvalues, fill=True, alpha=0.5, color=color_palette[0])
+#             else:
+#                 sns.histplot(subsetvalues, bins=bin_edges, kde=False, alpha=0.5, stat="percent", color=color_palette[0])
+            
+#             # Plot average line
+#             if average == 'mean':
+#                 avg_value = subsetvalues.mean()
+#                 plt.axvline(avg_value, color='r', linestyle='--')
+#                 plt.text(textpositionx, textpositiony, f"Overall Mean: {avg_value:.2f}", transform=plt.gca().transAxes, fontsize=16)
+#             elif average == 'median':
+#                 avg_value = subsetvalues.median()
+#                 plt.axvline(avg_value, color='b', linestyle='--')
+#                 plt.text(0.4, 0.6, f"Overall Median: {avg_value:.2f}", transform=plt.gca().transAxes, fontsize=16)
+        
+#         else:
+#             for i, category in enumerate(unique_categories):
+#                 if pd.isna(category):
+#                     continue
+#                 subset = data_df[data_df[separate] == category]
+#                 subsetvalues = subset[feature]
+                
+#                 # Plot histogram or KDE
+#                 if use_kde:
+#                     sns.kdeplot(subsetvalues, fill=True, label=category, alpha=0.5, color=color_palette[i])
+#                 else:
+#                     sns.histplot(subsetvalues, bins=bin_edges, kde=False, label=category, alpha=0.5, stat="percent", color=color_palette[i])
+                
+#                 # Plot average line
+#                 if average == 'mean':
+#                     avg_value = subsetvalues.mean()
+#                     plt.axvline(avg_value, color=color_palette[i], linestyle='--')
+#                 elif average == 'median':
+#                     avg_value = subsetvalues.median()
+#                     plt.axvline(avg_value, color=color_palette[i], linestyle='--')
+                
+#                 number_of_tracks = len(subset['unique_id'].unique())
+#                 shift = i * 0.05
+#                 plt.text(textpositionx, textpositiony - shift, f"{category}: {average.capitalize()}: {avg_value:.2f} from {number_of_tracks} tracks", transform=plt.gca().transAxes, fontsize=16)
+        
+#         plt.xlabel(f'{feature}', fontsize=16)
+#         plt.ylabel('Percentage', fontsize=16)
+#         plt.legend(title='', fontsize=16)
+#         ax = plt.gca()
+#         if xlimit is not None:
+#             x_lower = min_value if min_value < 0 else 0
+#             axes[i].set_xlim(x_lower, xlimit)
+#         else:
+#             axes[i].set_xlim(min_value, max_value)
+        
+#         ax.set_xticks(np.arange(0, max_value + 1, tick_interval))  # Ensure ticks are at integer intervals
+#         ax.set_xlim(0, xlimit or max_value)  # Start x-axis at 0
+#         if grid:
+#             ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)  # Add faint gridlines
+#         else:
+#             print("No grid")
+
+#     # Create directory for plots if it doesn't exist
+#     plots_dir = os.path.join(master_dir, 'plots')
+#     os.makedirs(plots_dir, exist_ok=True)
+#     histodir = os.path.join(plots_dir, 'histograms')
+#     os.makedirs(histodir, exist_ok=True)
+    
+#     # Generate filename
+#     kde_text = 'kde' if use_kde else 'histogram'
+#     average_text = f'{average}'
+#     if small_multiples:
+#         multitext = 'small_multiples'
+#     else:
+#         multitext = 'single_plot'
+
+#     filename = f"{histodir}/{kde_text}_{feature}_{average_text}_{multitext}.png"
+    
+#     # Save plot
+#     plt.savefig(filename, bbox_inches='tight')
+    
+#     # Show plot if specified
+#     if show_plot:
+#         plt.show()
+#     else:
+#         plt.close()
+
+########################
+######################################
+##############################################################################
+#############################################################################################THIS ONE ############################################################
+# def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind',
+#                     use_kde=False, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None, grid=False):
+#     """
+#     Plot histograms or KDEs of a specified feature for each category in `separate`, with consistent binning.
+
+#     Parameters
+#     ----------
+#     data_df : DataFrame
+#         DataFrame containing track data with the specified feature and optionally a separating column.
+#     feature : str
+#         The feature to plot histograms for.
+#     bins : int, optional
+#         Number of bins for the histogram. Default is 100.
+#     separate : str, optional
+#         Column to separate the data by. If None, all data will be plotted together. Default is None.
+#     xlimit : float, optional
+#         Upper limit for the x-axis. Default is None.
+#     small_multiples : bool, optional
+#         Whether to plot each category separately as small multiples. Default is False.
+#     palette : str, optional
+#         Color palette for the plot. Default is 'colorblind'.
+#     use_kde : bool, optional
+#         Whether to use KDE plot instead of histogram. Default is False.
+#     show_plot : bool, optional
+#         Whether to display the plot in the notebook. Default is True.
+#     master_dir : str, optional
+#         The directory where the plots folder will be created and the plot will be saved. Default is None.
+#     tick_interval : int, optional
+#         Interval for x-axis ticks. Default is 5.
+#     average : str, optional
+#         Whether to draw 'mean' or 'median' line on the plot. Default is 'mean'.
+#     order : list, optional
+#         Specific order for the conditions. Default is None.
+#     """
+#     if master_dir is None:
+#         master_dir = "plots"  # Use a default directory if not provided
+
+#     if separate is not None:
+#         # Ensure the column used for separation is of categorical type
+#         if not pd.api.types.is_categorical_dtype(data_df[separate]):
+#             data_df[separate] = data_df[separate].astype('category')
+
+#         if order is not None:
+#             # Ensure the data is ordered according to the specified order
+#             data_df[separate] = pd.Categorical(data_df[separate], categories=order, ordered=True)
+
+#     textpositionx = 0.6
+#     textpositiony = 0.8
+
+#     # Use the categories attribute to maintain the specified order
+#     if separate is not None:
+#         unique_categories = data_df[separate].cat.categories
+#     else:
+#         unique_categories = [None]
+
+#     color_palette = sns.color_palette(palette, len(unique_categories))
+
+#     # Determine global maximum y-value for consistent y-axis limits
+#     global_max_y = 0
+
+#     if small_multiples and separate is not None:
+#         num_categories = len(unique_categories)
+#         fig, axes = plt.subplots(num_categories, 1, figsize=(20, 6 * num_categories), sharex=True)
+
+#         if num_categories == 1:
+#             axes = [axes]  # To handle the case with only one subplot
+
+#         for i, category in enumerate(unique_categories):
+#             if pd.isna(category):
+#                 continue
+#             subset = data_df[data_df[separate] == category]
+#             subsetvalues = subset[feature]
+
+#             max_value = subsetvalues.max()
+
+#             # Determine bin edges for the entire data range, including negative values
+#             min_value = data_df[feature].min()
+#             max_value = data_df[feature].max()
+#             bin_edges = np.linspace(min_value, max_value, bins + 1)
+
+#             # Plot histogram or KDE
+#             if use_kde:
+#                 sns.kdeplot(subsetvalues, fill=True, ax=axes[i], color=color_palette[i])
+#                 current_max_y = axes[i].get_ylim()[1]  # Get the current maximum y-value from the plot
+#             else:
+#                 plot = sns.histplot(subsetvalues, bins=bin_edges, kde=False, ax=axes[i], stat="percent", color=color_palette[i])
+#                 current_max_y = plot.get_ylim()[1]
+
+#             # Update global maximum y-value
+#             if current_max_y > global_max_y:
+#                 global_max_y = current_max_y
+
+#             # Plot average line
+#             if average == 'mean':
+#                 avg_value = subsetvalues.mean()
+#                 axes[i].axvline(avg_value, color='black', linestyle='--')
+#                 axes[i].text(textpositionx, textpositiony, f"Mean: {avg_value:.2f}", transform=axes[i].transAxes, fontsize=16)
+#             elif average == 'median':
+#                 avg_value = subsetvalues.median()
+#                 axes[i].axvline(avg_value, color='black', linestyle='--')
+#                 axes[i].text(textpositionx, textpositiony, f"Median: {avg_value:.2f}", transform=axes[i].transAxes, fontsize=16)
+
+#             axes[i].set_title(f'{category}', fontsize=16)
+#             axes[i].tick_params(axis='both', which='major', labelsize=16)
+#             axes[i].set_xlabel(f'{feature}', fontsize=16)
+#             axes[i].set_ylabel('Percentage', fontsize=16)
+
+#             if xlimit is not None:
+#                 x_lower = min_value if min_value < 0 else 0
+#                 axes[i].set_xlim(x_lower, xlimit)
+#             else:
+#                 axes[i].set_xlim(min_value, max_value)
+
+#         # Set common y-axis limits for all subplots
+#         for ax in axes:
+#             ax.set_ylim(0, global_max_y)
+#             if xlimit is not None:
+#                 x_lower = min_value if min_value < 0 else 0
+#                 ax.set_xlim(x_lower, xlimit)
+#             else:
+#                 ax.set_xlim(min_value , xlimit)
+
+#         plt.tight_layout()
+
+#     else:
+#         plt.figure(figsize=(20, 12))
+#         sns.set_context("notebook", rc={"xtick.labelsize": 16, "ytick.labelsize": 16})
+
+#         max_value = data_df[feature].max()
+#         min_value = data_df[feature].min()
+#         bin_edges = np.linspace(min_value, max_value, bins + 1)
+
+#         if separate is None:
+#             subsetvalues = data_df[feature]
+
+#             # Plot histogram or KDE
+#             if use_kde:
+#                 sns.kdeplot(subsetvalues, fill=True, alpha=0.5, color=color_palette[0])
+#             else:
+#                 sns.histplot(subsetvalues, bins=bin_edges, kde=False, alpha=0.5, stat="percent", color=color_palette[0])
+
+#             # Plot average line
+#             if average == 'mean':
+#                 avg_value = subsetvalues.mean()
+#                 plt.axvline(avg_value, color='r', linestyle='--')
+#                 plt.text(textpositionx, textpositiony, f"Overall Mean: {avg_value:.2f}", transform=plt.gca().transAxes, fontsize=16)
+#             elif average == 'median':
+#                 avg_value = subsetvalues.median()
+#                 plt.axvline(avg_value, color='b', linestyle='--')
+#                 plt.text(0.4, 0.6, f"Overall Median: {avg_value:.2f}", transform=plt.gca().transAxes, fontsize=16)
+
+#         else:
+#             for i, category in enumerate(unique_categories):
+#                 if pd.isna(category):
+#                     continue
+#                 subset = data_df[data_df[separate] == category]
+#                 subsetvalues = subset[feature]
+
+#                 # Plot histogram or KDE
+#                 if use_kde:
+#                     sns.kdeplot(subsetvalues, fill=True, label=category, alpha=0.5, color=color_palette[i])
+#                 else:
+#                     sns.histplot(subsetvalues, bins=bin_edges, kde=False, label=category, alpha=0.5, stat="percent", color=color_palette[i])
+
+#                 # Plot average line
+#                 if average == 'mean':
+#                     avg_value = subsetvalues.mean()
+#                     plt.axvline(avg_value, color=color_palette[i], linestyle='--')
+#                 elif average == 'median':
+#                     avg_value = subsetvalues.median()
+#                     plt.axvline(avg_value, color=color_palette[i], linestyle='--')
+
+#                 number_of_tracks = len(subset['unique_id'].unique())
+#                 shift = i * 0.05
+#                 plt.text(textpositionx, textpositiony - shift, f"{category}: {average.capitalize()}: {avg_value:.2f} from {number_of_tracks} tracks", transform=plt.gca().transAxes, fontsize=16)
+
+#         plt.xlabel(f'{feature}', fontsize=16)
+#         plt.ylabel('Percentage', fontsize=16)
+#         plt.legend(title='', fontsize=16)
+#         ax = plt.gca()
+#         if xlimit is not None:
+#             x_lower = min_value if min_value < 0 else 0
+#             ax.set_xlim(x_lower, xlimit)
+#         else:
+#             ax.set_xlim(min_value, max_value)
+
+#         ax.set_xticks(np.arange(0, max_value + 1, tick_interval))  # Ensure ticks are at integer intervals
+#         if grid:
+#             ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)  # Add faint gridlines
+
+#     # Create directory for plots if it doesn't exist
+#     plots_dir = os.path.join(master_dir, 'plots')
+#     os.makedirs(plots_dir, exist_ok=True)
+#     histodir = os.path.join(plots_dir, 'histograms')
+#     os.makedirs(histodir, exist_ok=True)
+
+#     # Generate filename
+#     kde_text = 'kde' if use_kde else 'histogram'
+#     average_text = f'{average}'
+#     if small_multiples:
+#         multitext = 'small_multiples'
+#     else:
+#         multitext = 'single_plot'
+
+#     filename = f"{histodir}/{kde_text}_{feature}_{average_text}_{multitext}.png"
+    
+#     # Save plot
+#     plt.savefig(filename, bbox_inches='tight')
+    
+#     # Show plot if specified
+#     if show_plot:
+#         plt.show()
+#     else:
+#         plt.close()
+
+###########################################################
+
+def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind',
+                    use_kde=False, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None, grid=False):
     """
     Plot histograms or KDEs of a specified feature for each category in `separate`, with consistent binning.
 
@@ -369,16 +801,20 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
     order : list, optional
         Specific order for the conditions. Default is None.
     """
-
     if master_dir is None:
-        master_dir = config.master  # Use the master directory from config if not provided
+        master_dir = "plots"  # Use a default directory if not provided
 
-    if separate is not None and order is not None:
-        # Ensure the data is ordered according to the specified order
-        data_df[separate] = pd.Categorical(data_df[separate], categories=order, ordered=True)
+    if separate is not None:
+        # Ensure the column used for separation is of categorical type
+        if not pd.api.types.is_categorical_dtype(data_df[separate]):
+            data_df[separate] = data_df[separate].astype('category')
 
-    textpositionx=  0.6
-    textpositiony= 0.8
+        if order is not None:
+            # Ensure the data is ordered according to the specified order
+            data_df[separate] = pd.Categorical(data_df[separate], categories=order, ordered=True)
+
+    textpositionx = 0.6
+    textpositiony = 0.8
 
     # Use the categories attribute to maintain the specified order
     if separate is not None:
@@ -394,24 +830,21 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
     if small_multiples and separate is not None:
         num_categories = len(unique_categories)
         fig, axes = plt.subplots(num_categories, 1, figsize=(20, 6 * num_categories), sharex=True)
-        
+
         if num_categories == 1:
             axes = [axes]  # To handle the case with only one subplot
-        
+
         for i, category in enumerate(unique_categories):
             if pd.isna(category):
                 continue
             subset = data_df[data_df[separate] == category]
             subsetvalues = subset[feature]
-            
-            max_value = subsetvalues.max()
 
             # Determine bin edges for the entire data range, including negative values
             min_value = data_df[feature].min()
-            max_value = data_df[feature].max()
+            max_value = data_df[feature].max() if xlimit is None else xlimit
             bin_edges = np.linspace(min_value, max_value, bins + 1)
-            # bin_edges = np.linspace(0, max_value, bins + 1)
-            
+
             # Plot histogram or KDE
             if use_kde:
                 sns.kdeplot(subsetvalues, fill=True, ax=axes[i], color=color_palette[i])
@@ -419,11 +852,11 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
             else:
                 plot = sns.histplot(subsetvalues, bins=bin_edges, kde=False, ax=axes[i], stat="percent", color=color_palette[i])
                 current_max_y = plot.get_ylim()[1]
-            
+
             # Update global maximum y-value
             if current_max_y > global_max_y:
                 global_max_y = current_max_y
-            
+
             # Plot average line
             if average == 'mean':
                 avg_value = subsetvalues.mean()
@@ -433,40 +866,39 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
                 avg_value = subsetvalues.median()
                 axes[i].axvline(avg_value, color='black', linestyle='--')
                 axes[i].text(textpositionx, textpositiony, f"Median: {avg_value:.2f}", transform=axes[i].transAxes, fontsize=16)
-            
+
             axes[i].set_title(f'{category}', fontsize=16)
             axes[i].tick_params(axis='both', which='major', labelsize=16)
             axes[i].set_xlabel(f'{feature}', fontsize=16)
             axes[i].set_ylabel('Percentage', fontsize=16)
-            
-            if xlimit is not None:
-                x_lower = min_value if min_value < 0 else 0
-                axes[i].set_xlim(x_lower, xlimit)
-            else:
-                axes[i].set_xlim(min_value, max_value)
-        
+
+            # Apply x-axis limits
+            x_lower = min_value if min_value < 0 else 0
+            axes[i].set_xlim(x_lower, max_value)
+
         # Set common y-axis limits for all subplots
         for ax in axes:
             ax.set_ylim(0, global_max_y)
-        
+
         plt.tight_layout()
-    
+
     else:
         plt.figure(figsize=(20, 12))
         sns.set_context("notebook", rc={"xtick.labelsize": 16, "ytick.labelsize": 16})
-        
-        max_value = data_df[feature].max()
-        bin_edges = np.linspace(0, max_value, bins + 1)
-        
+
+        min_value = data_df[feature].min()
+        max_value = data_df[feature].max() if xlimit is None else xlimit
+        bin_edges = np.linspace(min_value, max_value, bins + 1)
+
         if separate is None:
             subsetvalues = data_df[feature]
-            
+
             # Plot histogram or KDE
             if use_kde:
                 sns.kdeplot(subsetvalues, fill=True, alpha=0.5, color=color_palette[0])
             else:
                 sns.histplot(subsetvalues, bins=bin_edges, kde=False, alpha=0.5, stat="percent", color=color_palette[0])
-            
+
             # Plot average line
             if average == 'mean':
                 avg_value = subsetvalues.mean()
@@ -476,20 +908,20 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
                 avg_value = subsetvalues.median()
                 plt.axvline(avg_value, color='b', linestyle='--')
                 plt.text(0.4, 0.6, f"Overall Median: {avg_value:.2f}", transform=plt.gca().transAxes, fontsize=16)
-        
+
         else:
             for i, category in enumerate(unique_categories):
                 if pd.isna(category):
                     continue
                 subset = data_df[data_df[separate] == category]
                 subsetvalues = subset[feature]
-                
+
                 # Plot histogram or KDE
                 if use_kde:
                     sns.kdeplot(subsetvalues, fill=True, label=category, alpha=0.5, color=color_palette[i])
                 else:
                     sns.histplot(subsetvalues, bins=bin_edges, kde=False, label=category, alpha=0.5, stat="percent", color=color_palette[i])
-                
+
                 # Plot average line
                 if average == 'mean':
                     avg_value = subsetvalues.mean()
@@ -497,41 +929,34 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
                 elif average == 'median':
                     avg_value = subsetvalues.median()
                     plt.axvline(avg_value, color=color_palette[i], linestyle='--')
-                
+
                 number_of_tracks = len(subset['unique_id'].unique())
                 shift = i * 0.05
                 plt.text(textpositionx, textpositiony - shift, f"{category}: {average.capitalize()}: {avg_value:.2f} from {number_of_tracks} tracks", transform=plt.gca().transAxes, fontsize=16)
-        
+
         plt.xlabel(f'{feature}', fontsize=16)
         plt.ylabel('Percentage', fontsize=16)
         plt.legend(title='', fontsize=16)
         ax = plt.gca()
-        if xlimit is not None:
-            x_lower = min_value if min_value < 0 else 0
-            axes[i].set_xlim(x_lower, xlimit)
-        else:
-            axes[i].set_xlim(min_value, max_value)
-        
+
+        # Apply x-axis limits
+        x_lower = min_value if min_value < 0 else 0
+        ax.set_xlim(x_lower, max_value)
+
         ax.set_xticks(np.arange(0, max_value + 1, tick_interval))  # Ensure ticks are at integer intervals
-        ax.set_xlim(0, xlimit or max_value)  # Start x-axis at 0
         if grid:
             ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)  # Add faint gridlines
-        else:
-            print("No grid")
 
     # Create directory for plots if it doesn't exist
     plots_dir = os.path.join(master_dir, 'plots')
     os.makedirs(plots_dir, exist_ok=True)
     histodir = os.path.join(plots_dir, 'histograms')
     os.makedirs(histodir, exist_ok=True)
-    
+
     # Generate filename
     kde_text = 'kde' if use_kde else 'histogram'
     average_text = f'{average}'
-    if small_multiples:
-        multitext = 'small_multiples'
-    else:
-        multitext = 'single_plot'
+    multitext = 'small_multiples' if small_multiples else 'single_plot'
 
     filename = f"{histodir}/{kde_text}_{feature}_{average_text}_{multitext}.png"
     
@@ -815,63 +1240,19 @@ def get_condition_from_filename(df, filename):
 
 
 
-def napari_visualize_image_with_tracks(tracked_filename, tracks_df, master_dir):
-    # Get the condition from the dataframe based on the tracked filename
-    condition = get_condition_from_filename(tracks_df, tracked_filename)
-    
-    # Construct the full file path by removing '_tracked' and adding '.tif'
-    image_filename = tracked_filename.replace('_tracked', '') + '.tif'
-    image_path = os.path.join(master_dir, condition, image_filename)
-    
-    # Load the image
-    image = load_image(image_path)
-
-    # Load the tracks
-    tracks = load_tracks(tracks_df, tracked_filename)
-
-    print(tracks.columns)
-
-    tracks_new_df = tracks[["particle", "frame", "y", "x"]]
-
-    # Extract x, y, and frame information for the tracks
-    coords = np.array([tracks['x'].values, tracks['y'].values, tracks['frame'].values]).T
-    
-    # Start Napari viewer
-    viewer = napari.Viewer()
-
-    # Add image layer
-    viewer.add_image(image, name=f'Raw {tracked_filename}')
-
-    # Add tracks layer
-    viewer.add_tracks(tracks_new_df, name=f'Tracks{tracked_filename}')
-
-    napari.run()
-
-
-
 # def napari_visualize_image_with_tracks(tracked_filename, tracks_df, master_dir):
 #     # Get the condition from the dataframe based on the tracked filename
 #     condition = get_condition_from_filename(tracks_df, tracked_filename)
     
-#     # Construct the full file path for the image by removing '_tracked' and adding '.tif'
+#     # Construct the full file path by removing '_tracked' and adding '.tif'
 #     image_filename = tracked_filename.replace('_tracked', '') + '.tif'
 #     image_path = os.path.join(master_dir, condition, image_filename)
     
-#     # Debugging: Print the constructed file paths
-#     print(f"Tracked filename: {tracked_filename}")
-#     print(f"Condition: {condition}")
-#     print(f"Image filename: {image_filename}")
-#     print(f"Image path: {image_path}")
-    
 #     # Load the image
-#     try:
-#         image = io.imread(image_path)
-#     except FileNotFoundError:
-#         print(f"Error: Image file not found at path '{image_path}'")
-#         return
+#     image = load_image(image_path)
 
 #     # Load the tracks
-#     tracks = tracks_df[tracks_df['filename'] == tracked_filename]
+#     tracks = load_tracks(tracks_df, tracked_filename)
 
 #     print(tracks.columns)
 
@@ -884,12 +1265,354 @@ def napari_visualize_image_with_tracks(tracked_filename, tracks_df, master_dir):
 #     viewer = napari.Viewer()
 
 #     # Add image layer
-#     viewer.add_image(image, name='Raw Image')
+#     viewer.add_image(image, name=f'Raw {tracked_filename}')
 
 #     # Add tracks layer
-#     viewer.add_tracks(tracks_new_df, name='Tracks')
+#     viewer.add_tracks(tracks_new_df, name=f'Tracks{tracked_filename}')
 
 #     napari.run()
+
+
+
+# import os
+# import numpy as np
+# import napari
+
+# def napari_visualize_image_with_tracksdev(tracked_filename, tracks_df, master_dir):
+#     # Get the condition from the dataframe based on the tracked filename
+#     condition = get_condition_from_filename(tracks_df, tracked_filename)
+    
+#     # Construct the full file path by removing '_tracked' and adding '.tif'
+#     image_filename = tracked_filename.replace('_tracked', '') + '.tif'
+#     image_path = os.path.join(master_dir, condition, image_filename)
+    
+#     # Load the image
+#     image = load_image(image_path)
+
+#     # Load the tracks
+#     tracks = load_tracks(tracks_df, tracked_filename)
+
+#     print(tracks.columns)
+
+#     # Prepare the tracks DataFrame for Napari
+#     tracks_new_df = tracks[["particle", "frame", "y", "x"]]
+
+#     # Ensure 'speed_um_s' is in the DataFrame
+#     if 'speed_um_s' not in tracks.columns:
+#         raise ValueError("The tracks DataFrame does not contain the 'speed_um_s' column.")
+
+#     # Extract coordinates
+#     coords = np.array([tracks['x'].values, tracks['y'].values, tracks['frame'].values]).T
+
+#     # Prepare the features dictionary
+#     features = {'speed_um_s': tracks['speed_um_s'].values}
+
+#     # Start Napari viewer
+#     viewer = napari.Viewer()
+
+#     # Add image layer
+#     viewer.add_image(image, name=f'Raw {tracked_filename}')
+
+#     # Add tracks layer, specifying features to use speed for coloring
+#     viewer.add_tracks(tracks_new_df.to_numpy(), features=features, name=f'Tracks{tracked_filename}', color_by='speed_um_s')
+
+#     napari.run()
+
+
+# def napari_visualize_image_with_tracksdev(tracks_df, master_dir=config.MASTER + 'data', condition=None, cell=None):
+    
+#     print('The master directory is:', master_dir)
+    
+#     if condition is None:
+#         conditionlist = tracks_df['condition'].unique()
+#         # make a random choice of condition from the list
+#         condition = np.random.choice(conditionlist)
+#     else: 
+#         condition = condition
+
+#     if cell is None:
+#         celllist = tracks_df[tracks_df['condition'] == condition]['filename'].unique()
+#         cell = np.random.choice(celllist)
+#     else:
+#         cell = cell
+
+#     # Get the condition from the dataframe based on the tracked filename
+#     # condition = get_condition_from_filename(tracks_df, tracked_filename)
+    
+#     # Construct the full file path by removing '_tracked' and adding '.tif'
+#     image_filename = cell.replace('_tracked', '') + '.tif'
+#     image_path = os.path.join(master_dir, condition, image_filename)
+    
+#     # Load the image
+#     image = load_image(image_path)
+
+#     # Load the tracks
+#     tracks = load_tracks(tracks_df, cell)
+
+#     print(tracks.columns)
+
+#     # Prepare the tracks DataFrame for Napari
+#     tracks_new_df = tracks[["particle", "frame", "y", "x"]]
+
+#     # Ensure 'speed_um_s' is in the DataFrame
+#     if 'speed_um_s' not in tracks.columns:
+#         raise ValueError("The tracks DataFrame does not contain the 'speed_um_s' column.")
+
+#     # Extract coordinates
+#     coords = np.array([tracks['x'].values, tracks['y'].values, tracks['frame'].values]).T
+
+#     # Prepare the features dictionary
+#     features = {'speed_um_s': tracks['speed_um_s'].values}
+
+#     # Start Napari viewer
+#     viewer = napari.Viewer()
+
+#     # Add image layer
+#     viewer.add_image(image, name=f'Raw {cell}')
+
+#     # Add tracks layer, specifying features to use speed for coloring
+#     viewer.add_tracks(tracks_new_df.to_numpy(), features=features, name=f'Tracks{cell}', color_by='speed_um_s')
+
+#     napari.run()
+
+
+
+# from napari_animation import Animation
+
+# def save_movie(viewer, tracks, feature='particle', save_path='movie.mov'):
+#     animation = Animation(viewer)
+
+#     # Set the display to 2D
+#     viewer.dims.ndisplay = 2
+    
+#     # Automatically set the keyframes for the start, middle, and end
+#     num_frames = len(tracks['frame'].unique())
+    
+#     # Start keyframe (frame 0)
+#     viewer.dims.set_point(0, 0)
+#     animation.capture_keyframe()
+
+#     # Middle keyframe (middle frame)
+#     middle_frame = num_frames // 2
+#     viewer.dims.set_point(0, middle_frame)
+#     animation.capture_keyframe()
+
+#     # End keyframe (last frame)
+#     viewer.dims.set_point(0, num_frames - 1)
+#     animation.capture_keyframe()
+
+#     # Save the animation to the specified path
+#     animation.animate(save_path, canvas_only=True)  # canvas_only=True to exclude controls
+
+
+# def napari_visualize_image_with_tracksdev(tracks_df, master_dir=config.MASTER, condition=None, cell=None, location=None, save_movie_flag=False, feature='particle'):
+    
+#     master_dir = config.MASTER + 'data'
+#     movie_dir = config.MASTER + 'movies'
+    
+
+#     print('The master directory is:', master_dir)
+#     if save_movie_flag:
+#         print('The movie directory is:', movie_dir)
+    
+#     # Handle location input
+#     locationlist = tracks_df['Location'].unique()
+#     if isinstance(location, int):
+#         location = locationlist[location]
+#     elif isinstance(location, str):
+#         if location not in locationlist:
+#             raise ValueError(f"Location '{location}' not found in available locations: {locationlist}")
+#     elif location is None:
+#         location = np.random.choice(locationlist)
+#     else:
+#         raise ValueError("Location must be a string, integer, or None.")
+    
+#     # Filter the dataframe by the selected location
+#     filtered_tracks_df = tracks_df[tracks_df['Location'] == location]
+    
+#     # Handle condition input
+#     conditionlist = filtered_tracks_df['condition'].unique()
+#     if isinstance(condition, int):
+#         condition = conditionlist[condition]
+#     elif isinstance(condition, str):
+#         if condition not in conditionlist:
+#             raise ValueError(f"Condition '{condition}' not found in available conditions for location '{location}': {conditionlist}")
+#     elif condition is None:
+#         condition = np.random.choice(conditionlist)
+#     else:
+#         raise ValueError("Condition must be a string, integer, or None.")
+    
+#     # Handle cell input
+#     celllist = filtered_tracks_df[filtered_tracks_df['condition'] == condition]['filename'].unique()
+#     if isinstance(cell, int):
+#         cell = celllist[cell]
+#     elif isinstance(cell, str):
+#         if cell not in celllist:
+#             raise ValueError(f"Cell '{cell}' not found in available cells for condition '{condition}' and location '{location}': {celllist}")
+#     elif cell is None:
+#         cell = np.random.choice(celllist)
+#     else:
+#         raise ValueError("Cell must be a string, integer, or None.")
+
+#     # Construct the full file path by removing '_tracked' and adding '.tif'
+#     image_filename = cell.replace('_tracked', '') + '.tif'
+#     image_path = os.path.join(master_dir, condition, image_filename)
+    
+#     # Load the image
+#     image = load_image(image_path)
+
+#     # Load the tracks
+#     tracks = load_tracks(filtered_tracks_df, cell)
+
+#     print(tracks.columns)
+
+#     # Prepare the tracks DataFrame for Napari
+#     tracks_new_df = tracks[["particle", "frame", "y", "x"]]
+
+#     # Start Napari viewer
+#     viewer = napari.Viewer()
+
+#     # Add image layer
+#     viewer.add_image(image, name=f'Raw {cell}')
+
+#     features = {'speed_um_s': tracks['speed_um_s'].values, 'particle': tracks['particle'].values}
+
+   
+
+#     # Add tracks layer, using 'particle' for coloring
+#     viewer.add_tracks(tracks_new_df.to_numpy(), features=features, name=f'Tracks {cell}', color_by='particle')
+
+
+#     #####
+
+#     ### This is a placeholder for a kymograph function, if required (time on x axis, feature as colour)
+
+#     #####
+
+#     # Save the movie if specified
+#     if save_movie_flag:
+#         movies_dir = os.path.join(movie_dir, 'movies')
+#         os.makedirs(movies_dir, exist_ok=True)
+#         movie_path = os.path.join(movies_dir, f'{condition}_{cell}.mov')
+#         save_movie(viewer, tracks_new_df, feature='particle', save_path=movie_path)
+    
+#     napari.run()
+
+
+
+def save_movie(viewer, tracks, feature='particle', save_path='movie.mov'):
+    animation = Animation(viewer)
+
+    # Set the display to 2D
+    viewer.dims.ndisplay = 2
+    
+    # Automatically set the keyframes for the start, middle, and end
+    num_frames = len(tracks['frame'].unique())
+    
+    # Start keyframe (frame 0)
+    viewer.dims.set_point(0, 0)
+    animation.capture_keyframe()
+
+    # Middle keyframe (middle frame)
+    middle_frame = num_frames // 2
+    viewer.dims.set_point(0, middle_frame)
+    animation.capture_keyframe()
+
+    # End keyframe (last frame)
+    viewer.dims.set_point(0, num_frames - 1)
+    animation.capture_keyframe()
+
+    # Save the animation to the specified path
+    animation.animate(save_path, canvas_only=True)  # canvas_only=True to exclude controls
+
+
+def napari_visualize_image_with_tracksdev(tracks_df, master_dir=config.MASTER, condition=None, cell=None, location=None, save_movie_flag=False, feature='particle'):
+    
+    master_dir = config.MASTER + 'data'
+    movie_dir = config.MASTER + 'movies'
+
+    print('The master directory is:', master_dir)
+    if save_movie_flag:
+        print('The movie directory is:', movie_dir)
+    
+    # Handle location input
+    locationlist = tracks_df['Location'].unique()
+    if isinstance(location, int):
+        location = locationlist[location]
+    elif isinstance(location, str):
+        if location not in locationlist:
+            raise ValueError(f"Location '{location}' not found in available locations: {locationlist}")
+    elif location is None:
+        location = np.random.choice(locationlist)
+    else:
+        raise ValueError("Location must be a string, integer, or None.")
+    
+    # Filter the dataframe by the selected location
+    filtered_tracks_df = tracks_df[tracks_df['Location'] == location]
+    
+    # Handle condition input
+    conditionlist = filtered_tracks_df['condition'].unique()
+    if isinstance(condition, int):
+        condition = conditionlist[condition]
+    elif isinstance(condition, str):
+        if condition not in conditionlist:
+            raise ValueError(f"Condition '{condition}' not found in available conditions for location '{location}': {conditionlist}")
+    elif condition is None:
+        condition = np.random.choice(conditionlist)
+    else:
+        raise ValueError("Condition must be a string, integer, or None.")
+    
+    # Handle cell input
+    celllist = filtered_tracks_df[filtered_tracks_df['condition'] == condition]['filename'].unique()
+    if isinstance(cell, int):
+        cell = celllist[cell]
+    elif isinstance(cell, str):
+        if cell not in celllist:
+            raise ValueError(f"Cell '{cell}' not found in available cells for condition '{condition}' and location '{location}': {celllist}")
+    elif cell is None:
+        cell = np.random.choice(celllist)
+    else:
+        raise ValueError("Cell must be a string, integer, or None.")
+
+    # Construct the full file path by removing '_tracked' and adding '.tif'
+    image_filename = cell.replace('_tracked', '') + '.tif'
+    image_path = os.path.join(master_dir, condition, image_filename)
+    
+    # Load the image
+    image = load_image(image_path)
+
+    # Load the tracks
+    tracks = load_tracks(filtered_tracks_df, cell)
+
+    print(tracks.columns)
+
+    # Prepare the tracks DataFrame for Napari
+    tracks_new_df = tracks[["particle", "frame", "y", "x"]]
+
+    # Include 'particle' and all features from config.FEATURES
+    features_dict = {'particle': tracks['particle'].values}
+    features_dict.update({feature: tracks[feature].values for feature in config.FEATURES if feature in tracks.columns})
+
+    # Start Napari viewer
+    viewer = napari.Viewer()
+
+    # Add image layer
+    viewer.add_image(image, name=f'Raw {cell}')
+
+    # Add tracks layer, using 'particle' for coloring, with additional features
+    viewer.add_tracks(tracks_new_df.to_numpy(), features=features_dict, name=f'Tracks {cell}', color_by=feature)
+
+    # Save the movie if specified
+    if save_movie_flag:
+        movies_dir = os.path.join(movie_dir, 'movies')
+        os.makedirs(movies_dir, exist_ok=True)
+        movie_path = os.path.join(movies_dir, f'{condition}_{cell}.mov')
+        save_movie(viewer, tracks_new_df, feature=feature, save_path=movie_path)
+    
+    napari.run()
+
+
+
 
 
 def bootstrap_ci_mean(data, num_samples=1000, alpha=0.05):
@@ -1077,10 +1800,225 @@ def bootstrap_ci_median(data, num_samples=1000, alpha=0.05):
 #     else:
 #         plt.close()
 
+######################## saved #########################################
+# def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_by='condition', palette='colorblind', 
+#                      meanormedian='mean', multiplot=False, talk=False, bootstrap=True, show_plot=True, 
+#                      master_dir=None, order=None, grid=True):
+#     """
+#     Plot time series of a specified factor, with mean/median as a line and confidence intervals as shaded areas.
+    
+#     Parameters
+#     ----------
+#     data_df : DataFrame
+#         DataFrame containing the time series data.
+#     factor_col : str, optional
+#         The column representing the factor to be plotted on the y-axis. Default is 'speed_um_s'.
+#     absolute : bool, optional
+#         Whether to use absolute time values or time zeroed values. Default is True.
+#     separate_by : str, optional
+#         Column to separate the data by, for coloring. If None, all data will be plotted together. Default is None.
+#     palette : str, optional
+#         Color palette for the plot. Default is 'colorblind'.
+#     meanormedian : str, optional
+#         Whether to use mean or median for aggregation. Default is 'mean'.
+#     multiplot : bool, optional
+#         Whether to generate separate small multiple plots for each category. Default is False.
+#     talk : bool, optional
+#         Whether to set the figure size to the original large size or a smaller size. Default is False.
+#     bootstrap : bool, optional
+#         Whether to use bootstrapping for confidence intervals. Default is True.
+#     show_plot : bool, optional
+#         Whether to display the plot in the notebook. Default is True.
+#     master_dir : str, optional
+#         The directory where the plots folder will be created and the plot will be saved. Default is None.
+#     order : list, optional
+#         Specific order for the conditions. Default is None.
+#     grid : bool, optional
+#         Whether to display grid lines. Default is True.
+#     """
+#     xmin = 0.2  # A FIX FOR NOW because really this should be the same as the shortest track (filtered to 0.2 s during filterstubs)
+    
+#     if master_dir is None:
+#         master_dir = config.MASTER  # Use the master directory from config if not provided
+
+#     if separate_by is not None and order is not None:
+#         # Ensure the data is ordered according to the specified order
+#         data_df[separate_by] = pd.Categorical(data_df[separate_by], categories=order, ordered=True)
+
+#     if not absolute:
+#         time_col = 'time_s_zeroed'
+#         max_time_zeroed = data_df['time_s_zeroed'].max()
+#         x_label = 'Time zeroed (s)'
+#         xmax = max_time_zeroed
+#     else:
+#         time_col = 'time_s'
+#         max_time = data_df['time_s'].max()
+#         x_label = 'Time (s)'
+#         xmax = max_time
+
+#     # Use the categories attribute to maintain the specified order
+#     if separate_by is not None:
+#         # Convert to categorical if not already
+#         if not pd.api.types.is_categorical_dtype(data_df[separate_by]):
+#             data_df[separate_by] = pd.Categorical(data_df[separate_by], categories=order, ordered=True)
+#         unique_categories = data_df[separate_by].cat.categories
+#     else:
+#         unique_categories = [None]
+
+#     color_palette = sns.color_palette(palette, len(unique_categories))
+    
+#     # # Set figure size and font size based on the `talk` parameter
+#     # if talk:
+#     #     fig_size = (40, 12)
+#     #     font_size = 35
+#     # else:
+#     #     if multiplot and separate_by:
+#     #         fig_size = (4, 8 * len(unique_categories))
+#     #     else:
+#     #         fig_size = (5, 3)
+#     #     font_size = 14
+
+# # Set figure size and font size based on the `talk` and `multiplot` parameters
+#     if talk:
+#         base_fig_size = (30, 12)
+#         font_size = 35
+#     else:
+#         base_fig_size = (10, 4)
+#         font_size = 14
+
+#     # Adjust figure size if multiplot is true
+#     if multiplot and separate_by:
+#         fig_size = (base_fig_size[0], base_fig_size[1] * len(unique_categories))
+#     else:
+#         fig_size = base_fig_size
+    
+#     sns.set_context("notebook", rc={"lines.linewidth": 2.5, "font.size": font_size, "axes.titlesize": font_size, 
+#                                     "axes.labelsize": font_size, "xtick.labelsize": font_size, "ytick.labelsize": font_size})
+    
+#     if multiplot and separate_by:
+#         num_categories = len(unique_categories)
+#         fig, axes = plt.subplots(num_categories, 1, figsize=fig_size, sharex=True)
+        
+#         if num_categories == 1:
+#             axes = [axes]  # To handle the case with only one subplot
+        
+#         for i, category in enumerate(unique_categories):
+#             if pd.isna(category):
+#                 continue
+#             ax = axes[i] if len(unique_categories) > 1 else axes
+#             subset = data_df[data_df[separate_by] == category]
+#             times = subset[time_col]
+#             factors = subset[factor_col]
+
+#             if meanormedian == 'mean':
+#                 avg_factors = subset.groupby(time_col)[factor_col].mean()
+#                 ci_func = bootstrap_ci_mean if bootstrap else lambda x: sem(x) * 1.96
+#             else:
+#                 avg_factors = subset.groupby(time_col)[factor_col].median()
+#                 ci_func = bootstrap_ci_median if bootstrap else lambda x: sem(x) * 1.96
+
+#             ci = subset.groupby(time_col)[factor_col].apply(ci_func)
+
+#             color = color_palette[i]
+#             label = category
+
+#             # Exclude the first time point (time zero)
+#             valid_indices = avg_factors.index > 0
+
+#             ax.plot(avg_factors.index[valid_indices], avg_factors.values[valid_indices], label=label, color=color, linewidth=2.5)
+#             ax.fill_between(avg_factors.index[valid_indices], (avg_factors - ci)[valid_indices], (avg_factors + ci)[valid_indices], color=color, alpha=0.3)
+#             ax.set_xlabel(x_label, fontsize=font_size)
+#             ax.set_ylabel(factor_col, fontsize=font_size, labelpad=20)
+#             ax.legend(fontsize=font_size, loc='upper left', bbox_to_anchor=(1, 1))
+#             ax.set_xlim(xmin, xmax)
+#             if grid:
+#                 ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray', alpha=0.7)
+#             ax.spines['top'].set_visible(False)
+#             ax.spines['right'].set_visible(False)
+#             ax.set_title(f'{category}', fontsize=font_size)
+
+#         plt.tight_layout()
+#     else:
+#         fig, ax = plt.subplots(figsize=fig_size)
+        
+#         for i, category in enumerate(unique_categories):
+#             if pd.isna(category):
+#                 continue
+#             subset = data_df if category is None else data_df[data_df[separate_by] == category]
+#             times = subset[time_col]
+#             factors = subset[factor_col]
+
+#             if meanormedian == 'mean':
+#                 avg_factors = subset.groupby(time_col)[factor_col].mean()
+#                 ci_func = bootstrap_ci_mean if bootstrap else lambda x: sem(x) * 1.96
+#             else:
+#                 avg_factors = subset.groupby(time_col)[factor_col].median()
+#                 ci_func = bootstrap_ci_median if bootstrap else lambda x: sem(x) * 1.96
+
+#             ci = subset.groupby(time_col)[factor_col].apply(ci_func)
+
+#             color = color_palette[i]
+#             label = 'Overall' if category is None else category
+
+#             # Exclude the first time point (time zero)
+#             valid_indices = avg_factors.index > 0
+
+#             ax.plot(avg_factors.index[valid_indices], avg_factors.values[valid_indices], label=label, color=color, linewidth=2.5)
+#             ax.fill_between(avg_factors.index[valid_indices], (avg_factors - ci)[valid_indices], (avg_factors + ci)[valid_indices], color=color, alpha=0.3)
+
+#         ax.set_xlabel(x_label, fontsize=font_size)
+#         ax.set_ylabel(factor_col, fontsize=font_size, labelpad=20)
+#         ax.legend(fontsize=font_size, loc='upper left', bbox_to_anchor=(1.05, 1))
+#         if grid:
+#             ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray', alpha=0.7)
+#         ax.spines['top'].set_visible(False)
+#         ax.spines['right'].set_visible(False)
+#         ax.set_xlim(xmin, xmax)
+#         plt.tight_layout(rect=[0, 0, 0.85, 1])  # Adjust layout to fit legend
+
+#     # Create directory for plots if it doesn't exist
+#     plots_dir = os.path.join(master_dir, 'plots')
+#     os.makedirs(plots_dir, exist_ok=True)
+    
+#     # Generate filename
+#     time_type = 'absolute' if absolute else 'time_zeroed'
+#     bootstrap_text = 'bootstrapped' if bootstrap else 'nonbootstrapped'
+#     multiplot_text = 'multiplot' if multiplot else 'singleplot'
+#     filename = f"{plots_dir}/{factor_col}_{time_type}_{meanormedian}_{bootstrap_text}_{multiplot_text}.png"
+    
+#     # Save plot
+#     plt.savefig(filename, bbox_inches='tight')
+    
+#     # Show plot if specified
+#     if show_plot:
+#         plt.show()
+#     else:
+#         plt.close()
+################################### saved ##################################
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+from scipy.stats import sem
+
+# # Placeholder bootstrap functions
+# def bootstrap_ci_mean(data, n_bootstraps=1000):
+#     boot_means = [np.mean(np.random.choice(data, size=len(data), replace=True)) for _ in range(n_bootstraps)]
+#     lower = np.percentile(boot_means, 2.5)
+#     upper = np.percentile(boot_means, 97.5)
+#     return upper - lower
+
+# def bootstrap_ci_median(data, n_bootstraps=1000):
+#     boot_medians = [np.median(np.random.choice(data, size=len(data), replace=True)) for _ in range(n_bootstraps)]
+#     lower = np.percentile(boot_medians, 2.5)
+#     upper = np.percentile(boot_medians, 97.5)
+#     return upper - lower
 
 def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_by='condition', palette='colorblind', 
                      meanormedian='mean', multiplot=False, talk=False, bootstrap=True, show_plot=True, 
-                     master_dir=None, order=None, grid=True):
+                     master_dir=None, order=None, grid=True, custom_yrange=None):
     """
     Plot time series of a specified factor, with mean/median as a line and confidence intervals as shaded areas.
     
@@ -1112,11 +2050,13 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
         Specific order for the conditions. Default is None.
     grid : bool, optional
         Whether to display grid lines. Default is True.
+    custom_yrange : tuple, optional
+        Custom y-axis range as (ymin, ymax). Default is None, which sets limits based on data.
     """
     xmin = 0.2  # A FIX FOR NOW because really this should be the same as the shortest track (filtered to 0.2 s during filterstubs)
     
     if master_dir is None:
-        master_dir = config.MASTER  # Use the master directory from config if not provided
+        master_dir = '.'  # Use current directory if not provided
 
     if separate_by is not None and order is not None:
         # Ensure the data is ordered according to the specified order
@@ -1144,23 +2084,12 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
 
     color_palette = sns.color_palette(palette, len(unique_categories))
     
-    # # Set figure size and font size based on the `talk` parameter
-    # if talk:
-    #     fig_size = (40, 12)
-    #     font_size = 35
-    # else:
-    #     if multiplot and separate_by:
-    #         fig_size = (4, 8 * len(unique_categories))
-    #     else:
-    #         fig_size = (5, 3)
-    #     font_size = 14
-
-# Set figure size and font size based on the `talk` and `multiplot` parameters
+    # Set figure size and font size based on the `talk` and `multiplot` parameters
     if talk:
-        base_fig_size = (40, 12)
+        base_fig_size = (30, 12)
         font_size = 35
     else:
-        base_fig_size = (5, 4)
+        base_fig_size = (10, 4)
         font_size = 14
 
     # Adjust figure size if multiplot is true
@@ -1203,11 +2132,22 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
             valid_indices = avg_factors.index > 0
 
             ax.plot(avg_factors.index[valid_indices], avg_factors.values[valid_indices], label=label, color=color, linewidth=2.5)
-            ax.fill_between(avg_factors.index[valid_indices], (avg_factors - ci)[valid_indices], (avg_factors + ci)[valid_indices], color=color, alpha=0.3)
+            ax.fill_between(avg_factors.index[valid_indices], 
+                            np.maximum((avg_factors - ci)[valid_indices], 0),  # Ensure lower bound is not below zero
+                            (avg_factors + ci)[valid_indices], 
+                            color=color, alpha=0.3)
             ax.set_xlabel(x_label, fontsize=font_size)
             ax.set_ylabel(factor_col, fontsize=font_size, labelpad=20)
             ax.legend(fontsize=font_size, loc='upper left', bbox_to_anchor=(1, 1))
             ax.set_xlim(xmin, xmax)
+            
+            # Set custom or automatic y-limits
+            if custom_yrange:
+                ax.set_ylim(custom_yrange)
+            else:
+                ymin, ymax = ax.get_ylim()
+                ax.set_ylim(0, ymax * 1.1)  # Add padding if using automatic limits
+
             if grid:
                 ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray', alpha=0.7)
             ax.spines['top'].set_visible(False)
@@ -1241,7 +2181,10 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
             valid_indices = avg_factors.index > 0
 
             ax.plot(avg_factors.index[valid_indices], avg_factors.values[valid_indices], label=label, color=color, linewidth=2.5)
-            ax.fill_between(avg_factors.index[valid_indices], (avg_factors - ci)[valid_indices], (avg_factors + ci)[valid_indices], color=color, alpha=0.3)
+            ax.fill_between(avg_factors.index[valid_indices], 
+                            np.maximum((avg_factors - ci)[valid_indices], 0),  # Ensure lower bound is not below zero
+                            (avg_factors + ci)[valid_indices], 
+                            color=color, alpha=0.3)
 
         ax.set_xlabel(x_label, fontsize=font_size)
         ax.set_ylabel(factor_col, fontsize=font_size, labelpad=20)
@@ -1251,6 +2194,14 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         ax.set_xlim(xmin, xmax)
+        
+        # Set custom or automatic y-limits
+        if custom_yrange:
+            ax.set_ylim(custom_yrange)
+        else:
+            ymin, ymax = ax.get_ylim()
+            ax.set_ylim(0, ymax * 1.1)  # Add padding if using automatic limits
+        
         plt.tight_layout(rect=[0, 0, 0.85, 1])  # Adjust layout to fit legend
 
     # Create directory for plots if it doesn't exist
@@ -1271,6 +2222,7 @@ def plot_time_series(data_df, factor_col='speed_um_s', absolute=True, separate_b
         plt.show()
     else:
         plt.close()
+
 
 
 
@@ -1348,7 +2300,7 @@ def plot_barplots(data_df, factor_col='speed_um_s', separate_by='condition', pal
 
 
 
-def plot_violinplots(data_df, factor_col='speed_um_s', separate_by='condition', palette='colorblind', talk=False):
+def plot_violinplots(data_df, factor_col='speed_um_s', separate_by='condition', palette='colorblind', talk=False, orderin=None):
     """
     Plot violin plots of a specified factor, with data separated by categories.
     
@@ -1364,6 +2316,8 @@ def plot_violinplots(data_df, factor_col='speed_um_s', separate_by='condition', 
         Color palette for the plot. Default is 'colorblind'.
     talk : bool, optional
         Whether to set the figure size to the original large size or a smaller size. Default is False.
+    orderin : list, optional
+        Custom order for the categories in the violin plot. Default is None.
     """
     
     unique_categories = data_df[separate_by].unique() if separate_by else [None]
@@ -1380,11 +2334,15 @@ def plot_violinplots(data_df, factor_col='speed_um_s', separate_by='condition', 
     fig, ax = plt.subplots(figsize=fig_size)
     sns.set_context("notebook", rc={"lines.linewidth": 2.5, "font.size": font_size, "axes.titlesize": font_size, "axes.labelsize": font_size, "xtick.labelsize": font_size, "ytick.labelsize": font_size})
     
-    # Plot violin plot
-    sns.violinplot(x=separate_by, y=factor_col, hue=separate_by, data=data_df, palette=color_palette, ax=ax, legend=False, alpha=0.79)
+    # Plot violin plot with custom order
+    sns.violinplot(x=separate_by, y=factor_col, hue=separate_by, data=data_df, palette=color_palette, ax=ax, legend=False, alpha=0.79, order=orderin)
     
-    # Remove 'Condition_' prefix from x tick labels
-    new_labels = [label.replace('Condition_', '') for label in unique_categories]
+    # If orderin is provided, update x-tick labels accordingly
+    if orderin is not None:
+        new_labels = [label.replace('Condition_', '') for label in orderin]
+    else:
+        new_labels = [label.replace('Condition_', '') for label in unique_categories]
+
     ax.set_xticks(range(len(new_labels)))
     ax.set_xticklabels(new_labels, fontsize=font_size)
 
@@ -1394,3 +2352,485 @@ def plot_violinplots(data_df, factor_col='speed_um_s', separate_by='condition', 
     plt.tight_layout()
     
     plt.show()
+
+
+def plot_metric_for_selected_particles(time_windowed_df, feature='avg_msd', num_particles=5, global_xlim=True, subplot_size=5):
+    # Get unique motion classes
+    motion_classes = time_windowed_df['motion_class'].unique()
+
+    # Randomly select a set of particles for each motion class
+    selected_particles = {}
+    global_max_time = 0  # To store the global maximum time across selected particles
+    max_feature_value = 0  # To store the global max feature value across selected particles
+
+    for motion_class in motion_classes:
+        particles = time_windowed_df[time_windowed_df['motion_class'] == motion_class]['unique_id'].unique()
+        selected_particles[motion_class] = random.sample(list(particles), min(num_particles, len(particles)))
+        
+        # Calculate the maximum time_s for the current motion class
+        for unique_id in selected_particles[motion_class]:
+            data = time_windowed_df[time_windowed_df['unique_id'] == unique_id]
+            global_max_time = max(global_max_time, data['time_s'].max())
+            max_feature_value = max(max_feature_value, data[feature].max())
+
+    # Add padding to the maximum feature value
+    padding = 0.1
+    max_feature_value *= (1 + padding)
+
+    # Determine the total number of plots
+    total_plots = sum(len(particles) for particles in selected_particles.values())
+
+    # Set up subplots with fixed subplot size
+    ncols = num_particles  # Number of particles per row
+    nrows = len(motion_classes)  # One row per motion class
+
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(subplot_size * ncols, subplot_size * nrows))
+    fig.suptitle(f'{feature} vs. Time for Selected Particles in Each Motion Class')
+
+    # Plot each selected particle in its subplot
+    plot_idx = 0
+    for i, motion_class in enumerate(motion_classes):
+        for j, unique_id in enumerate(selected_particles[motion_class]):
+            data = time_windowed_df[time_windowed_df['unique_id'] == unique_id]
+            ax = axes[i, j]  # Access subplot at row i and column j
+            ax.plot(data['time_s'], data[feature], label=f'Particle {unique_id}', color=get_color(motion_class))
+            ax.set_title(f'Particle {unique_id} ({motion_class})')
+            ax.set_xlabel('Time (s)')
+            ax.set_ylabel(f'{feature} ($\mu m^2$)')
+            ax.grid(True)
+
+            # Set limits for x-axis and y-axis
+            if global_xlim:
+                ax.set_xlim(0, global_max_time)
+            else:
+                ax.set_xlim(0, data['time_s'].max())
+
+            ax.set_ylim(0, max_feature_value)
+
+            plot_idx += 1
+
+    # Turn off any empty subplots
+    for i in range(plot_idx, nrows * ncols):
+        fig.delaxes(axes.flatten()[i])
+
+    # Adjust layout
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.show()
+
+def get_color(motion_class):
+    # Assign colors using Colorblind colormap
+    colorblind_colors = plt.get_cmap('tab10')
+    if motion_class == 'subdiffusive':
+        return colorblind_colors(0)  # Blue
+    elif motion_class == 'normal':
+        return colorblind_colors(1)  # Orange
+    elif motion_class == 'superdiffusive':
+        return colorblind_colors(2)  # Green
+    else:
+        return 'black'
+    
+
+def plot_single_particle_msd(msd_lagtime_df):
+    '''
+    This thing basically takes 3 example particle tracks, one from each motion class
+    '''
+
+
+    # Ensure we have data for each motion class
+    motion_classes = ['subdiffusive', 'normal', 'superdiffusive']
+    
+    # Randomly select one unique_id from each motion class
+    selected_particles = {}
+    for motion_class in motion_classes:
+        particles = msd_lagtime_df[msd_lagtime_df['motion_class'] == motion_class]['unique_id'].unique()
+        if len(particles) > 0:
+            selected_particles[motion_class] = random.choice(particles)
+
+    # Initialize the plot
+    plt.figure(figsize=(10, 6))
+
+    # Plot MSD for each selected particle
+    for motion_class, unique_id in selected_particles.items():
+        data = msd_lagtime_df[msd_lagtime_df['unique_id'] == unique_id]
+        plt.plot(data['lag_time'], data['msd'], label=f'{motion_class} (Particle {unique_id})', color=get_color(motion_class))
+
+    # Set log scales
+    plt.xscale('log')
+    plt.yscale('log')
+
+    # Add labels and title
+    plt.xlabel('Time Lag (s)')
+    plt.ylabel('MSD ($\mu m^2$)')
+    plt.title('MSD vs. Time Lag for Selected Particles')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+def get_color(motion_class):
+    # Assign colors using Colorblind colormap
+    colorblind_colors = plt.get_cmap('tab10')
+    if motion_class == 'subdiffusive':
+        return colorblind_colors(0)  # Blue
+    elif motion_class == 'normal':
+        return colorblind_colors(1)  # Orange
+    elif motion_class == 'superdiffusive':
+        return colorblind_colors(2)  # Green
+    else:
+        return 'black'
+    
+
+# def plot_classification_pie_chart(df, colormap_name='Dark2'):
+#     classification_counts = df['motion_class'].value_counts()
+    
+#     # Define labels and sizes
+#     labels = classification_counts.index
+#     sizes = classification_counts.values
+
+#     # Get colors from the specified colormap
+#     colormap = cm.get_cmap(colormap_name)
+#     colors = colormap(np.linspace(0, 1, len(labels)))
+
+#     # Plot pie chart
+#     plt.figure(figsize=(7, 7))
+#     plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140, colors=colors)
+#     plt.title('Classification of Time Windowed Tracks')
+#     plt.axis('equal')  # Equal aspect ratio ensures the pie chart is circular.
+#     plt.show()
+
+
+
+# def plot_classification_pie_chart(time_windowed_df, colormap_name='Dark2'):
+#     # Calculate classification counts and percentages
+#     classification_counts = time_windowed_df['motion_class'].value_counts()
+#     total_count = classification_counts.sum()
+#     percentages = classification_counts / total_count * 100
+    
+#     # Define labels with counts and percentages
+#     labels = [f'{cls}\n{count} ({percent:.1f}%)' for cls, count, percent in zip(classification_counts.index, classification_counts.values, percentages)]
+
+#     # Get colors from the specified colormap
+#     colormap = cm.get_cmap(colormap_name)
+#     colors = colormap(np.linspace(0, 1, len(labels)))
+
+#     # Plot pie chart
+#     plt.figure(figsize=(7, 7))
+#     plt.pie(classification_counts, labels=labels, startangle=140, colors=colors)
+#     plt.title('Classification of Time Windowed Tracks')
+#     plt.axis('equal')  # Equal aspect ratio ensures the pie chart is circular.
+#     plt.show()
+
+
+def plot_classification_pie_charts(df, group_by='Location', colormap_name='Dark2', figsize=(15, 10), font_size=12, label_font_size=8):
+    # Get unique categories for grouping
+    categories = df[group_by].unique()
+    
+    # Determine the layout for subplots
+    n_categories = len(categories)
+    ncols = 3  # Number of columns
+    nrows = (n_categories + ncols - 1) // ncols  # Calculate the number of rows needed
+
+    # Create subplots
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize)
+    axes = axes.flatten()  # Flatten to iterate easily
+
+    colormap = cm.get_cmap(colormap_name)
+
+    # Plot each category as a separate pie chart
+    for i, category in enumerate(categories):
+        ax = axes[i]
+        subset_df = df[df[group_by] == category]
+        classification_counts = subset_df['motion_class'].value_counts()
+        total_count = classification_counts.sum()
+        percentages = classification_counts / total_count * 100
+        
+        # Define labels for outside the pie
+        outside_labels = [f'{cls} ({count})' for cls, count in zip(classification_counts.index, classification_counts.values)]
+        
+        # Colors for pie slices
+        colors = colormap(np.linspace(0, 1, len(outside_labels)))
+
+        # Plot pie chart with percentages inside
+        wedges, texts, autotexts = ax.pie(
+            classification_counts, 
+            labels=outside_labels, 
+            autopct='%1.1f%%', 
+            startangle=140, 
+            colors=colors,
+            textprops={'fontsize': label_font_size}
+        )
+
+        # Set the color and size of the percentage text
+        for autotext in autotexts:
+            autotext.set_color('white')
+            autotext.set_fontsize(label_font_size)
+
+        ax.set_title(f'{category} ({total_count} tracks)', fontsize=font_size)
+        ax.axis('equal')  # Equal aspect ratio ensures the pie chart is circular.
+
+    # Turn off unused subplots
+    for j in range(i + 1, len(axes)):
+        fig.delaxes(axes[j])
+
+    plt.suptitle(f'Classification of Time Windowed Tracks by {group_by}', fontsize=font_size + 2)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.show()
+
+
+
+
+def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palette='colorblind', show_plot=True, master_dir=None, grid=True, bw=False, y_max=None, figsize=(10, 8)):
+    """
+    Plot boxplots for the specified feature against a categorical x_category with custom order and styling options.
+
+    Parameters
+    ----------
+    data_df : DataFrame
+        DataFrame containing the data.
+    feature : str
+        The feature to plot on the y-axis.
+    x_category : str
+        The categorical feature to plot on the x-axis.
+    font_size : int, optional
+        Font size for the plot text. Default is 12.
+    order : list, optional
+        Specific order for the categories. Default is None.
+    palette : str, optional
+        Color palette for the plot. Default is 'colorblind'.
+    show_plot : bool, optional
+        Whether to display the plot in the notebook. Default is True.
+    master_dir : str, optional
+        Directory to save the plot. Default is None.
+    grid : bool, optional
+        Whether to display grid lines. Default is True.
+    bw : bool, optional
+        Whether to use black-and-white styling. Default is False.
+    y_max : float, optional
+        Maximum value for the y-axis. Default is None.
+    figsize : tuple, optional
+        Size of the plot (width, height) in inches. Default is (10, 8).
+    """
+    
+    plt.figure(figsize=figsize)  # Use the figsize parameter to set the figure size
+    sns.set_context("notebook", rc={"xtick.labelsize": font_size, "ytick.labelsize": font_size})
+
+    if bw:
+        # Black-and-white styling: no fill color, black edges
+        boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, linewidth=1.5, showfliers=False, color='white', order=order)
+        for patch in boxplot.patches:
+            patch.set_edgecolor('black')  # Set edge color to black
+            patch.set_linewidth(1.5)     # Set edge width
+        for element in ['boxes', 'whiskers', 'medians', 'caps']:
+            plt.setp(boxplot.artists, color='black')  # Set edge color to black
+            plt.setp(boxplot.lines, color='black')    # Set whiskers and caps to black
+    else:
+        boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, palette=palette, order=order, showfliers=False)
+        boxplot.patch.set_linewidth(1.5)
+
+    plt.xlabel('', fontsize=font_size)
+    plt.ylabel(feature, fontsize=font_size)
+    plt.title(f'{feature} by {x_category}', fontsize=font_size)
+    plt.xticks(rotation=45)
+
+    if grid:
+        plt.grid(True, linestyle='--', linewidth=0.5, color='gray', alpha=0.7, axis='y')  # Grid on y-axis
+        plt.gca().set_axisbelow(True)  # Ensure grid is below the plot elements
+
+    # Set the maximum y-axis limit if specified
+    if y_max is not None:
+        plt.ylim(top=y_max)
+
+    # Customize spines
+    ax = plt.gca()
+    ax.spines['top'].set_color('lightgray')
+    ax.spines['right'].set_color('lightgray')
+    ax.spines['left'].set_color('black')
+    ax.spines['bottom'].set_color('black')
+
+    plt.tight_layout()
+
+    if master_dir is None:
+        master_dir = "plots"  # Default directory
+
+    os.makedirs(master_dir, exist_ok=True)
+    filename = f"{master_dir}/{feature}_by_{x_category}.png"
+    plt.savefig(filename, bbox_inches='tight')
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+
+
+def plot_stacked_bar(df, x_category, order=None, font_size=16, colormap='Dark2', figsize=(10, 5)):
+    """
+    Plot a stacked bar chart showing the percentage of motion classes for each category on the x-axis.
+    
+    Parameters
+    ----------
+    df : DataFrame
+        DataFrame containing the data with a 'motion_class' column and specified category.
+    x_category : str
+        The column name of the category to plot on the x-axis.
+    order : list, optional
+        Custom order for the categories on the x-axis. Default is None.
+    font_size : int, optional
+        Font size for the plot. Default is 16.
+    colormap : str, optional
+        Colormap for the plot. Default is 'Dark2'.
+    figsize : tuple, optional
+        Size of the plot (width, height) in inches. Default is (10, 5).
+    """
+    # Apply custom order if provided
+    if order is not None:
+        df[x_category] = pd.Categorical(df[x_category], categories=order, ordered=True)
+
+    # Calculate the percentage of each motion class within each category
+    percentage_data = (df.groupby([x_category, 'motion_class']).size()
+                       .unstack(fill_value=0)
+                       .apply(lambda x: x / x.sum() * 100, axis=1))
+
+    # Determine the unique motion classes
+    motion_classes = df['motion_class'].unique()
+
+    # Use a consistent colormap for the motion classes
+    if colormap == 'colorblind':
+        colors = sns.color_palette("colorblind", len(motion_classes))
+    elif colormap == 'Dark2':
+        cmap = cm.get_cmap("Dark2", len(motion_classes))
+        colors = cmap(np.linspace(0, 1, len(motion_classes)))
+    else:
+        colors = plt.get_cmap(colormap, len(motion_classes)).colors
+
+    # Plotting
+    ax = percentage_data.plot(kind='bar', stacked=True, figsize=figsize, color=colors)
+
+    # Add black outlines to the bars
+    for patch in ax.patches:
+        patch.set_edgecolor('black')
+
+    # Rotate x-tick labels for readability if necessary
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+
+    # Annotate percentages on the bars
+    for patch in ax.patches:
+        width, height = patch.get_width(), patch.get_height()
+        x, y = patch.get_xy()
+        if height > 0:  # Only annotate if there's a height to show
+            ax.annotate(f'{height:.1f}%', (x + width / 2, y + height / 2),
+                        ha='center', va='center', fontsize=font_size, color='k')
+
+    # Move the legend outside the plot
+    plt.legend(title='Motion Type', bbox_to_anchor=(1.05, 1), loc='upper left',
+               title_fontsize=font_size, prop={'size': font_size})
+
+    plt.title('Distribution of Motion Classes', fontsize=font_size)
+    plt.xlabel('', fontsize=font_size)
+    plt.ylabel('Percentage (%)', fontsize=font_size)
+    plt.xticks(fontsize=font_size, rotation=45)
+    plt.yticks(fontsize=font_size)
+
+    # Add grid
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+
+    # Ensure bars are above the grid
+    for patch in ax.patches:
+        patch.set_zorder(2)
+
+    # Make top and right spines visible and set their color to light gray
+    ax.spines['top'].set_visible(True)
+    ax.spines['top'].set_color('gray')
+    ax.spines['right'].set_visible(True)
+    ax.spines['right'].set_color('gray')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_single_particle(particle_df, speed_thresholds, animation=True):
+    """
+    Plots the trajectory of a single particle, either as an animation or as a static image, 
+    with each segment colored according to its speed category.
+    
+    Parameters:
+    - particle_df: DataFrame containing the particle's data with columns 'x', 'y', and 'speed_um_s'.
+    - speed_thresholds: List or tuple of four numbers defining the boundaries for low, medium, and high speeds.
+    - animation: Boolean, if True creates an animation, if False creates a static plot.
+    """
+    # Get the unique ID of the particle
+    unique_id = particle_df['unique_id'].unique()[0]
+
+    # Ensure the speed thresholds are sorted
+    speed_thresholds = sorted(speed_thresholds)
+    
+    # Assign speed categories based on thresholds
+    conditions = [
+        (particle_df['speed_um_s'] >= speed_thresholds[0]) & (particle_df['speed_um_s'] < speed_thresholds[1]),
+        (particle_df['speed_um_s'] >= speed_thresholds[1]) & (particle_df['speed_um_s'] < speed_thresholds[2]),
+        (particle_df['speed_um_s'] >= speed_thresholds[2])
+    ]
+    choices = ['low', 'medium', 'high']
+    particle_df['speed_category'] = np.select(conditions, choices, default='unknown')
+    
+    # Define a colormap for the speed categories
+    colormap = {
+        'low': 'blue',
+        'medium': 'green',
+        'high': 'orange'
+    }
+    
+    # Calculate center and range for square plot
+    center_x = (particle_df['x'].max() + particle_df['x'].min()) / 2
+    center_y = (particle_df['y'].max() + particle_df['y'].min()) / 2
+    range_extent = max(particle_df['x'].max() - particle_df['x'].min(), particle_df['y'].max() - particle_df['y'].min()) / 2
+    range_extent *= 1.1  # Add some padding
+    
+    # Create directory for saving images
+    if animation:
+        dir_name = f'{master}visualization/particle_speedcat_{unique_id}'
+        os.makedirs(dir_name, exist_ok=True)
+    else:
+        dir_name = f'{master}visualization/particle_speedcat_static_{unique_id}'
+        os.makedirs(dir_name, exist_ok=True)
+    
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.set_title(f'Particle Trajectory with Speed Categories: {unique_id}')
+    ax.set_xlabel('X Position')
+    ax.set_ylabel('Y Position')
+    ax.set_xlim(center_x - range_extent, center_x + range_extent)
+    ax.set_ylim(center_y - range_extent, center_y + range_extent)
+    
+    if animation:
+        # Create animation by iterating through the data and plotting frame by frame
+        for i in range(1, len(particle_df)):
+            ax.clear()
+            ax.set_title(f'Particle Trajectory with Speed Categories: {unique_id}')
+            ax.set_xlabel('X Position')
+            ax.set_ylabel('Y Position')
+            ax.set_xlim(center_x - range_extent, center_x + range_extent)
+            ax.set_ylim(center_y - range_extent, center_y + range_extent)
+
+            # Plot the trajectory up to the current point, changing colors according to speed category
+            for j in range(1, i + 1):
+                x_values = particle_df['x'].iloc[j-1:j+1]
+                y_values = particle_df['y'].iloc[j-1:j+1]
+                speed_category = particle_df['speed_category'].iloc[j-1]
+                color = colormap.get(speed_category, 'black')
+                ax.plot(x_values, y_values, color=color, linewidth=2)
+
+            ax.legend(handles=[plt.Line2D([0], [0], color=color, label=f'{category.capitalize()} Speed') for category, color in colormap.items()])
+            plt_path = os.path.join(dir_name, f'frame_{i:03d}.png')
+            plt.savefig(plt_path)
+    else:
+        # Create static plot of the entire trajectory
+        for i in range(1, len(particle_df)):
+            x_values = particle_df['x'].iloc[i-1:i+1]
+            y_values = particle_df['y'].iloc[i-1:i+1]
+            speed_category = particle_df['speed_category'].iloc[i-1]
+            color = colormap.get(speed_category, 'black')
+            ax.plot(x_values, y_values, color=color, linewidth=2)
+
+        ax.legend(handles=[plt.Line2D([0], [0], color=color, label=f'{category.capitalize()} Speed') for category, color in colormap.items()])
+        static_path = os.path.join(dir_name, 'static_trajectory.png')
+        plt.savefig(static_path)
+    
+    plt.close(fig)
