@@ -384,6 +384,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#SPTnano.extract_single_particle_df" class="md-nav__link">
+    <span class="md-ellipsis">
+      extract_single_particle_df
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#SPTnano.filter_high_speeds" class="md-nav__link">
     <span class="md-ellipsis">
       filter_high_speeds
@@ -429,6 +438,15 @@
   <a href="#SPTnano.filter_stubs" class="md-nav__link">
     <span class="md-ellipsis">
       filter_stubs
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#SPTnano.generalized_filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      generalized_filter
     </span>
   </a>
   
@@ -883,6 +901,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#SPTnano.helper_scripts.extract_single_particle_df" class="md-nav__link">
+    <span class="md-ellipsis">
+      extract_single_particle_df
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#SPTnano.helper_scripts.filter_high_speeds" class="md-nav__link">
     <span class="md-ellipsis">
       filter_high_speeds
@@ -928,6 +955,15 @@
   <a href="#SPTnano.helper_scripts.filter_stubs" class="md-nav__link">
     <span class="md-ellipsis">
       filter_stubs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#SPTnano.helper_scripts.generalized_filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      generalized_filter
     </span>
   </a>
   
@@ -1302,6 +1338,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#SPTnano.extract_single_particle_df" class="md-nav__link">
+    <span class="md-ellipsis">
+      extract_single_particle_df
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#SPTnano.filter_high_speeds" class="md-nav__link">
     <span class="md-ellipsis">
       filter_high_speeds
@@ -1347,6 +1392,15 @@
   <a href="#SPTnano.filter_stubs" class="md-nav__link">
     <span class="md-ellipsis">
       filter_stubs
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#SPTnano.generalized_filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      generalized_filter
     </span>
   </a>
   
@@ -1801,6 +1855,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#SPTnano.helper_scripts.extract_single_particle_df" class="md-nav__link">
+    <span class="md-ellipsis">
+      extract_single_particle_df
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#SPTnano.helper_scripts.filter_high_speeds" class="md-nav__link">
     <span class="md-ellipsis">
       filter_high_speeds
@@ -1846,6 +1909,15 @@
   <a href="#SPTnano.helper_scripts.filter_stubs" class="md-nav__link">
     <span class="md-ellipsis">
       filter_stubs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#SPTnano.helper_scripts.generalized_filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      generalized_filter
     </span>
   </a>
   
@@ -2464,6 +2536,124 @@ cmap : colormap, optional
 <div class="doc doc-object doc-function">
 
 
+<h2 id="SPTnano.extract_single_particle_df" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">extract_single_particle_df</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">unique_id</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+      <p>Extracts a DataFrame for a single particle based on the specified condition and unique ID.
+Condition and Location can be specified as a string or as an index.</p>
+<p>Parameters:
+- df (pd.DataFrame): The input DataFrame.
+- condition (Union[str, int]): The condition to filter by, or an index to choose from unique conditions.
+- unique_id (Optional[int]): The unique ID of the particle to filter by. If None, a random particle is chosen.
+- location (Union[str, int], optional): The location to filter by, or an index to choose from unique locations. Default is None.</p>
+<p>Returns:
+- pd.DataFrame: The filtered DataFrame containing only the selected particle.</p>
+
+            <details class="quote">
+              <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">102</span>
+<span class="normal">103</span>
+<span class="normal">104</span>
+<span class="normal">105</span>
+<span class="normal">106</span>
+<span class="normal">107</span>
+<span class="normal">108</span>
+<span class="normal">109</span>
+<span class="normal">110</span>
+<span class="normal">111</span>
+<span class="normal">112</span>
+<span class="normal">113</span>
+<span class="normal">114</span>
+<span class="normal">115</span>
+<span class="normal">116</span>
+<span class="normal">117</span>
+<span class="normal">118</span>
+<span class="normal">119</span>
+<span class="normal">120</span>
+<span class="normal">121</span>
+<span class="normal">122</span>
+<span class="normal">123</span>
+<span class="normal">124</span>
+<span class="normal">125</span>
+<span class="normal">126</span>
+<span class="normal">127</span>
+<span class="normal">128</span>
+<span class="normal">129</span>
+<span class="normal">130</span>
+<span class="normal">131</span>
+<span class="normal">132</span>
+<span class="normal">133</span>
+<span class="normal">134</span>
+<span class="normal">135</span>
+<span class="normal">136</span>
+<span class="normal">137</span>
+<span class="normal">138</span>
+<span class="normal">139</span>
+<span class="normal">140</span>
+<span class="normal">141</span>
+<span class="normal">142</span>
+<span class="normal">143</span>
+<span class="normal">144</span>
+<span class="normal">145</span>
+<span class="normal">146</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">extract_single_particle_df</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">unique_id</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extracts a DataFrame for a single particle based on the specified condition and unique ID.</span>
+<span class="sd">    Condition and Location can be specified as a string or as an index.</span>
+
+<span class="sd">    Parameters:</span>
+<span class="sd">    - df (pd.DataFrame): The input DataFrame.</span>
+<span class="sd">    - condition (Union[str, int]): The condition to filter by, or an index to choose from unique conditions.</span>
+<span class="sd">    - unique_id (Optional[int]): The unique ID of the particle to filter by. If None, a random particle is chosen.</span>
+<span class="sd">    - location (Union[str, int], optional): The location to filter by, or an index to choose from unique locations. Default is None.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">    - pd.DataFrame: The filtered DataFrame containing only the selected particle.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># # Handle the condition input (can be a string or an index)</span>
+    <span class="c1"># unique_conditions = df[&#39;condition&#39;].unique()</span>
+    <span class="c1"># if isinstance(condition, int):</span>
+    <span class="c1">#     if condition &gt;= len(unique_conditions):</span>
+    <span class="c1">#         raise ValueError(f&quot;Condition index {condition} is out of bounds.&quot;)</span>
+    <span class="c1">#     condition = unique_conditions[condition]</span>
+
+    <span class="c1"># # Apply the condition filter</span>
+    <span class="c1"># chosen_df = df[df[&#39;condition&#39;] == condition]</span>
+
+    <span class="c1"># # Handle the location input (can be a string or an index)</span>
+    <span class="c1"># if location is not None:</span>
+    <span class="c1">#     unique_locations = df[&#39;Location&#39;].unique()</span>
+    <span class="c1">#     if isinstance(location, int):</span>
+    <span class="c1">#         if location &gt;= len(unique_locations):</span>
+    <span class="c1">#             raise ValueError(f&quot;Location index {location} is out of bounds.&quot;)</span>
+    <span class="c1">#         location = unique_locations[location]</span>
+
+    <span class="c1">#     # Apply the location filter</span>
+    <span class="c1">#     chosen_df = chosen_df[chosen_df[&#39;Location&#39;] == location]</span>
+
+    <span class="c1"># If unique_id is not provided, choose a random particle</span>
+    <span class="k">if</span> <span class="n">unique_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">particle_ids</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span>
+        <span class="n">unique_id</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">particle_ids</span><span class="p">)</span>
+
+    <span class="c1"># Filter by the chosen particle</span>
+    <span class="n">single_particle_df</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">df</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">unique_id</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">single_particle_df</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h2 id="SPTnano.filter_high_speeds" class="doc doc-heading">
             <code class="highlight language-python"><span class="n">filter_high_speeds</span><span class="p">(</span><span class="n">metrics_df</span><span class="p">,</span> <span class="n">speed_threshold</span><span class="p">)</span></code>
 
@@ -2476,17 +2666,17 @@ cmap : colormap, optional
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">128</span>
-<span class="normal">129</span>
-<span class="normal">130</span>
-<span class="normal">131</span>
-<span class="normal">132</span>
-<span class="normal">133</span>
-<span class="normal">134</span>
-<span class="normal">135</span>
-<span class="normal">136</span>
-<span class="normal">137</span>
-<span class="normal">138</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_high_speeds</span><span class="p">(</span><span class="n">metrics_df</span><span class="p">,</span> <span class="n">speed_threshold</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">176</span>
+<span class="normal">177</span>
+<span class="normal">178</span>
+<span class="normal">179</span>
+<span class="normal">180</span>
+<span class="normal">181</span>
+<span class="normal">182</span>
+<span class="normal">183</span>
+<span class="normal">184</span>
+<span class="normal">185</span>
+<span class="normal">186</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_high_speeds</span><span class="p">(</span><span class="n">metrics_df</span><span class="p">,</span> <span class="n">speed_threshold</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
 <span class="sd">    Filter based on speed instead - can be relevant if you have different exposure times and different times between frames</span>
 <span class="sd">    &#39;&#39;&#39;</span>
@@ -2526,29 +2716,29 @@ threshold : float
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">104</span>
-<span class="normal">105</span>
-<span class="normal">106</span>
-<span class="normal">107</span>
-<span class="normal">108</span>
-<span class="normal">109</span>
-<span class="normal">110</span>
-<span class="normal">111</span>
-<span class="normal">112</span>
-<span class="normal">113</span>
-<span class="normal">114</span>
-<span class="normal">115</span>
-<span class="normal">116</span>
-<span class="normal">117</span>
-<span class="normal">118</span>
-<span class="normal">119</span>
-<span class="normal">120</span>
-<span class="normal">121</span>
-<span class="normal">122</span>
-<span class="normal">123</span>
-<span class="normal">124</span>
-<span class="normal">125</span>
-<span class="normal">126</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_large_jumps</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">threshold</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">152</span>
+<span class="normal">153</span>
+<span class="normal">154</span>
+<span class="normal">155</span>
+<span class="normal">156</span>
+<span class="normal">157</span>
+<span class="normal">158</span>
+<span class="normal">159</span>
+<span class="normal">160</span>
+<span class="normal">161</span>
+<span class="normal">162</span>
+<span class="normal">163</span>
+<span class="normal">164</span>
+<span class="normal">165</span>
+<span class="normal">166</span>
+<span class="normal">167</span>
+<span class="normal">168</span>
+<span class="normal">169</span>
+<span class="normal">170</span>
+<span class="normal">171</span>
+<span class="normal">172</span>
+<span class="normal">173</span>
+<span class="normal">174</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_large_jumps</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">threshold</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Filter out entire particles with any frames showing large jumps in micrometers.</span>
 
@@ -2622,6 +2812,133 @@ Works across exposure times, because it works on converted seconds, not frames</
     <span class="n">filtered_df</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">df</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span><span class="n">valid_particles</span><span class="p">)]</span>
 
     <span class="k">return</span> <span class="n">filtered_df</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="SPTnano.generalized_filter" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">generalized_filter</span><span class="p">(</span><span class="n">df_in</span><span class="p">,</span> <span class="n">filter_col</span><span class="p">,</span> <span class="n">low</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">condition</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+      <p>Filters the input DataFrame based on a range of values in filter_col and additional conditions.</p>
+<p>Parameters:
+- df_in (pd.DataFrame): The input DataFrame to filter.
+- filter_col (str): The column to filter based on a range of values.
+- low (float, optional): The lower bound of the filter range (inclusive). Default is None.
+- high (float, optional): The upper bound of the filter range (inclusive). Default is None.
+- condition (Union[str, int], optional): The specific condition to filter by, or an index to choose from unique conditions. Default is None.
+- location (Union[str, int], optional): The specific location to filter by, or an index to choose from unique locations. Default is None.</p>
+<p>Returns:
+- pd.DataFrame: The filtered DataFrame.</p>
+
+            <details class="quote">
+              <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">212</span>
+<span class="normal">213</span>
+<span class="normal">214</span>
+<span class="normal">215</span>
+<span class="normal">216</span>
+<span class="normal">217</span>
+<span class="normal">218</span>
+<span class="normal">219</span>
+<span class="normal">220</span>
+<span class="normal">221</span>
+<span class="normal">222</span>
+<span class="normal">223</span>
+<span class="normal">224</span>
+<span class="normal">225</span>
+<span class="normal">226</span>
+<span class="normal">227</span>
+<span class="normal">228</span>
+<span class="normal">229</span>
+<span class="normal">230</span>
+<span class="normal">231</span>
+<span class="normal">232</span>
+<span class="normal">233</span>
+<span class="normal">234</span>
+<span class="normal">235</span>
+<span class="normal">236</span>
+<span class="normal">237</span>
+<span class="normal">238</span>
+<span class="normal">239</span>
+<span class="normal">240</span>
+<span class="normal">241</span>
+<span class="normal">242</span>
+<span class="normal">243</span>
+<span class="normal">244</span>
+<span class="normal">245</span>
+<span class="normal">246</span>
+<span class="normal">247</span>
+<span class="normal">248</span>
+<span class="normal">249</span>
+<span class="normal">250</span>
+<span class="normal">251</span>
+<span class="normal">252</span>
+<span class="normal">253</span>
+<span class="normal">254</span>
+<span class="normal">255</span>
+<span class="normal">256</span>
+<span class="normal">257</span>
+<span class="normal">258</span>
+<span class="normal">259</span>
+<span class="normal">260</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">generalized_filter</span><span class="p">(</span><span class="n">df_in</span><span class="p">,</span> <span class="n">filter_col</span><span class="p">,</span> <span class="n">low</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">condition</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Filters the input DataFrame based on a range of values in filter_col and additional conditions.</span>
+
+<span class="sd">    Parameters:</span>
+<span class="sd">    - df_in (pd.DataFrame): The input DataFrame to filter.</span>
+<span class="sd">    - filter_col (str): The column to filter based on a range of values.</span>
+<span class="sd">    - low (float, optional): The lower bound of the filter range (inclusive). Default is None.</span>
+<span class="sd">    - high (float, optional): The upper bound of the filter range (inclusive). Default is None.</span>
+<span class="sd">    - condition (Union[str, int], optional): The specific condition to filter by, or an index to choose from unique conditions. Default is None.</span>
+<span class="sd">    - location (Union[str, int], optional): The specific location to filter by, or an index to choose from unique locations. Default is None.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">    - pd.DataFrame: The filtered DataFrame.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Start with the input DataFrame</span>
+    <span class="n">df_filtered</span> <span class="o">=</span> <span class="n">df_in</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Available filters: </span><span class="si">{</span><span class="n">df_filtered</span><span class="o">.</span><span class="n">columns</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+    <span class="c1"># Handle the filtering logic for low and high values</span>
+    <span class="k">if</span> <span class="n">low</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">high</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">df_filtered</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="n">df_filtered</span><span class="p">[</span><span class="n">filter_col</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">high</span><span class="p">]</span>
+    <span class="k">elif</span> <span class="n">low</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">high</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">df_filtered</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="n">df_filtered</span><span class="p">[</span><span class="n">filter_col</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">low</span><span class="p">]</span>
+    <span class="k">elif</span> <span class="n">low</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">high</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">df_filtered</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[(</span><span class="n">df_filtered</span><span class="p">[</span><span class="n">filter_col</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">low</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">df_filtered</span><span class="p">[</span><span class="n">filter_col</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">high</span><span class="p">)]</span>
+
+    <span class="c1"># Handle the condition input (can be a string or an index)</span>
+    <span class="k">if</span> <span class="n">condition</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">unique_conditions</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="s1">&#39;condition&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">condition</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">condition</span> <span class="o">&gt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">unique_conditions</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Condition index </span><span class="si">{</span><span class="n">condition</span><span class="si">}</span><span class="s2"> is out of bounds.&quot;</span><span class="p">)</span>
+            <span class="n">condition</span> <span class="o">=</span> <span class="n">unique_conditions</span><span class="p">[</span><span class="n">condition</span><span class="p">]</span>
+        <span class="n">df_filtered</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="n">df_filtered</span><span class="p">[</span><span class="s1">&#39;condition&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">condition</span><span class="p">]</span>
+
+    <span class="c1"># Handle the location input (can be a string or an index)</span>
+    <span class="k">if</span> <span class="n">location</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">unique_locations</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="s1">&#39;Location&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">location</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">location</span> <span class="o">&gt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">unique_locations</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Location index </span><span class="si">{</span><span class="n">location</span><span class="si">}</span><span class="s2"> is out of bounds - if you think it should be there, check whether you have it in the condition you filtered on&quot;</span><span class="p">)</span>
+            <span class="n">location</span> <span class="o">=</span> <span class="n">unique_locations</span><span class="p">[</span><span class="n">location</span><span class="p">]</span>
+        <span class="n">df_filtered</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="n">df_filtered</span><span class="p">[</span><span class="s1">&#39;Location&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">location</span><span class="p">]</span>
+
+    <span class="n">unique_ids</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">df_filtered</span><span class="p">,</span> <span class="n">unique_ids</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3580,7 +3897,7 @@ xlimit : float, optional
 
 
 <h2 id="SPTnano.plot_single_particle" class="doc doc-heading">
-            <code class="highlight language-python"><span class="n">plot_single_particle</span><span class="p">(</span><span class="n">particle_df</span><span class="p">,</span> <span class="n">speed_thresholds</span><span class="p">,</span> <span class="n">animation</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></code>
+            <code class="highlight language-python"><span class="n">plot_single_particle</span><span class="p">(</span><span class="n">particle_df</span><span class="p">,</span> <span class="n">threshold_col</span><span class="p">,</span> <span class="n">thresholds</span><span class="p">,</span> <span class="n">animate</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></code>
 
 </h2>
 
@@ -3591,128 +3908,175 @@ xlimit : float, optional
 with each segment colored according to its speed category.</p>
 <p>Parameters:
 - particle_df: DataFrame containing the particle's data with columns 'x', 'y', and 'speed_um_s'.
-- speed_thresholds: List or tuple of four numbers defining the boundaries for low, medium, and high speeds.
-- animation: Boolean, if True creates an animation, if False creates a static plot.</p>
+- threshold_col: The column used to determine the thresholds for coloring.
+- thresholds: List or tuple of three numbers defining the boundaries for low, medium, and high categories.
+- animate: Boolean, if True creates an animation, if False creates a static plot.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/visualization.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">2749</span>
-<span class="normal">2750</span>
-<span class="normal">2751</span>
-<span class="normal">2752</span>
-<span class="normal">2753</span>
-<span class="normal">2754</span>
-<span class="normal">2755</span>
-<span class="normal">2756</span>
-<span class="normal">2757</span>
-<span class="normal">2758</span>
-<span class="normal">2759</span>
-<span class="normal">2760</span>
-<span class="normal">2761</span>
-<span class="normal">2762</span>
-<span class="normal">2763</span>
-<span class="normal">2764</span>
-<span class="normal">2765</span>
-<span class="normal">2766</span>
-<span class="normal">2767</span>
-<span class="normal">2768</span>
-<span class="normal">2769</span>
-<span class="normal">2770</span>
-<span class="normal">2771</span>
-<span class="normal">2772</span>
-<span class="normal">2773</span>
-<span class="normal">2774</span>
-<span class="normal">2775</span>
-<span class="normal">2776</span>
-<span class="normal">2777</span>
-<span class="normal">2778</span>
-<span class="normal">2779</span>
-<span class="normal">2780</span>
-<span class="normal">2781</span>
-<span class="normal">2782</span>
-<span class="normal">2783</span>
-<span class="normal">2784</span>
-<span class="normal">2785</span>
-<span class="normal">2786</span>
-<span class="normal">2787</span>
-<span class="normal">2788</span>
-<span class="normal">2789</span>
-<span class="normal">2790</span>
-<span class="normal">2791</span>
-<span class="normal">2792</span>
-<span class="normal">2793</span>
-<span class="normal">2794</span>
-<span class="normal">2795</span>
-<span class="normal">2796</span>
-<span class="normal">2797</span>
-<span class="normal">2798</span>
-<span class="normal">2799</span>
-<span class="normal">2800</span>
-<span class="normal">2801</span>
-<span class="normal">2802</span>
-<span class="normal">2803</span>
-<span class="normal">2804</span>
-<span class="normal">2805</span>
-<span class="normal">2806</span>
-<span class="normal">2807</span>
-<span class="normal">2808</span>
-<span class="normal">2809</span>
-<span class="normal">2810</span>
-<span class="normal">2811</span>
-<span class="normal">2812</span>
-<span class="normal">2813</span>
-<span class="normal">2814</span>
-<span class="normal">2815</span>
-<span class="normal">2816</span>
-<span class="normal">2817</span>
-<span class="normal">2818</span>
-<span class="normal">2819</span>
-<span class="normal">2820</span>
-<span class="normal">2821</span>
-<span class="normal">2822</span>
-<span class="normal">2823</span>
-<span class="normal">2824</span>
-<span class="normal">2825</span>
-<span class="normal">2826</span>
-<span class="normal">2827</span>
-<span class="normal">2828</span>
-<span class="normal">2829</span>
-<span class="normal">2830</span>
-<span class="normal">2831</span>
-<span class="normal">2832</span>
-<span class="normal">2833</span>
-<span class="normal">2834</span>
-<span class="normal">2835</span>
-<span class="normal">2836</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">plot_single_particle</span><span class="p">(</span><span class="n">particle_df</span><span class="p">,</span> <span class="n">speed_thresholds</span><span class="p">,</span> <span class="n">animation</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">3035</span>
+<span class="normal">3036</span>
+<span class="normal">3037</span>
+<span class="normal">3038</span>
+<span class="normal">3039</span>
+<span class="normal">3040</span>
+<span class="normal">3041</span>
+<span class="normal">3042</span>
+<span class="normal">3043</span>
+<span class="normal">3044</span>
+<span class="normal">3045</span>
+<span class="normal">3046</span>
+<span class="normal">3047</span>
+<span class="normal">3048</span>
+<span class="normal">3049</span>
+<span class="normal">3050</span>
+<span class="normal">3051</span>
+<span class="normal">3052</span>
+<span class="normal">3053</span>
+<span class="normal">3054</span>
+<span class="normal">3055</span>
+<span class="normal">3056</span>
+<span class="normal">3057</span>
+<span class="normal">3058</span>
+<span class="normal">3059</span>
+<span class="normal">3060</span>
+<span class="normal">3061</span>
+<span class="normal">3062</span>
+<span class="normal">3063</span>
+<span class="normal">3064</span>
+<span class="normal">3065</span>
+<span class="normal">3066</span>
+<span class="normal">3067</span>
+<span class="normal">3068</span>
+<span class="normal">3069</span>
+<span class="normal">3070</span>
+<span class="normal">3071</span>
+<span class="normal">3072</span>
+<span class="normal">3073</span>
+<span class="normal">3074</span>
+<span class="normal">3075</span>
+<span class="normal">3076</span>
+<span class="normal">3077</span>
+<span class="normal">3078</span>
+<span class="normal">3079</span>
+<span class="normal">3080</span>
+<span class="normal">3081</span>
+<span class="normal">3082</span>
+<span class="normal">3083</span>
+<span class="normal">3084</span>
+<span class="normal">3085</span>
+<span class="normal">3086</span>
+<span class="normal">3087</span>
+<span class="normal">3088</span>
+<span class="normal">3089</span>
+<span class="normal">3090</span>
+<span class="normal">3091</span>
+<span class="normal">3092</span>
+<span class="normal">3093</span>
+<span class="normal">3094</span>
+<span class="normal">3095</span>
+<span class="normal">3096</span>
+<span class="normal">3097</span>
+<span class="normal">3098</span>
+<span class="normal">3099</span>
+<span class="normal">3100</span>
+<span class="normal">3101</span>
+<span class="normal">3102</span>
+<span class="normal">3103</span>
+<span class="normal">3104</span>
+<span class="normal">3105</span>
+<span class="normal">3106</span>
+<span class="normal">3107</span>
+<span class="normal">3108</span>
+<span class="normal">3109</span>
+<span class="normal">3110</span>
+<span class="normal">3111</span>
+<span class="normal">3112</span>
+<span class="normal">3113</span>
+<span class="normal">3114</span>
+<span class="normal">3115</span>
+<span class="normal">3116</span>
+<span class="normal">3117</span>
+<span class="normal">3118</span>
+<span class="normal">3119</span>
+<span class="normal">3120</span>
+<span class="normal">3121</span>
+<span class="normal">3122</span>
+<span class="normal">3123</span>
+<span class="normal">3124</span>
+<span class="normal">3125</span>
+<span class="normal">3126</span>
+<span class="normal">3127</span>
+<span class="normal">3128</span>
+<span class="normal">3129</span>
+<span class="normal">3130</span>
+<span class="normal">3131</span>
+<span class="normal">3132</span>
+<span class="normal">3133</span>
+<span class="normal">3134</span>
+<span class="normal">3135</span>
+<span class="normal">3136</span>
+<span class="normal">3137</span>
+<span class="normal">3138</span>
+<span class="normal">3139</span>
+<span class="normal">3140</span>
+<span class="normal">3141</span>
+<span class="normal">3142</span>
+<span class="normal">3143</span>
+<span class="normal">3144</span>
+<span class="normal">3145</span>
+<span class="normal">3146</span>
+<span class="normal">3147</span>
+<span class="normal">3148</span>
+<span class="normal">3149</span>
+<span class="normal">3150</span>
+<span class="normal">3151</span>
+<span class="normal">3152</span>
+<span class="normal">3153</span>
+<span class="normal">3154</span>
+<span class="normal">3155</span>
+<span class="normal">3156</span>
+<span class="normal">3157</span>
+<span class="normal">3158</span>
+<span class="normal">3159</span>
+<span class="normal">3160</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">plot_single_particle</span><span class="p">(</span><span class="n">particle_df</span><span class="p">,</span> <span class="n">threshold_col</span><span class="p">,</span> <span class="n">thresholds</span><span class="p">,</span> <span class="n">animate</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Plots the trajectory of a single particle, either as an animation or as a static image, </span>
 <span class="sd">    with each segment colored according to its speed category.</span>
 
 <span class="sd">    Parameters:</span>
 <span class="sd">    - particle_df: DataFrame containing the particle&#39;s data with columns &#39;x&#39;, &#39;y&#39;, and &#39;speed_um_s&#39;.</span>
-<span class="sd">    - speed_thresholds: List or tuple of four numbers defining the boundaries for low, medium, and high speeds.</span>
-<span class="sd">    - animation: Boolean, if True creates an animation, if False creates a static plot.</span>
+<span class="sd">    - threshold_col: The column used to determine the thresholds for coloring.</span>
+<span class="sd">    - thresholds: List or tuple of three numbers defining the boundaries for low, medium, and high categories.</span>
+<span class="sd">    - animate: Boolean, if True creates an animation, if False creates a static plot.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="c1"># Get the unique ID of the particle</span>
     <span class="n">unique_id</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
 
-    <span class="c1"># Ensure the speed thresholds are sorted</span>
-    <span class="n">speed_thresholds</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">speed_thresholds</span><span class="p">)</span>
+    <span class="c1"># Ensure the thresholds are sorted</span>
+    <span class="n">thresholds</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">thresholds</span><span class="p">)</span>
 
-    <span class="c1"># Assign speed categories based on thresholds</span>
+    <span class="c1"># Assign categories based on thresholds</span>
     <span class="n">conditions</span> <span class="o">=</span> <span class="p">[</span>
-        <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">speed_thresholds</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">speed_thresholds</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span>
-        <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">speed_thresholds</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">speed_thresholds</span><span class="p">[</span><span class="mi">2</span><span class="p">]),</span>
-        <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">speed_thresholds</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+        <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="n">threshold_col</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">thresholds</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="n">threshold_col</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">thresholds</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span>
+        <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="n">threshold_col</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">thresholds</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="n">threshold_col</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">thresholds</span><span class="p">[</span><span class="mi">2</span><span class="p">]),</span>
+        <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="n">threshold_col</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">thresholds</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
     <span class="p">]</span>
     <span class="n">choices</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;low&#39;</span><span class="p">,</span> <span class="s1">&#39;medium&#39;</span><span class="p">,</span> <span class="s1">&#39;high&#39;</span><span class="p">]</span>
-    <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_category&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">conditions</span><span class="p">,</span> <span class="n">choices</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s1">&#39;unknown&#39;</span><span class="p">)</span>
+    <span class="n">factorcategory</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">threshold_col</span><span class="si">}</span><span class="s1">_category&#39;</span>
+    <span class="n">particle_df</span><span class="p">[</span><span class="n">factorcategory</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">conditions</span><span class="p">,</span> <span class="n">choices</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s1">&#39;unknown&#39;</span><span class="p">)</span>
 
-    <span class="c1"># Define a colormap for the speed categories</span>
+    <span class="c1"># Define a colormap for the categories</span>
+    <span class="c1"># colormap = {</span>
+    <span class="c1">#     &#39;low&#39;: &#39;blue&#39;,</span>
+    <span class="c1">#     &#39;medium&#39;: &#39;green&#39;,</span>
+    <span class="c1">#     &#39;high&#39;: &#39;red&#39;</span>
+    <span class="c1"># }</span>
+
     <span class="n">colormap</span> <span class="o">=</span> <span class="p">{</span>
-        <span class="s1">&#39;low&#39;</span><span class="p">:</span> <span class="s1">&#39;blue&#39;</span><span class="p">,</span>
-        <span class="s1">&#39;medium&#39;</span><span class="p">:</span> <span class="s1">&#39;green&#39;</span><span class="p">,</span>
-        <span class="s1">&#39;high&#39;</span><span class="p">:</span> <span class="s1">&#39;orange&#39;</span>
+    <span class="s1">&#39;low&#39;</span><span class="p">:</span> <span class="s1">&#39;#1F77B4&#39;</span><span class="p">,</span>    <span class="c1"># Hex color for &#39;low&#39;</span>
+    <span class="s1">&#39;medium&#39;</span><span class="p">:</span> <span class="s1">&#39;#FF7F0E&#39;</span><span class="p">,</span> <span class="c1"># Hex color for &#39;medium&#39;</span>
+    <span class="s1">&#39;high&#39;</span><span class="p">:</span> <span class="s1">&#39;#2CA02C&#39;</span>    <span class="c1"># Hex color for &#39;high&#39;</span>
     <span class="p">}</span>
 
     <span class="c1"># Calculate center and range for square plot</span>
@@ -3721,54 +4085,84 @@ with each segment colored according to its speed category.</p>
     <span class="n">range_extent</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">-</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">(),</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">-</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">())</span> <span class="o">/</span> <span class="mi">2</span>
     <span class="n">range_extent</span> <span class="o">*=</span> <span class="mf">1.1</span>  <span class="c1"># Add some padding</span>
 
-    <span class="c1"># Create directory for saving images</span>
-    <span class="k">if</span> <span class="n">animation</span><span class="p">:</span>
-        <span class="n">dir_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">master</span><span class="si">}</span><span class="s1">visualization/particle_speedcat_</span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">&#39;</span>
-        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">dir_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">master</span><span class="si">}</span><span class="s1">visualization/particle_speedcat_static_</span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">&#39;</span>
-        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="c1"># Create directory for saving video or images</span>
+    <span class="c1"># dir_name = f&#39;{config.MASTER}visualization/particle_{unique_id}_cat_{threshold_col}&#39;</span>
+    <span class="c1"># os.makedirs(dir_name, exist_ok=True)</span>
 
-    <span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
-    <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Particle Trajectory with Speed Categories: </span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
-    <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;X Position&#39;</span><span class="p">)</span>
-    <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Y Position&#39;</span><span class="p">)</span>
+    <span class="c1"># if animate:</span>
+    <span class="c1">#     dir_name = f&#39;{config.MASTER}visualization/particle_{unique_id}_cat_{threshold_col}&#39;</span>
+    <span class="c1">#     os.makedirs(dir_name, exist_ok=True)</span>
+    <span class="c1"># else:</span>
+    <span class="n">dir_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">MASTER</span><span class="si">}</span><span class="s1">visualization\singleparticleplots&#39;</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">fontsizes</span> <span class="o">=</span> <span class="mi">16</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">rcParams</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s1">&#39;font.size&#39;</span><span class="p">:</span> <span class="n">fontsizes</span><span class="p">})</span>
+    <span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">12</span><span class="p">),</span> <span class="n">dpi</span><span class="o">=</span><span class="mi">150</span><span class="p">)</span>
+
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Particle Trajectory with </span><span class="si">{</span><span class="n">factorcategory</span><span class="si">}</span><span class="s1"> Categories: </span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;X Position&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Y Position&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
     <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="n">center_x</span> <span class="o">-</span> <span class="n">range_extent</span><span class="p">,</span> <span class="n">center_x</span> <span class="o">+</span> <span class="n">range_extent</span><span class="p">)</span>
     <span class="n">ax</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">(</span><span class="n">center_y</span> <span class="o">-</span> <span class="n">range_extent</span><span class="p">,</span> <span class="n">center_y</span> <span class="o">+</span> <span class="n">range_extent</span><span class="p">)</span>
 
-    <span class="k">if</span> <span class="n">animation</span><span class="p">:</span>
-        <span class="c1"># Create animation by iterating through the data and plotting frame by frame</span>
+    <span class="c1"># Adjust the font size of the axis ticks</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">tick_params</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="s1">&#39;both&#39;</span><span class="p">,</span> <span class="n">which</span><span class="o">=</span><span class="s1">&#39;major&#39;</span><span class="p">,</span> <span class="n">labelsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+
+    <span class="c1"># List to store frames</span>
+    <span class="n">frames</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">update_plot</span><span class="p">(</span><span class="n">i</span><span class="p">):</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Particle Trajectory with </span><span class="si">{</span><span class="n">factorcategory</span><span class="si">}</span><span class="s1"> Categories: </span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;X Position&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Y Position&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="n">center_x</span> <span class="o">-</span> <span class="n">range_extent</span><span class="p">,</span> <span class="n">center_x</span> <span class="o">+</span> <span class="n">range_extent</span><span class="p">)</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">(</span><span class="n">center_y</span> <span class="o">-</span> <span class="n">range_extent</span><span class="p">,</span> <span class="n">center_y</span> <span class="o">+</span> <span class="n">range_extent</span><span class="p">)</span>
+
+        <span class="c1"># Adjust the font size of the axis ticks in the update function as well</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">tick_params</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="s1">&#39;both&#39;</span><span class="p">,</span> <span class="n">which</span><span class="o">=</span><span class="s1">&#39;major&#39;</span><span class="p">,</span> <span class="n">labelsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+
+        <span class="c1"># Plot the trajectory up to the current point, changing colors according to category</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="n">x_values</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">y_values</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">fac_category</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="n">factorcategory</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">color</span> <span class="o">=</span> <span class="n">colormap</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">fac_category</span><span class="p">,</span> <span class="s1">&#39;black&#39;</span><span class="p">)</span>
+            <span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">x_values</span><span class="p">,</span> <span class="n">y_values</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+
+        <span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">handles</span><span class="o">=</span><span class="p">[</span><span class="n">plt</span><span class="o">.</span><span class="n">Line2D</span><span class="p">([</span><span class="mi">0</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">category</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span> <span class="k">for</span> <span class="n">category</span><span class="p">,</span> <span class="n">color</span> <span class="ow">in</span> <span class="n">colormap</span><span class="o">.</span><span class="n">items</span><span class="p">()],</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+
+
+        <span class="c1"># Save frame to list for GIF creation</span>
+        <span class="n">fig</span><span class="o">.</span><span class="n">canvas</span><span class="o">.</span><span class="n">draw</span><span class="p">()</span>
+        <span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">frombytes</span><span class="p">(</span><span class="s1">&#39;RGB&#39;</span><span class="p">,</span> <span class="n">fig</span><span class="o">.</span><span class="n">canvas</span><span class="o">.</span><span class="n">get_width_height</span><span class="p">(),</span> <span class="n">fig</span><span class="o">.</span><span class="n">canvas</span><span class="o">.</span><span class="n">tostring_rgb</span><span class="p">())</span>
+        <span class="n">frames</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">animate</span><span class="p">:</span>
+        <span class="c1"># Create animation frame by frame</span>
         <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">particle_df</span><span class="p">)):</span>
-            <span class="n">ax</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
-            <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Particle Trajectory with Speed Categories: </span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
-            <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;X Position&#39;</span><span class="p">)</span>
-            <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Y Position&#39;</span><span class="p">)</span>
-            <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="n">center_x</span> <span class="o">-</span> <span class="n">range_extent</span><span class="p">,</span> <span class="n">center_x</span> <span class="o">+</span> <span class="n">range_extent</span><span class="p">)</span>
-            <span class="n">ax</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">(</span><span class="n">center_y</span> <span class="o">-</span> <span class="n">range_extent</span><span class="p">,</span> <span class="n">center_y</span> <span class="o">+</span> <span class="n">range_extent</span><span class="p">)</span>
+            <span class="n">update_plot</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
 
-            <span class="c1"># Plot the trajectory up to the current point, changing colors according to speed category</span>
-            <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
-                <span class="n">x_values</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
-                <span class="n">y_values</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
-                <span class="n">speed_category</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_category&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
-                <span class="n">color</span> <span class="o">=</span> <span class="n">colormap</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">speed_category</span><span class="p">,</span> <span class="s1">&#39;black&#39;</span><span class="p">)</span>
-                <span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">x_values</span><span class="p">,</span> <span class="n">y_values</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+        <span class="c1"># Save the frames as a GIF</span>
+        <span class="n">gif_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;particle_</span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">_cat_</span><span class="si">{</span><span class="n">threshold_col</span><span class="si">}</span><span class="s1">.gif&#39;</span><span class="p">)</span>
+        <span class="n">frames</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">gif_path</span><span class="p">,</span> <span class="n">save_all</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">append_images</span><span class="o">=</span><span class="n">frames</span><span class="p">[</span><span class="mi">1</span><span class="p">:],</span> <span class="n">duration</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">loop</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
 
-            <span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">handles</span><span class="o">=</span><span class="p">[</span><span class="n">plt</span><span class="o">.</span><span class="n">Line2D</span><span class="p">([</span><span class="mi">0</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">category</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s1"> Speed&#39;</span><span class="p">)</span> <span class="k">for</span> <span class="n">category</span><span class="p">,</span> <span class="n">color</span> <span class="ow">in</span> <span class="n">colormap</span><span class="o">.</span><span class="n">items</span><span class="p">()])</span>
-            <span class="n">plt_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;frame_</span><span class="si">{</span><span class="n">i</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1">.png&#39;</span><span class="p">)</span>
-            <span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="n">plt_path</span><span class="p">)</span>
+
+        <span class="c1"># frames[0].save(&#39;output.gif&#39;, save_all=True, append_images=frames[1:], duration=100, loop=0)</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="c1"># Create static plot of the entire trajectory</span>
         <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">particle_df</span><span class="p">)):</span>
             <span class="n">x_values</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
             <span class="n">y_values</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
-            <span class="n">speed_category</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_category&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
-            <span class="n">color</span> <span class="o">=</span> <span class="n">colormap</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">speed_category</span><span class="p">,</span> <span class="s1">&#39;black&#39;</span><span class="p">)</span>
+            <span class="n">fac_category</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="n">factorcategory</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">color</span> <span class="o">=</span> <span class="n">colormap</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">fac_category</span><span class="p">,</span> <span class="s1">&#39;black&#39;</span><span class="p">)</span>
             <span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">x_values</span><span class="p">,</span> <span class="n">y_values</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
 
-        <span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">handles</span><span class="o">=</span><span class="p">[</span><span class="n">plt</span><span class="o">.</span><span class="n">Line2D</span><span class="p">([</span><span class="mi">0</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">category</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s1"> Speed&#39;</span><span class="p">)</span> <span class="k">for</span> <span class="n">category</span><span class="p">,</span> <span class="n">color</span> <span class="ow">in</span> <span class="n">colormap</span><span class="o">.</span><span class="n">items</span><span class="p">()])</span>
-        <span class="n">static_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="s1">&#39;static_trajectory.png&#39;</span><span class="p">)</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">handles</span><span class="o">=</span><span class="p">[</span><span class="n">plt</span><span class="o">.</span><span class="n">Line2D</span><span class="p">([</span><span class="mi">0</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">category</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span> <span class="k">for</span> <span class="n">category</span><span class="p">,</span> <span class="n">color</span> <span class="ow">in</span> <span class="n">colormap</span><span class="o">.</span><span class="n">items</span><span class="p">()])</span>
+        <span class="n">static_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;static_particle_</span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">_cat_</span><span class="si">{</span><span class="n">threshold_col</span><span class="si">}</span><span class="s1">.png&#39;</span><span class="p">)</span>
         <span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="n">static_path</span><span class="p">)</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 
     <span class="n">plt</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="n">fig</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
@@ -7431,6 +7825,124 @@ Parameters:
 <div class="doc doc-object doc-function">
 
 
+<h3 id="SPTnano.helper_scripts.extract_single_particle_df" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">extract_single_particle_df</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">unique_id</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+
+      <p>Extracts a DataFrame for a single particle based on the specified condition and unique ID.
+Condition and Location can be specified as a string or as an index.</p>
+<p>Parameters:
+- df (pd.DataFrame): The input DataFrame.
+- condition (Union[str, int]): The condition to filter by, or an index to choose from unique conditions.
+- unique_id (Optional[int]): The unique ID of the particle to filter by. If None, a random particle is chosen.
+- location (Union[str, int], optional): The location to filter by, or an index to choose from unique locations. Default is None.</p>
+<p>Returns:
+- pd.DataFrame: The filtered DataFrame containing only the selected particle.</p>
+
+            <details class="quote">
+              <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">102</span>
+<span class="normal">103</span>
+<span class="normal">104</span>
+<span class="normal">105</span>
+<span class="normal">106</span>
+<span class="normal">107</span>
+<span class="normal">108</span>
+<span class="normal">109</span>
+<span class="normal">110</span>
+<span class="normal">111</span>
+<span class="normal">112</span>
+<span class="normal">113</span>
+<span class="normal">114</span>
+<span class="normal">115</span>
+<span class="normal">116</span>
+<span class="normal">117</span>
+<span class="normal">118</span>
+<span class="normal">119</span>
+<span class="normal">120</span>
+<span class="normal">121</span>
+<span class="normal">122</span>
+<span class="normal">123</span>
+<span class="normal">124</span>
+<span class="normal">125</span>
+<span class="normal">126</span>
+<span class="normal">127</span>
+<span class="normal">128</span>
+<span class="normal">129</span>
+<span class="normal">130</span>
+<span class="normal">131</span>
+<span class="normal">132</span>
+<span class="normal">133</span>
+<span class="normal">134</span>
+<span class="normal">135</span>
+<span class="normal">136</span>
+<span class="normal">137</span>
+<span class="normal">138</span>
+<span class="normal">139</span>
+<span class="normal">140</span>
+<span class="normal">141</span>
+<span class="normal">142</span>
+<span class="normal">143</span>
+<span class="normal">144</span>
+<span class="normal">145</span>
+<span class="normal">146</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">extract_single_particle_df</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">unique_id</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extracts a DataFrame for a single particle based on the specified condition and unique ID.</span>
+<span class="sd">    Condition and Location can be specified as a string or as an index.</span>
+
+<span class="sd">    Parameters:</span>
+<span class="sd">    - df (pd.DataFrame): The input DataFrame.</span>
+<span class="sd">    - condition (Union[str, int]): The condition to filter by, or an index to choose from unique conditions.</span>
+<span class="sd">    - unique_id (Optional[int]): The unique ID of the particle to filter by. If None, a random particle is chosen.</span>
+<span class="sd">    - location (Union[str, int], optional): The location to filter by, or an index to choose from unique locations. Default is None.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">    - pd.DataFrame: The filtered DataFrame containing only the selected particle.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># # Handle the condition input (can be a string or an index)</span>
+    <span class="c1"># unique_conditions = df[&#39;condition&#39;].unique()</span>
+    <span class="c1"># if isinstance(condition, int):</span>
+    <span class="c1">#     if condition &gt;= len(unique_conditions):</span>
+    <span class="c1">#         raise ValueError(f&quot;Condition index {condition} is out of bounds.&quot;)</span>
+    <span class="c1">#     condition = unique_conditions[condition]</span>
+
+    <span class="c1"># # Apply the condition filter</span>
+    <span class="c1"># chosen_df = df[df[&#39;condition&#39;] == condition]</span>
+
+    <span class="c1"># # Handle the location input (can be a string or an index)</span>
+    <span class="c1"># if location is not None:</span>
+    <span class="c1">#     unique_locations = df[&#39;Location&#39;].unique()</span>
+    <span class="c1">#     if isinstance(location, int):</span>
+    <span class="c1">#         if location &gt;= len(unique_locations):</span>
+    <span class="c1">#             raise ValueError(f&quot;Location index {location} is out of bounds.&quot;)</span>
+    <span class="c1">#         location = unique_locations[location]</span>
+
+    <span class="c1">#     # Apply the location filter</span>
+    <span class="c1">#     chosen_df = chosen_df[chosen_df[&#39;Location&#39;] == location]</span>
+
+    <span class="c1"># If unique_id is not provided, choose a random particle</span>
+    <span class="k">if</span> <span class="n">unique_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">particle_ids</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span>
+        <span class="n">unique_id</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">particle_ids</span><span class="p">)</span>
+
+    <span class="c1"># Filter by the chosen particle</span>
+    <span class="n">single_particle_df</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">df</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">unique_id</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">single_particle_df</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h3 id="SPTnano.helper_scripts.filter_high_speeds" class="doc doc-heading">
             <code class="highlight language-python"><span class="n">filter_high_speeds</span><span class="p">(</span><span class="n">metrics_df</span><span class="p">,</span> <span class="n">speed_threshold</span><span class="p">)</span></code>
 
@@ -7443,17 +7955,17 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">128</span>
-<span class="normal">129</span>
-<span class="normal">130</span>
-<span class="normal">131</span>
-<span class="normal">132</span>
-<span class="normal">133</span>
-<span class="normal">134</span>
-<span class="normal">135</span>
-<span class="normal">136</span>
-<span class="normal">137</span>
-<span class="normal">138</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_high_speeds</span><span class="p">(</span><span class="n">metrics_df</span><span class="p">,</span> <span class="n">speed_threshold</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">176</span>
+<span class="normal">177</span>
+<span class="normal">178</span>
+<span class="normal">179</span>
+<span class="normal">180</span>
+<span class="normal">181</span>
+<span class="normal">182</span>
+<span class="normal">183</span>
+<span class="normal">184</span>
+<span class="normal">185</span>
+<span class="normal">186</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_high_speeds</span><span class="p">(</span><span class="n">metrics_df</span><span class="p">,</span> <span class="n">speed_threshold</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
 <span class="sd">    Filter based on speed instead - can be relevant if you have different exposure times and different times between frames</span>
 <span class="sd">    &#39;&#39;&#39;</span>
@@ -7493,29 +8005,29 @@ threshold : float
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">104</span>
-<span class="normal">105</span>
-<span class="normal">106</span>
-<span class="normal">107</span>
-<span class="normal">108</span>
-<span class="normal">109</span>
-<span class="normal">110</span>
-<span class="normal">111</span>
-<span class="normal">112</span>
-<span class="normal">113</span>
-<span class="normal">114</span>
-<span class="normal">115</span>
-<span class="normal">116</span>
-<span class="normal">117</span>
-<span class="normal">118</span>
-<span class="normal">119</span>
-<span class="normal">120</span>
-<span class="normal">121</span>
-<span class="normal">122</span>
-<span class="normal">123</span>
-<span class="normal">124</span>
-<span class="normal">125</span>
-<span class="normal">126</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_large_jumps</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">threshold</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">152</span>
+<span class="normal">153</span>
+<span class="normal">154</span>
+<span class="normal">155</span>
+<span class="normal">156</span>
+<span class="normal">157</span>
+<span class="normal">158</span>
+<span class="normal">159</span>
+<span class="normal">160</span>
+<span class="normal">161</span>
+<span class="normal">162</span>
+<span class="normal">163</span>
+<span class="normal">164</span>
+<span class="normal">165</span>
+<span class="normal">166</span>
+<span class="normal">167</span>
+<span class="normal">168</span>
+<span class="normal">169</span>
+<span class="normal">170</span>
+<span class="normal">171</span>
+<span class="normal">172</span>
+<span class="normal">173</span>
+<span class="normal">174</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_large_jumps</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">threshold</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Filter out entire particles with any frames showing large jumps in micrometers.</span>
 
@@ -7589,6 +8101,133 @@ Works across exposure times, because it works on converted seconds, not frames</
     <span class="n">filtered_df</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">df</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span><span class="n">valid_particles</span><span class="p">)]</span>
 
     <span class="k">return</span> <span class="n">filtered_df</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="SPTnano.helper_scripts.generalized_filter" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">generalized_filter</span><span class="p">(</span><span class="n">df_in</span><span class="p">,</span> <span class="n">filter_col</span><span class="p">,</span> <span class="n">low</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">condition</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+</h3>
+
+
+    <div class="doc doc-contents ">
+
+      <p>Filters the input DataFrame based on a range of values in filter_col and additional conditions.</p>
+<p>Parameters:
+- df_in (pd.DataFrame): The input DataFrame to filter.
+- filter_col (str): The column to filter based on a range of values.
+- low (float, optional): The lower bound of the filter range (inclusive). Default is None.
+- high (float, optional): The upper bound of the filter range (inclusive). Default is None.
+- condition (Union[str, int], optional): The specific condition to filter by, or an index to choose from unique conditions. Default is None.
+- location (Union[str, int], optional): The specific location to filter by, or an index to choose from unique locations. Default is None.</p>
+<p>Returns:
+- pd.DataFrame: The filtered DataFrame.</p>
+
+            <details class="quote">
+              <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">212</span>
+<span class="normal">213</span>
+<span class="normal">214</span>
+<span class="normal">215</span>
+<span class="normal">216</span>
+<span class="normal">217</span>
+<span class="normal">218</span>
+<span class="normal">219</span>
+<span class="normal">220</span>
+<span class="normal">221</span>
+<span class="normal">222</span>
+<span class="normal">223</span>
+<span class="normal">224</span>
+<span class="normal">225</span>
+<span class="normal">226</span>
+<span class="normal">227</span>
+<span class="normal">228</span>
+<span class="normal">229</span>
+<span class="normal">230</span>
+<span class="normal">231</span>
+<span class="normal">232</span>
+<span class="normal">233</span>
+<span class="normal">234</span>
+<span class="normal">235</span>
+<span class="normal">236</span>
+<span class="normal">237</span>
+<span class="normal">238</span>
+<span class="normal">239</span>
+<span class="normal">240</span>
+<span class="normal">241</span>
+<span class="normal">242</span>
+<span class="normal">243</span>
+<span class="normal">244</span>
+<span class="normal">245</span>
+<span class="normal">246</span>
+<span class="normal">247</span>
+<span class="normal">248</span>
+<span class="normal">249</span>
+<span class="normal">250</span>
+<span class="normal">251</span>
+<span class="normal">252</span>
+<span class="normal">253</span>
+<span class="normal">254</span>
+<span class="normal">255</span>
+<span class="normal">256</span>
+<span class="normal">257</span>
+<span class="normal">258</span>
+<span class="normal">259</span>
+<span class="normal">260</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">generalized_filter</span><span class="p">(</span><span class="n">df_in</span><span class="p">,</span> <span class="n">filter_col</span><span class="p">,</span> <span class="n">low</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">condition</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Filters the input DataFrame based on a range of values in filter_col and additional conditions.</span>
+
+<span class="sd">    Parameters:</span>
+<span class="sd">    - df_in (pd.DataFrame): The input DataFrame to filter.</span>
+<span class="sd">    - filter_col (str): The column to filter based on a range of values.</span>
+<span class="sd">    - low (float, optional): The lower bound of the filter range (inclusive). Default is None.</span>
+<span class="sd">    - high (float, optional): The upper bound of the filter range (inclusive). Default is None.</span>
+<span class="sd">    - condition (Union[str, int], optional): The specific condition to filter by, or an index to choose from unique conditions. Default is None.</span>
+<span class="sd">    - location (Union[str, int], optional): The specific location to filter by, or an index to choose from unique locations. Default is None.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">    - pd.DataFrame: The filtered DataFrame.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Start with the input DataFrame</span>
+    <span class="n">df_filtered</span> <span class="o">=</span> <span class="n">df_in</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Available filters: </span><span class="si">{</span><span class="n">df_filtered</span><span class="o">.</span><span class="n">columns</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+    <span class="c1"># Handle the filtering logic for low and high values</span>
+    <span class="k">if</span> <span class="n">low</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">high</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">df_filtered</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="n">df_filtered</span><span class="p">[</span><span class="n">filter_col</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">high</span><span class="p">]</span>
+    <span class="k">elif</span> <span class="n">low</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">high</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">df_filtered</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="n">df_filtered</span><span class="p">[</span><span class="n">filter_col</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">low</span><span class="p">]</span>
+    <span class="k">elif</span> <span class="n">low</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">high</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">df_filtered</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[(</span><span class="n">df_filtered</span><span class="p">[</span><span class="n">filter_col</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">low</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">df_filtered</span><span class="p">[</span><span class="n">filter_col</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">high</span><span class="p">)]</span>
+
+    <span class="c1"># Handle the condition input (can be a string or an index)</span>
+    <span class="k">if</span> <span class="n">condition</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">unique_conditions</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="s1">&#39;condition&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">condition</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">condition</span> <span class="o">&gt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">unique_conditions</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Condition index </span><span class="si">{</span><span class="n">condition</span><span class="si">}</span><span class="s2"> is out of bounds.&quot;</span><span class="p">)</span>
+            <span class="n">condition</span> <span class="o">=</span> <span class="n">unique_conditions</span><span class="p">[</span><span class="n">condition</span><span class="p">]</span>
+        <span class="n">df_filtered</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="n">df_filtered</span><span class="p">[</span><span class="s1">&#39;condition&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">condition</span><span class="p">]</span>
+
+    <span class="c1"># Handle the location input (can be a string or an index)</span>
+    <span class="k">if</span> <span class="n">location</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">unique_locations</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="s1">&#39;Location&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">location</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">location</span> <span class="o">&gt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">unique_locations</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Location index </span><span class="si">{</span><span class="n">location</span><span class="si">}</span><span class="s2"> is out of bounds - if you think it should be there, check whether you have it in the condition you filtered on&quot;</span><span class="p">)</span>
+            <span class="n">location</span> <span class="o">=</span> <span class="n">unique_locations</span><span class="p">[</span><span class="n">location</span><span class="p">]</span>
+        <span class="n">df_filtered</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="n">df_filtered</span><span class="p">[</span><span class="s1">&#39;Location&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">location</span><span class="p">]</span>
+
+    <span class="n">unique_ids</span> <span class="o">=</span> <span class="n">df_filtered</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">df_filtered</span><span class="p">,</span> <span class="n">unique_ids</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -8727,7 +9366,7 @@ xlimit : float, optional
 
 
 <h3 id="SPTnano.visualization.plot_single_particle" class="doc doc-heading">
-            <code class="highlight language-python"><span class="n">plot_single_particle</span><span class="p">(</span><span class="n">particle_df</span><span class="p">,</span> <span class="n">speed_thresholds</span><span class="p">,</span> <span class="n">animation</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></code>
+            <code class="highlight language-python"><span class="n">plot_single_particle</span><span class="p">(</span><span class="n">particle_df</span><span class="p">,</span> <span class="n">threshold_col</span><span class="p">,</span> <span class="n">thresholds</span><span class="p">,</span> <span class="n">animate</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></code>
 
 </h3>
 
@@ -8738,128 +9377,175 @@ xlimit : float, optional
 with each segment colored according to its speed category.</p>
 <p>Parameters:
 - particle_df: DataFrame containing the particle's data with columns 'x', 'y', and 'speed_um_s'.
-- speed_thresholds: List or tuple of four numbers defining the boundaries for low, medium, and high speeds.
-- animation: Boolean, if True creates an animation, if False creates a static plot.</p>
+- threshold_col: The column used to determine the thresholds for coloring.
+- thresholds: List or tuple of three numbers defining the boundaries for low, medium, and high categories.
+- animate: Boolean, if True creates an animation, if False creates a static plot.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/visualization.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">2749</span>
-<span class="normal">2750</span>
-<span class="normal">2751</span>
-<span class="normal">2752</span>
-<span class="normal">2753</span>
-<span class="normal">2754</span>
-<span class="normal">2755</span>
-<span class="normal">2756</span>
-<span class="normal">2757</span>
-<span class="normal">2758</span>
-<span class="normal">2759</span>
-<span class="normal">2760</span>
-<span class="normal">2761</span>
-<span class="normal">2762</span>
-<span class="normal">2763</span>
-<span class="normal">2764</span>
-<span class="normal">2765</span>
-<span class="normal">2766</span>
-<span class="normal">2767</span>
-<span class="normal">2768</span>
-<span class="normal">2769</span>
-<span class="normal">2770</span>
-<span class="normal">2771</span>
-<span class="normal">2772</span>
-<span class="normal">2773</span>
-<span class="normal">2774</span>
-<span class="normal">2775</span>
-<span class="normal">2776</span>
-<span class="normal">2777</span>
-<span class="normal">2778</span>
-<span class="normal">2779</span>
-<span class="normal">2780</span>
-<span class="normal">2781</span>
-<span class="normal">2782</span>
-<span class="normal">2783</span>
-<span class="normal">2784</span>
-<span class="normal">2785</span>
-<span class="normal">2786</span>
-<span class="normal">2787</span>
-<span class="normal">2788</span>
-<span class="normal">2789</span>
-<span class="normal">2790</span>
-<span class="normal">2791</span>
-<span class="normal">2792</span>
-<span class="normal">2793</span>
-<span class="normal">2794</span>
-<span class="normal">2795</span>
-<span class="normal">2796</span>
-<span class="normal">2797</span>
-<span class="normal">2798</span>
-<span class="normal">2799</span>
-<span class="normal">2800</span>
-<span class="normal">2801</span>
-<span class="normal">2802</span>
-<span class="normal">2803</span>
-<span class="normal">2804</span>
-<span class="normal">2805</span>
-<span class="normal">2806</span>
-<span class="normal">2807</span>
-<span class="normal">2808</span>
-<span class="normal">2809</span>
-<span class="normal">2810</span>
-<span class="normal">2811</span>
-<span class="normal">2812</span>
-<span class="normal">2813</span>
-<span class="normal">2814</span>
-<span class="normal">2815</span>
-<span class="normal">2816</span>
-<span class="normal">2817</span>
-<span class="normal">2818</span>
-<span class="normal">2819</span>
-<span class="normal">2820</span>
-<span class="normal">2821</span>
-<span class="normal">2822</span>
-<span class="normal">2823</span>
-<span class="normal">2824</span>
-<span class="normal">2825</span>
-<span class="normal">2826</span>
-<span class="normal">2827</span>
-<span class="normal">2828</span>
-<span class="normal">2829</span>
-<span class="normal">2830</span>
-<span class="normal">2831</span>
-<span class="normal">2832</span>
-<span class="normal">2833</span>
-<span class="normal">2834</span>
-<span class="normal">2835</span>
-<span class="normal">2836</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">plot_single_particle</span><span class="p">(</span><span class="n">particle_df</span><span class="p">,</span> <span class="n">speed_thresholds</span><span class="p">,</span> <span class="n">animation</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">3035</span>
+<span class="normal">3036</span>
+<span class="normal">3037</span>
+<span class="normal">3038</span>
+<span class="normal">3039</span>
+<span class="normal">3040</span>
+<span class="normal">3041</span>
+<span class="normal">3042</span>
+<span class="normal">3043</span>
+<span class="normal">3044</span>
+<span class="normal">3045</span>
+<span class="normal">3046</span>
+<span class="normal">3047</span>
+<span class="normal">3048</span>
+<span class="normal">3049</span>
+<span class="normal">3050</span>
+<span class="normal">3051</span>
+<span class="normal">3052</span>
+<span class="normal">3053</span>
+<span class="normal">3054</span>
+<span class="normal">3055</span>
+<span class="normal">3056</span>
+<span class="normal">3057</span>
+<span class="normal">3058</span>
+<span class="normal">3059</span>
+<span class="normal">3060</span>
+<span class="normal">3061</span>
+<span class="normal">3062</span>
+<span class="normal">3063</span>
+<span class="normal">3064</span>
+<span class="normal">3065</span>
+<span class="normal">3066</span>
+<span class="normal">3067</span>
+<span class="normal">3068</span>
+<span class="normal">3069</span>
+<span class="normal">3070</span>
+<span class="normal">3071</span>
+<span class="normal">3072</span>
+<span class="normal">3073</span>
+<span class="normal">3074</span>
+<span class="normal">3075</span>
+<span class="normal">3076</span>
+<span class="normal">3077</span>
+<span class="normal">3078</span>
+<span class="normal">3079</span>
+<span class="normal">3080</span>
+<span class="normal">3081</span>
+<span class="normal">3082</span>
+<span class="normal">3083</span>
+<span class="normal">3084</span>
+<span class="normal">3085</span>
+<span class="normal">3086</span>
+<span class="normal">3087</span>
+<span class="normal">3088</span>
+<span class="normal">3089</span>
+<span class="normal">3090</span>
+<span class="normal">3091</span>
+<span class="normal">3092</span>
+<span class="normal">3093</span>
+<span class="normal">3094</span>
+<span class="normal">3095</span>
+<span class="normal">3096</span>
+<span class="normal">3097</span>
+<span class="normal">3098</span>
+<span class="normal">3099</span>
+<span class="normal">3100</span>
+<span class="normal">3101</span>
+<span class="normal">3102</span>
+<span class="normal">3103</span>
+<span class="normal">3104</span>
+<span class="normal">3105</span>
+<span class="normal">3106</span>
+<span class="normal">3107</span>
+<span class="normal">3108</span>
+<span class="normal">3109</span>
+<span class="normal">3110</span>
+<span class="normal">3111</span>
+<span class="normal">3112</span>
+<span class="normal">3113</span>
+<span class="normal">3114</span>
+<span class="normal">3115</span>
+<span class="normal">3116</span>
+<span class="normal">3117</span>
+<span class="normal">3118</span>
+<span class="normal">3119</span>
+<span class="normal">3120</span>
+<span class="normal">3121</span>
+<span class="normal">3122</span>
+<span class="normal">3123</span>
+<span class="normal">3124</span>
+<span class="normal">3125</span>
+<span class="normal">3126</span>
+<span class="normal">3127</span>
+<span class="normal">3128</span>
+<span class="normal">3129</span>
+<span class="normal">3130</span>
+<span class="normal">3131</span>
+<span class="normal">3132</span>
+<span class="normal">3133</span>
+<span class="normal">3134</span>
+<span class="normal">3135</span>
+<span class="normal">3136</span>
+<span class="normal">3137</span>
+<span class="normal">3138</span>
+<span class="normal">3139</span>
+<span class="normal">3140</span>
+<span class="normal">3141</span>
+<span class="normal">3142</span>
+<span class="normal">3143</span>
+<span class="normal">3144</span>
+<span class="normal">3145</span>
+<span class="normal">3146</span>
+<span class="normal">3147</span>
+<span class="normal">3148</span>
+<span class="normal">3149</span>
+<span class="normal">3150</span>
+<span class="normal">3151</span>
+<span class="normal">3152</span>
+<span class="normal">3153</span>
+<span class="normal">3154</span>
+<span class="normal">3155</span>
+<span class="normal">3156</span>
+<span class="normal">3157</span>
+<span class="normal">3158</span>
+<span class="normal">3159</span>
+<span class="normal">3160</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">plot_single_particle</span><span class="p">(</span><span class="n">particle_df</span><span class="p">,</span> <span class="n">threshold_col</span><span class="p">,</span> <span class="n">thresholds</span><span class="p">,</span> <span class="n">animate</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Plots the trajectory of a single particle, either as an animation or as a static image, </span>
 <span class="sd">    with each segment colored according to its speed category.</span>
 
 <span class="sd">    Parameters:</span>
 <span class="sd">    - particle_df: DataFrame containing the particle&#39;s data with columns &#39;x&#39;, &#39;y&#39;, and &#39;speed_um_s&#39;.</span>
-<span class="sd">    - speed_thresholds: List or tuple of four numbers defining the boundaries for low, medium, and high speeds.</span>
-<span class="sd">    - animation: Boolean, if True creates an animation, if False creates a static plot.</span>
+<span class="sd">    - threshold_col: The column used to determine the thresholds for coloring.</span>
+<span class="sd">    - thresholds: List or tuple of three numbers defining the boundaries for low, medium, and high categories.</span>
+<span class="sd">    - animate: Boolean, if True creates an animation, if False creates a static plot.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="c1"># Get the unique ID of the particle</span>
     <span class="n">unique_id</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;unique_id&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
 
-    <span class="c1"># Ensure the speed thresholds are sorted</span>
-    <span class="n">speed_thresholds</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">speed_thresholds</span><span class="p">)</span>
+    <span class="c1"># Ensure the thresholds are sorted</span>
+    <span class="n">thresholds</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">thresholds</span><span class="p">)</span>
 
-    <span class="c1"># Assign speed categories based on thresholds</span>
+    <span class="c1"># Assign categories based on thresholds</span>
     <span class="n">conditions</span> <span class="o">=</span> <span class="p">[</span>
-        <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">speed_thresholds</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">speed_thresholds</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span>
-        <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">speed_thresholds</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">speed_thresholds</span><span class="p">[</span><span class="mi">2</span><span class="p">]),</span>
-        <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_um_s&#39;</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">speed_thresholds</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+        <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="n">threshold_col</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">thresholds</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="n">threshold_col</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">thresholds</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span>
+        <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="n">threshold_col</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">thresholds</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="n">threshold_col</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">thresholds</span><span class="p">[</span><span class="mi">2</span><span class="p">]),</span>
+        <span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="n">threshold_col</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">thresholds</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
     <span class="p">]</span>
     <span class="n">choices</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;low&#39;</span><span class="p">,</span> <span class="s1">&#39;medium&#39;</span><span class="p">,</span> <span class="s1">&#39;high&#39;</span><span class="p">]</span>
-    <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_category&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">conditions</span><span class="p">,</span> <span class="n">choices</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s1">&#39;unknown&#39;</span><span class="p">)</span>
+    <span class="n">factorcategory</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">threshold_col</span><span class="si">}</span><span class="s1">_category&#39;</span>
+    <span class="n">particle_df</span><span class="p">[</span><span class="n">factorcategory</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">conditions</span><span class="p">,</span> <span class="n">choices</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s1">&#39;unknown&#39;</span><span class="p">)</span>
 
-    <span class="c1"># Define a colormap for the speed categories</span>
+    <span class="c1"># Define a colormap for the categories</span>
+    <span class="c1"># colormap = {</span>
+    <span class="c1">#     &#39;low&#39;: &#39;blue&#39;,</span>
+    <span class="c1">#     &#39;medium&#39;: &#39;green&#39;,</span>
+    <span class="c1">#     &#39;high&#39;: &#39;red&#39;</span>
+    <span class="c1"># }</span>
+
     <span class="n">colormap</span> <span class="o">=</span> <span class="p">{</span>
-        <span class="s1">&#39;low&#39;</span><span class="p">:</span> <span class="s1">&#39;blue&#39;</span><span class="p">,</span>
-        <span class="s1">&#39;medium&#39;</span><span class="p">:</span> <span class="s1">&#39;green&#39;</span><span class="p">,</span>
-        <span class="s1">&#39;high&#39;</span><span class="p">:</span> <span class="s1">&#39;orange&#39;</span>
+    <span class="s1">&#39;low&#39;</span><span class="p">:</span> <span class="s1">&#39;#1F77B4&#39;</span><span class="p">,</span>    <span class="c1"># Hex color for &#39;low&#39;</span>
+    <span class="s1">&#39;medium&#39;</span><span class="p">:</span> <span class="s1">&#39;#FF7F0E&#39;</span><span class="p">,</span> <span class="c1"># Hex color for &#39;medium&#39;</span>
+    <span class="s1">&#39;high&#39;</span><span class="p">:</span> <span class="s1">&#39;#2CA02C&#39;</span>    <span class="c1"># Hex color for &#39;high&#39;</span>
     <span class="p">}</span>
 
     <span class="c1"># Calculate center and range for square plot</span>
@@ -8868,54 +9554,84 @@ with each segment colored according to its speed category.</p>
     <span class="n">range_extent</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">-</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">(),</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">-</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">())</span> <span class="o">/</span> <span class="mi">2</span>
     <span class="n">range_extent</span> <span class="o">*=</span> <span class="mf">1.1</span>  <span class="c1"># Add some padding</span>
 
-    <span class="c1"># Create directory for saving images</span>
-    <span class="k">if</span> <span class="n">animation</span><span class="p">:</span>
-        <span class="n">dir_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">master</span><span class="si">}</span><span class="s1">visualization/particle_speedcat_</span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">&#39;</span>
-        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">dir_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">master</span><span class="si">}</span><span class="s1">visualization/particle_speedcat_static_</span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">&#39;</span>
-        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="c1"># Create directory for saving video or images</span>
+    <span class="c1"># dir_name = f&#39;{config.MASTER}visualization/particle_{unique_id}_cat_{threshold_col}&#39;</span>
+    <span class="c1"># os.makedirs(dir_name, exist_ok=True)</span>
 
-    <span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
-    <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Particle Trajectory with Speed Categories: </span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
-    <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;X Position&#39;</span><span class="p">)</span>
-    <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Y Position&#39;</span><span class="p">)</span>
+    <span class="c1"># if animate:</span>
+    <span class="c1">#     dir_name = f&#39;{config.MASTER}visualization/particle_{unique_id}_cat_{threshold_col}&#39;</span>
+    <span class="c1">#     os.makedirs(dir_name, exist_ok=True)</span>
+    <span class="c1"># else:</span>
+    <span class="n">dir_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">MASTER</span><span class="si">}</span><span class="s1">visualization\singleparticleplots&#39;</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">fontsizes</span> <span class="o">=</span> <span class="mi">16</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">rcParams</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s1">&#39;font.size&#39;</span><span class="p">:</span> <span class="n">fontsizes</span><span class="p">})</span>
+    <span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">12</span><span class="p">),</span> <span class="n">dpi</span><span class="o">=</span><span class="mi">150</span><span class="p">)</span>
+
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Particle Trajectory with </span><span class="si">{</span><span class="n">factorcategory</span><span class="si">}</span><span class="s1"> Categories: </span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;X Position&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Y Position&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
     <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="n">center_x</span> <span class="o">-</span> <span class="n">range_extent</span><span class="p">,</span> <span class="n">center_x</span> <span class="o">+</span> <span class="n">range_extent</span><span class="p">)</span>
     <span class="n">ax</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">(</span><span class="n">center_y</span> <span class="o">-</span> <span class="n">range_extent</span><span class="p">,</span> <span class="n">center_y</span> <span class="o">+</span> <span class="n">range_extent</span><span class="p">)</span>
 
-    <span class="k">if</span> <span class="n">animation</span><span class="p">:</span>
-        <span class="c1"># Create animation by iterating through the data and plotting frame by frame</span>
+    <span class="c1"># Adjust the font size of the axis ticks</span>
+    <span class="n">ax</span><span class="o">.</span><span class="n">tick_params</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="s1">&#39;both&#39;</span><span class="p">,</span> <span class="n">which</span><span class="o">=</span><span class="s1">&#39;major&#39;</span><span class="p">,</span> <span class="n">labelsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+
+    <span class="c1"># List to store frames</span>
+    <span class="n">frames</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">update_plot</span><span class="p">(</span><span class="n">i</span><span class="p">):</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Particle Trajectory with </span><span class="si">{</span><span class="n">factorcategory</span><span class="si">}</span><span class="s1"> Categories: </span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;X Position&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Y Position&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="n">center_x</span> <span class="o">-</span> <span class="n">range_extent</span><span class="p">,</span> <span class="n">center_x</span> <span class="o">+</span> <span class="n">range_extent</span><span class="p">)</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">(</span><span class="n">center_y</span> <span class="o">-</span> <span class="n">range_extent</span><span class="p">,</span> <span class="n">center_y</span> <span class="o">+</span> <span class="n">range_extent</span><span class="p">)</span>
+
+        <span class="c1"># Adjust the font size of the axis ticks in the update function as well</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">tick_params</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="s1">&#39;both&#39;</span><span class="p">,</span> <span class="n">which</span><span class="o">=</span><span class="s1">&#39;major&#39;</span><span class="p">,</span> <span class="n">labelsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+
+        <span class="c1"># Plot the trajectory up to the current point, changing colors according to category</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="n">x_values</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">y_values</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">fac_category</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="n">factorcategory</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">color</span> <span class="o">=</span> <span class="n">colormap</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">fac_category</span><span class="p">,</span> <span class="s1">&#39;black&#39;</span><span class="p">)</span>
+            <span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">x_values</span><span class="p">,</span> <span class="n">y_values</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+
+        <span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">handles</span><span class="o">=</span><span class="p">[</span><span class="n">plt</span><span class="o">.</span><span class="n">Line2D</span><span class="p">([</span><span class="mi">0</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">category</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span> <span class="k">for</span> <span class="n">category</span><span class="p">,</span> <span class="n">color</span> <span class="ow">in</span> <span class="n">colormap</span><span class="o">.</span><span class="n">items</span><span class="p">()],</span> <span class="n">fontsize</span><span class="o">=</span><span class="n">fontsizes</span><span class="p">)</span>
+
+
+        <span class="c1"># Save frame to list for GIF creation</span>
+        <span class="n">fig</span><span class="o">.</span><span class="n">canvas</span><span class="o">.</span><span class="n">draw</span><span class="p">()</span>
+        <span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">frombytes</span><span class="p">(</span><span class="s1">&#39;RGB&#39;</span><span class="p">,</span> <span class="n">fig</span><span class="o">.</span><span class="n">canvas</span><span class="o">.</span><span class="n">get_width_height</span><span class="p">(),</span> <span class="n">fig</span><span class="o">.</span><span class="n">canvas</span><span class="o">.</span><span class="n">tostring_rgb</span><span class="p">())</span>
+        <span class="n">frames</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">animate</span><span class="p">:</span>
+        <span class="c1"># Create animation frame by frame</span>
         <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">particle_df</span><span class="p">)):</span>
-            <span class="n">ax</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
-            <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Particle Trajectory with Speed Categories: </span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
-            <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;X Position&#39;</span><span class="p">)</span>
-            <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Y Position&#39;</span><span class="p">)</span>
-            <span class="n">ax</span><span class="o">.</span><span class="n">set_xlim</span><span class="p">(</span><span class="n">center_x</span> <span class="o">-</span> <span class="n">range_extent</span><span class="p">,</span> <span class="n">center_x</span> <span class="o">+</span> <span class="n">range_extent</span><span class="p">)</span>
-            <span class="n">ax</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">(</span><span class="n">center_y</span> <span class="o">-</span> <span class="n">range_extent</span><span class="p">,</span> <span class="n">center_y</span> <span class="o">+</span> <span class="n">range_extent</span><span class="p">)</span>
+            <span class="n">update_plot</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
 
-            <span class="c1"># Plot the trajectory up to the current point, changing colors according to speed category</span>
-            <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
-                <span class="n">x_values</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
-                <span class="n">y_values</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
-                <span class="n">speed_category</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_category&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
-                <span class="n">color</span> <span class="o">=</span> <span class="n">colormap</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">speed_category</span><span class="p">,</span> <span class="s1">&#39;black&#39;</span><span class="p">)</span>
-                <span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">x_values</span><span class="p">,</span> <span class="n">y_values</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+        <span class="c1"># Save the frames as a GIF</span>
+        <span class="n">gif_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;particle_</span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">_cat_</span><span class="si">{</span><span class="n">threshold_col</span><span class="si">}</span><span class="s1">.gif&#39;</span><span class="p">)</span>
+        <span class="n">frames</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">gif_path</span><span class="p">,</span> <span class="n">save_all</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">append_images</span><span class="o">=</span><span class="n">frames</span><span class="p">[</span><span class="mi">1</span><span class="p">:],</span> <span class="n">duration</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">loop</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
 
-            <span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">handles</span><span class="o">=</span><span class="p">[</span><span class="n">plt</span><span class="o">.</span><span class="n">Line2D</span><span class="p">([</span><span class="mi">0</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">category</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s1"> Speed&#39;</span><span class="p">)</span> <span class="k">for</span> <span class="n">category</span><span class="p">,</span> <span class="n">color</span> <span class="ow">in</span> <span class="n">colormap</span><span class="o">.</span><span class="n">items</span><span class="p">()])</span>
-            <span class="n">plt_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;frame_</span><span class="si">{</span><span class="n">i</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1">.png&#39;</span><span class="p">)</span>
-            <span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="n">plt_path</span><span class="p">)</span>
+
+        <span class="c1"># frames[0].save(&#39;output.gif&#39;, save_all=True, append_images=frames[1:], duration=100, loop=0)</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="c1"># Create static plot of the entire trajectory</span>
         <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">particle_df</span><span class="p">)):</span>
             <span class="n">x_values</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
             <span class="n">y_values</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
-            <span class="n">speed_category</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="s1">&#39;speed_category&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
-            <span class="n">color</span> <span class="o">=</span> <span class="n">colormap</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">speed_category</span><span class="p">,</span> <span class="s1">&#39;black&#39;</span><span class="p">)</span>
+            <span class="n">fac_category</span> <span class="o">=</span> <span class="n">particle_df</span><span class="p">[</span><span class="n">factorcategory</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">color</span> <span class="o">=</span> <span class="n">colormap</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">fac_category</span><span class="p">,</span> <span class="s1">&#39;black&#39;</span><span class="p">)</span>
             <span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">x_values</span><span class="p">,</span> <span class="n">y_values</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
 
-        <span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">handles</span><span class="o">=</span><span class="p">[</span><span class="n">plt</span><span class="o">.</span><span class="n">Line2D</span><span class="p">([</span><span class="mi">0</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">category</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s1"> Speed&#39;</span><span class="p">)</span> <span class="k">for</span> <span class="n">category</span><span class="p">,</span> <span class="n">color</span> <span class="ow">in</span> <span class="n">colormap</span><span class="o">.</span><span class="n">items</span><span class="p">()])</span>
-        <span class="n">static_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="s1">&#39;static_trajectory.png&#39;</span><span class="p">)</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">handles</span><span class="o">=</span><span class="p">[</span><span class="n">plt</span><span class="o">.</span><span class="n">Line2D</span><span class="p">([</span><span class="mi">0</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">category</span><span class="o">.</span><span class="n">capitalize</span><span class="p">()</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span> <span class="k">for</span> <span class="n">category</span><span class="p">,</span> <span class="n">color</span> <span class="ow">in</span> <span class="n">colormap</span><span class="o">.</span><span class="n">items</span><span class="p">()])</span>
+        <span class="n">static_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dir_name</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;static_particle_</span><span class="si">{</span><span class="n">unique_id</span><span class="si">}</span><span class="s1">_cat_</span><span class="si">{</span><span class="n">threshold_col</span><span class="si">}</span><span class="s1">.png&#39;</span><span class="p">)</span>
         <span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="n">static_path</span><span class="p">)</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 
     <span class="n">plt</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="n">fig</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
