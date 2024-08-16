@@ -16,7 +16,7 @@ import random
 import config
 from napari_animation import Animation
 
-
+from .helper_scripts import *
 
 
 from matplotlib.ticker import FixedLocator
@@ -3158,3 +3158,45 @@ def plot_single_particle(particle_df, threshold_col, thresholds, animate=True):
         plt.show()
     
     plt.close(fig)
+
+
+def plot_single_particle_wrapper(time_windowed_df, metrics_df, filter_col, low=None, high=None, condition=None, location=None, threshold_col='speed_um_s', thresholds=None, animate=False):
+    """
+    Wrapper function to filter dataframes, extract a single particle, and plot its track.
+    
+    Parameters:
+    - time_windowed_df (pd.DataFrame): The dataframe containing time-windowed data.
+    - metrics_df (pd.DataFrame): The dataframe containing particle metrics.
+    - filter_col (str): The column in time_windowed_df to filter by.
+    - low (float, optional): The lower bound of the filter range. Default is None.
+    - high (float, optional): The upper bound of the filter range. Default is None.
+    - condition (Union[str, int], optional): The specific condition to filter by, or an index to choose from unique conditions. Default is None.
+    - location (Union[str, int], optional): The specific location to filter by, or an index to choose from unique locations. Default is None.
+    - threshold_col (str): The column to use for setting thresholds in the plot. Default is 'speed_um_s'.
+    - thresholds (list, optional): List of thresholds for color-coding the plot. Default is None.
+    - animate (bool, optional): Whether to animate the plot. Default is False.
+    
+    Returns:
+    - None: Displays and saves the plot.
+    """
+    
+    # Step 1: Filter the time_windowed_df and extract unique IDs
+    filtered_df, unique_ids = generalized_filter(time_windowed_df, filter_col, low, high, condition, location)
+    
+    # Step 2: Filter the metrics_df by the extracted unique IDs
+    metrics_df_filtered = metrics_df[metrics_df['unique_id'].isin(unique_ids)]
+    
+    # Step 3: Extract a single particle track
+    single_particle_df = extract_single_particle_df(metrics_df_filtered)
+    if thresholds is None:
+        thresholds = [0, 10, 15, 10000]
+
+    # Step 4: Plot the single particle track
+    plot_single_particle(single_particle_df, threshold_col, thresholds, animate)
+
+    # Optional: Save the plot (customize this part as needed)
+    # plt.savefig(f'single_particle_plot_{single_particle_df["unique_id"].iloc[0]}.png')
+    # plt.show()
+
+# Example usage
+# plot_single_particle_wrapper(time_windowed_df, metrics_df, filter_col='speed_um_s', low=0, high=10, condition='ConditionA', location='Location1', thresholds=[0, 10, 15, 1000], animate=False)
