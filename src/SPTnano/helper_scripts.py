@@ -90,14 +90,62 @@ def filter_stubs(df, min_time):
 
     return filtered_df
 
-def extract_single_particle_df(df, condition, unique_id):
-    chosen_df = df[df['condition'] == condition]
-    particle_ids = chosen_df.unique_id.unique()
-    # choose a random particle from the list
-    chosen_particle = np.random.choice(particle_ids)
-    chosen_df = df[df['condition'] == condition]
-    single_particle_df = chosen_df[chosen_df['unique_id'] == chosen_particle]
-    return single_particle_df 
+# def extract_single_particle_df(df, condition, unique_id):
+#     chosen_df = df[df['condition'] == condition]
+#     particle_ids = chosen_df.unique_id.unique()
+#     # choose a random particle from the list
+#     chosen_particle = np.random.choice(particle_ids)
+#     chosen_df = df[df['condition'] == condition]
+#     single_particle_df = chosen_df[chosen_df['unique_id'] == chosen_particle]
+#     return single_particle_df 
+
+def extract_single_particle_df(df, unique_id=None):
+    """
+    Extracts a DataFrame for a single particle based on the specified condition and unique ID.
+    Condition and Location can be specified as a string or as an index.
+    
+    Parameters:
+    - df (pd.DataFrame): The input DataFrame.
+    - condition (Union[str, int]): The condition to filter by, or an index to choose from unique conditions.
+    - unique_id (Optional[int]): The unique ID of the particle to filter by. If None, a random particle is chosen.
+    - location (Union[str, int], optional): The location to filter by, or an index to choose from unique locations. Default is None.
+    
+    Returns:
+    - pd.DataFrame: The filtered DataFrame containing only the selected particle.
+    """
+    
+    # # Handle the condition input (can be a string or an index)
+    # unique_conditions = df['condition'].unique()
+    # if isinstance(condition, int):
+    #     if condition >= len(unique_conditions):
+    #         raise ValueError(f"Condition index {condition} is out of bounds.")
+    #     condition = unique_conditions[condition]
+    
+    # # Apply the condition filter
+    # chosen_df = df[df['condition'] == condition]
+    
+    # # Handle the location input (can be a string or an index)
+    # if location is not None:
+    #     unique_locations = df['Location'].unique()
+    #     if isinstance(location, int):
+    #         if location >= len(unique_locations):
+    #             raise ValueError(f"Location index {location} is out of bounds.")
+    #         location = unique_locations[location]
+        
+    #     # Apply the location filter
+    #     chosen_df = chosen_df[chosen_df['Location'] == location]
+    
+    # If unique_id is not provided, choose a random particle
+    if unique_id is None:
+        particle_ids = df['unique_id'].unique()
+        unique_id = np.random.choice(particle_ids)
+    
+    # Filter by the chosen particle
+    single_particle_df = df[df['unique_id'] == unique_id]
+    
+    return single_particle_df
+
+
 
 
 
@@ -160,3 +208,53 @@ def sample_dataframe(df, percent_samples):
     print('Original dataframe contains {} tracks'.format(len(df)))
     print('Sampled dataframe contains {} tracks'.format(len(sampled_df)))
     return sampled_df
+
+def generalized_filter(df_in, filter_col, low=None, high=None, condition=None, location=None):
+    """
+    Filters the input DataFrame based on a range of values in filter_col and additional conditions.
+
+    Parameters:
+    - df_in (pd.DataFrame): The input DataFrame to filter.
+    - filter_col (str): The column to filter based on a range of values.
+    - low (float, optional): The lower bound of the filter range (inclusive). Default is None.
+    - high (float, optional): The upper bound of the filter range (inclusive). Default is None.
+    - condition (Union[str, int], optional): The specific condition to filter by, or an index to choose from unique conditions. Default is None.
+    - location (Union[str, int], optional): The specific location to filter by, or an index to choose from unique locations. Default is None.
+
+    Returns:
+    - pd.DataFrame: The filtered DataFrame.
+    """
+    
+    # Start with the input DataFrame
+    df_filtered = df_in.copy()
+    print(f'Available filters: {df_filtered.columns}')
+    
+    # Handle the filtering logic for low and high values
+    if low is None and high is not None:
+        df_filtered = df_filtered[df_filtered[filter_col] <= high]
+    elif low is not None and high is None:
+        df_filtered = df_filtered[df_filtered[filter_col] >= low]
+    elif low is not None and high is not None:
+        df_filtered = df_filtered[(df_filtered[filter_col] >= low) & (df_filtered[filter_col] <= high)]
+    
+    # Handle the condition input (can be a string or an index)
+    if condition is not None:
+        unique_conditions = df_filtered['condition'].unique()
+        if isinstance(condition, int):
+            if condition >= len(unique_conditions):
+                raise ValueError(f"Condition index {condition} is out of bounds.")
+            condition = unique_conditions[condition]
+        df_filtered = df_filtered[df_filtered['condition'] == condition]
+    
+    # Handle the location input (can be a string or an index)
+    if location is not None:
+        unique_locations = df_filtered['Location'].unique()
+        if isinstance(location, int):
+            if location >= len(unique_locations):
+                raise ValueError(f"Location index {location} is out of bounds - if you think it should be there, check whether you have it in the condition you filtered on")
+            location = unique_locations[location]
+        df_filtered = df_filtered[df_filtered['Location'] == location]
+
+    unique_ids = df_filtered['unique_id'].unique()
+    
+    return df_filtered, unique_ids

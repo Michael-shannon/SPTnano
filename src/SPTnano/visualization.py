@@ -2746,36 +2746,330 @@ def plot_stacked_bar(df, x_category, order=None, font_size=16, colormap='Dark2',
     plt.show()
 
 
-def plot_single_particle(particle_df, speed_thresholds, animation=True):
+# def plot_single_particle(particle_df, speed_thresholds, animation=True):
+#     """
+#     Plots the trajectory of a single particle, either as an animation or as a static image, 
+#     with each segment colored according to its speed category.
+    
+#     Parameters:
+#     - particle_df: DataFrame containing the particle's data with columns 'x', 'y', and 'speed_um_s'.
+#     - speed_thresholds: List or tuple of four numbers defining the boundaries for low, medium, and high speeds.
+#     - animation: Boolean, if True creates an animation, if False creates a static plot.
+#     """
+#     # Get the unique ID of the particle
+#     unique_id = particle_df['unique_id'].unique()[0]
+
+#     # Ensure the speed thresholds are sorted
+#     speed_thresholds = sorted(speed_thresholds)
+    
+#     # Assign speed categories based on thresholds
+#     conditions = [
+#         (particle_df['speed_um_s'] >= speed_thresholds[0]) & (particle_df['speed_um_s'] < speed_thresholds[1]),
+#         (particle_df['speed_um_s'] >= speed_thresholds[1]) & (particle_df['speed_um_s'] < speed_thresholds[2]),
+#         (particle_df['speed_um_s'] >= speed_thresholds[2])
+#     ]
+#     choices = ['low', 'medium', 'high']
+#     particle_df['speed_category'] = np.select(conditions, choices, default='unknown')
+    
+#     # Define a colormap for the speed categories
+#     colormap = {
+#         'low': 'blue',
+#         'medium': 'green',
+#         'high': 'orange'
+#     }
+    
+#     # Calculate center and range for square plot
+#     center_x = (particle_df['x'].max() + particle_df['x'].min()) / 2
+#     center_y = (particle_df['y'].max() + particle_df['y'].min()) / 2
+#     range_extent = max(particle_df['x'].max() - particle_df['x'].min(), particle_df['y'].max() - particle_df['y'].min()) / 2
+#     range_extent *= 1.1  # Add some padding
+    
+#     # Create directory for saving images
+#     if animation:
+#         dir_name = f'{config.MASTER}visualization/particle_speedcat_{unique_id}'
+#         os.makedirs(dir_name, exist_ok=True)
+#     else:
+#         dir_name = f'{config.MASTER}visualization/particle_speedcat_static_{unique_id}'
+#         os.makedirs(dir_name, exist_ok=True)
+    
+#     fig, ax = plt.subplots(figsize=(8, 8))
+#     ax.set_title(f'Particle Trajectory with Speed Categories: {unique_id}')
+#     ax.set_xlabel('X Position')
+#     ax.set_ylabel('Y Position')
+#     ax.set_xlim(center_x - range_extent, center_x + range_extent)
+#     ax.set_ylim(center_y - range_extent, center_y + range_extent)
+    
+#     if animation:
+#         # Create animation by iterating through the data and plotting frame by frame
+#         for i in range(1, len(particle_df)):
+#             ax.clear()
+#             ax.set_title(f'Particle Trajectory with Speed Categories: {unique_id}')
+#             ax.set_xlabel('X Position')
+#             ax.set_ylabel('Y Position')
+#             ax.set_xlim(center_x - range_extent, center_x + range_extent)
+#             ax.set_ylim(center_y - range_extent, center_y + range_extent)
+
+#             # Plot the trajectory up to the current point, changing colors according to speed category
+#             for j in range(1, i + 1):
+#                 x_values = particle_df['x'].iloc[j-1:j+1]
+#                 y_values = particle_df['y'].iloc[j-1:j+1]
+#                 speed_category = particle_df['speed_category'].iloc[j-1]
+#                 color = colormap.get(speed_category, 'black')
+#                 ax.plot(x_values, y_values, color=color, linewidth=2)
+
+#             ax.legend(handles=[plt.Line2D([0], [0], color=color, label=f'{category.capitalize()} Speed') for category, color in colormap.items()])
+#             plt_path = os.path.join(dir_name, f'frame_{i:03d}.png')
+#             plt.savefig(plt_path)
+#     else:
+#         # Create static plot of the entire trajectory
+#         for i in range(1, len(particle_df)):
+#             x_values = particle_df['x'].iloc[i-1:i+1]
+#             y_values = particle_df['y'].iloc[i-1:i+1]
+#             speed_category = particle_df['speed_category'].iloc[i-1]
+#             color = colormap.get(speed_category, 'black')
+#             ax.plot(x_values, y_values, color=color, linewidth=2)
+
+#         ax.legend(handles=[plt.Line2D([0], [0], color=color, label=f'{category.capitalize()} Speed') for category, color in colormap.items()])
+#         static_path = os.path.join(dir_name, 'static_trajectory.png')
+#         plt.savefig(static_path)
+#         plt.show()
+    
+#     plt.close(fig)
+
+
+# def plot_single_particle(particle_df, threshold_col, thresholds, animation=True):
+#     """
+#     Plots the trajectory of a single particle, either as an animation or as a static image, 
+#     with each segment colored according to its speed category.
+    
+#     Parameters:
+#     - particle_df: DataFrame containing the particle's data with columns 'x', 'y', and 'speed_um_s'.
+#     - speed_thresholds: List or tuple of four numbers defining the boundaries for low, medium, and high speeds.
+#     - animation: Boolean, if True creates an animation, if False creates a static plot.
+#     """
+#     # Get the unique ID of the particle
+#     unique_id = particle_df['unique_id'].unique()[0]
+
+#     # Ensure the speed thresholds are sorted
+#     thresholds = sorted(thresholds)
+    
+#     # Assign speed categories based on thresholds
+#     conditions = [
+#         (particle_df[threshold_col] >= thresholds[0]) & (particle_df[threshold_col] < thresholds[1]),
+#         (particle_df[threshold_col] >= thresholds[1]) & (particle_df[threshold_col] < thresholds[2]),
+#         (particle_df[threshold_col] >= thresholds[2])
+#     ]
+#     choices = ['low', 'medium', 'high']
+#     factorcategory = f'{threshold_col}_category'
+#     particle_df[factorcategory] = np.select(conditions, choices, default='unknown')
+    
+#     # Define a colormap for the speed categories
+#     colormap = {
+#         'low': 'blue',
+#         'medium': 'green',
+#         'high': 'red'
+#     }
+    
+#     # Calculate center and range for square plot
+#     center_x = (particle_df['x'].max() + particle_df['x'].min()) / 2
+#     center_y = (particle_df['y'].max() + particle_df['y'].min()) / 2
+#     range_extent = max(particle_df['x'].max() - particle_df['x'].min(), particle_df['y'].max() - particle_df['y'].min()) / 2
+#     range_extent *= 1.1  # Add some padding
+    
+#     # Create directory for saving images
+#     if animation:
+#         dir_name = f'{config.MASTER}visualization/particle_{unique_id}_cat_{threshold_col}'
+#         os.makedirs(dir_name, exist_ok=True)
+#     else:
+#         dir_name = f'{config.MASTER}visualization'
+#         os.makedirs(dir_name, exist_ok=True)
+    
+#     fig, ax = plt.subplots(figsize=(8, 8))
+#     ax.set_title(f'Particle Trajectory with Speed Categories: {unique_id}')
+#     ax.set_xlabel('X Position')
+#     ax.set_ylabel('Y Position')
+#     ax.set_xlim(center_x - range_extent, center_x + range_extent)
+#     ax.set_ylim(center_y - range_extent, center_y + range_extent)
+    
+#     if animation:
+#         # Create animation by iterating through the data and plotting frame by frame
+#         for i in range(1, len(particle_df)):
+#             ax.clear()
+#             ax.set_title(f'Particle Trajectory with {factorcategory} Categories: {unique_id}')
+#             ax.set_xlabel('X Position')
+#             ax.set_ylabel('Y Position')
+#             ax.set_xlim(center_x - range_extent, center_x + range_extent)
+#             ax.set_ylim(center_y - range_extent, center_y + range_extent)
+
+#             # Plot the trajectory up to the current point, changing colors according to speed category
+#             for j in range(1, i + 1):
+#                 x_values = particle_df['x'].iloc[j-1:j+1]
+#                 y_values = particle_df['y'].iloc[j-1:j+1]
+#                 fac_category = particle_df[factorcategory].iloc[j-1]
+#                 color = colormap.get(fac_category, 'black')
+#                 ax.plot(x_values, y_values, color=color, linewidth=2)
+
+#             ax.legend(handles=[plt.Line2D([0], [0], color=color, label=f'{category.capitalize()}') for category, color in colormap.items()])
+#             plt_path = os.path.join(dir_name, f'frame_{i:03d}.png')
+#             plt.savefig(plt_path)
+#     else:
+#         # Create static plot of the entire trajectory
+#         for i in range(1, len(particle_df)):
+#             x_values = particle_df['x'].iloc[i-1:i+1]
+#             y_values = particle_df['y'].iloc[i-1:i+1]
+#             fac_category = particle_df[factorcategory].iloc[i-1]
+#             color = colormap.get(fac_category, 'black')
+#             ax.plot(x_values, y_values, color=color, linewidth=2)
+
+#         ax.legend(handles=[plt.Line2D([0], [0], color=color, label=f'{category.capitalize()}') for category, color in colormap.items()])
+#         static_path = os.path.join(dir_name, f'static_particle_{unique_id}_cat_{threshold_col}.png')
+#         plt.savefig(static_path)
+#         plt.show()
+    
+#     plt.close(fig)
+
+
+############ Keeping this version in case of ffmpeg ##################
+
+
+# import numpy as np
+# import os
+# import matplotlib.pyplot as plt
+# import matplotlib.animation as animation
+
+# def plot_single_particle(particle_df, threshold_col, thresholds, animate=True):
+#     """
+#     Plots the trajectory of a single particle, either as an animation or as a static image, 
+#     with each segment colored according to its speed category.
+    
+#     Parameters:
+#     - particle_df: DataFrame containing the particle's data with columns 'x', 'y', and 'speed_um_s'.
+#     - threshold_col: The column used to determine the thresholds for coloring.
+#     - thresholds: List or tuple of three numbers defining the boundaries for low, medium, and high categories.
+#     - animate: Boolean, if True creates an animation, if False creates a static plot.
+#     """
+#     # Get the unique ID of the particle
+#     unique_id = particle_df['unique_id'].unique()[0]
+
+#     # Ensure the thresholds are sorted
+#     thresholds = sorted(thresholds)
+    
+#     # Assign categories based on thresholds
+#     conditions = [
+#         (particle_df[threshold_col] >= thresholds[0]) & (particle_df[threshold_col] < thresholds[1]),
+#         (particle_df[threshold_col] >= thresholds[1]) & (particle_df[threshold_col] < thresholds[2]),
+#         (particle_df[threshold_col] >= thresholds[2])
+#     ]
+#     choices = ['low', 'medium', 'high']
+#     factorcategory = f'{threshold_col}_category'
+#     particle_df[factorcategory] = np.select(conditions, choices, default='unknown')
+    
+#     # Define a colormap for the categories
+#     colormap = {
+#         'low': 'blue',
+#         'medium': 'green',
+#         'high': 'red'
+#     }
+    
+#     # Calculate center and range for square plot
+#     center_x = (particle_df['x'].max() + particle_df['x'].min()) / 2
+#     center_y = (particle_df['y'].max() + particle_df['y'].min()) / 2
+#     range_extent = max(particle_df['x'].max() - particle_df['x'].min(), particle_df['y'].max() - particle_df['y'].min()) / 2
+#     range_extent *= 1.1  # Add some padding
+    
+#     # Create directory for saving video or images
+#     dir_name = f'{config.MASTER}visualization/particle_{unique_id}_cat_{threshold_col}'
+#     os.makedirs(dir_name, exist_ok=True)
+    
+#     fig, ax = plt.subplots(figsize=(8, 8))
+#     ax.set_title(f'Particle Trajectory with {factorcategory} Categories: {unique_id}')
+#     ax.set_xlabel('X Position')
+#     ax.set_ylabel('Y Position')
+#     ax.set_xlim(center_x - range_extent, center_x + range_extent)
+#     ax.set_ylim(center_y - range_extent, center_y + range_extent)
+
+#     # Initial plot for animation
+#     line, = ax.plot([], [], lw=2)
+
+#     def init():
+#         line.set_data([], [])
+#         return line,
+
+#     def update_plot(i):
+#         x_values = particle_df['x'].iloc[:i+1]
+#         y_values = particle_df['y'].iloc[:i+1]
+#         colors = [colormap.get(particle_df[factorcategory].iloc[j], 'black') for j in range(i)]
+#         line.set_data(x_values, y_values)
+#         line.set_color(colors[-1] if colors else 'black')
+#         return line,
+
+#     if animate:
+#         # Create animation
+#         ani = animation.FuncAnimation(fig, update_plot, init_func=init, frames=len(particle_df), blit=True, repeat=False)
+#         video_path = os.path.join(dir_name, f'particle_{unique_id}_cat_{threshold_col}.mp4')
+#         ani.save(video_path, writer='ffmpeg', fps=5)
+#     else:
+#         # Create static plot of the entire trajectory
+#         for i in range(1, len(particle_df)):
+#             x_values = particle_df['x'].iloc[i-1:i+1]
+#             y_values = particle_df['y'].iloc[i-1:i+1]
+#             fac_category = particle_df[factorcategory].iloc[i-1]
+#             color = colormap.get(fac_category, 'black')
+#             ax.plot(x_values, y_values, color=color, linewidth=2)
+
+#         ax.legend(handles=[plt.Line2D([0], [0], color=color, label=f'{category.capitalize()}') for category, color in colormap.items()])
+#         static_path = os.path.join(dir_name, f'static_particle_{unique_id}_cat_{threshold_col}.png')
+#         plt.savefig(static_path)
+#         plt.show()
+    
+#     plt.close(fig)
+
+########################## FFMPEG version above ######################
+
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from PIL import Image
+
+def plot_single_particle(particle_df, threshold_col, thresholds, animate=True):
     """
     Plots the trajectory of a single particle, either as an animation or as a static image, 
     with each segment colored according to its speed category.
     
     Parameters:
     - particle_df: DataFrame containing the particle's data with columns 'x', 'y', and 'speed_um_s'.
-    - speed_thresholds: List or tuple of four numbers defining the boundaries for low, medium, and high speeds.
-    - animation: Boolean, if True creates an animation, if False creates a static plot.
+    - threshold_col: The column used to determine the thresholds for coloring.
+    - thresholds: List or tuple of three numbers defining the boundaries for low, medium, and high categories.
+    - animate: Boolean, if True creates an animation, if False creates a static plot.
     """
     # Get the unique ID of the particle
     unique_id = particle_df['unique_id'].unique()[0]
 
-    # Ensure the speed thresholds are sorted
-    speed_thresholds = sorted(speed_thresholds)
+    # Ensure the thresholds are sorted
+    thresholds = sorted(thresholds)
     
-    # Assign speed categories based on thresholds
+    # Assign categories based on thresholds
     conditions = [
-        (particle_df['speed_um_s'] >= speed_thresholds[0]) & (particle_df['speed_um_s'] < speed_thresholds[1]),
-        (particle_df['speed_um_s'] >= speed_thresholds[1]) & (particle_df['speed_um_s'] < speed_thresholds[2]),
-        (particle_df['speed_um_s'] >= speed_thresholds[2])
+        (particle_df[threshold_col] >= thresholds[0]) & (particle_df[threshold_col] < thresholds[1]),
+        (particle_df[threshold_col] >= thresholds[1]) & (particle_df[threshold_col] < thresholds[2]),
+        (particle_df[threshold_col] >= thresholds[2])
     ]
     choices = ['low', 'medium', 'high']
-    particle_df['speed_category'] = np.select(conditions, choices, default='unknown')
+    factorcategory = f'{threshold_col}_category'
+    particle_df[factorcategory] = np.select(conditions, choices, default='unknown')
     
-    # Define a colormap for the speed categories
+    # Define a colormap for the categories
+    # colormap = {
+    #     'low': 'blue',
+    #     'medium': 'green',
+    #     'high': 'red'
+    # }
+
     colormap = {
-        'low': 'blue',
-        'medium': 'green',
-        'high': 'orange'
+    'low': '#1F77B4',    # Hex color for 'low'
+    'medium': '#FF7F0E', # Hex color for 'medium'
+    'high': '#2CA02C'    # Hex color for 'high'
     }
     
     # Calculate center and range for square plot
@@ -2784,53 +3078,83 @@ def plot_single_particle(particle_df, speed_thresholds, animation=True):
     range_extent = max(particle_df['x'].max() - particle_df['x'].min(), particle_df['y'].max() - particle_df['y'].min()) / 2
     range_extent *= 1.1  # Add some padding
     
-    # Create directory for saving images
-    if animation:
-        dir_name = f'{master}visualization/particle_speedcat_{unique_id}'
-        os.makedirs(dir_name, exist_ok=True)
-    else:
-        dir_name = f'{master}visualization/particle_speedcat_static_{unique_id}'
-        os.makedirs(dir_name, exist_ok=True)
+    # Create directory for saving video or images
+    # dir_name = f'{config.MASTER}visualization/particle_{unique_id}_cat_{threshold_col}'
+    # os.makedirs(dir_name, exist_ok=True)
+
+    # if animate:
+    #     dir_name = f'{config.MASTER}visualization/particle_{unique_id}_cat_{threshold_col}'
+    #     os.makedirs(dir_name, exist_ok=True)
+    # else:
+    dir_name = f'{config.MASTER}visualization\singleparticleplots'
+    os.makedirs(dir_name, exist_ok=True)
+
+    fontsizes = 16
+    plt.rcParams.update({'font.size': fontsizes})
+    fig, ax = plt.subplots(figsize=(12, 12), dpi=150)
     
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.set_title(f'Particle Trajectory with Speed Categories: {unique_id}')
-    ax.set_xlabel('X Position')
-    ax.set_ylabel('Y Position')
+    ax.set_title(f'Particle Trajectory with {factorcategory} Categories: {unique_id}', fontsize=fontsizes)
+    ax.set_xlabel('X Position', fontsize=fontsizes)
+    ax.set_ylabel('Y Position', fontsize=fontsizes)
     ax.set_xlim(center_x - range_extent, center_x + range_extent)
     ax.set_ylim(center_y - range_extent, center_y + range_extent)
-    
-    if animation:
-        # Create animation by iterating through the data and plotting frame by frame
+
+    # Adjust the font size of the axis ticks
+    ax.tick_params(axis='both', which='major', labelsize=fontsizes)
+
+    # List to store frames
+    frames = []
+
+    def update_plot(i):
+        ax.clear()
+        ax.set_title(f'Particle Trajectory with {factorcategory} Categories: {unique_id}', fontsize=fontsizes)
+        ax.set_xlabel('X Position', fontsize=fontsizes)
+        ax.set_ylabel('Y Position', fontsize=fontsizes)
+        ax.set_xlim(center_x - range_extent, center_x + range_extent)
+        ax.set_ylim(center_y - range_extent, center_y + range_extent)
+
+        # Adjust the font size of the axis ticks in the update function as well
+        ax.tick_params(axis='both', which='major', labelsize=fontsizes)
+
+        # Plot the trajectory up to the current point, changing colors according to category
+        for j in range(1, i + 1):
+            x_values = particle_df['x'].iloc[j-1:j+1]
+            y_values = particle_df['y'].iloc[j-1:j+1]
+            fac_category = particle_df[factorcategory].iloc[j-1]
+            color = colormap.get(fac_category, 'black')
+            ax.plot(x_values, y_values, color=color, linewidth=2)
+
+        ax.legend(handles=[plt.Line2D([0], [0], color=color, label=f'{category.capitalize()}') for category, color in colormap.items()], fontsize=fontsizes)
+
+
+        # Save frame to list for GIF creation
+        fig.canvas.draw()
+        image = Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+        frames.append(image)
+
+    if animate:
+        # Create animation frame by frame
         for i in range(1, len(particle_df)):
-            ax.clear()
-            ax.set_title(f'Particle Trajectory with Speed Categories: {unique_id}')
-            ax.set_xlabel('X Position')
-            ax.set_ylabel('Y Position')
-            ax.set_xlim(center_x - range_extent, center_x + range_extent)
-            ax.set_ylim(center_y - range_extent, center_y + range_extent)
+            update_plot(i)
+        
+        # Save the frames as a GIF
+        gif_path = os.path.join(dir_name, f'particle_{unique_id}_cat_{threshold_col}.gif')
+        frames[0].save(gif_path, save_all=True, append_images=frames[1:], duration=50, loop=0)
 
-            # Plot the trajectory up to the current point, changing colors according to speed category
-            for j in range(1, i + 1):
-                x_values = particle_df['x'].iloc[j-1:j+1]
-                y_values = particle_df['y'].iloc[j-1:j+1]
-                speed_category = particle_df['speed_category'].iloc[j-1]
-                color = colormap.get(speed_category, 'black')
-                ax.plot(x_values, y_values, color=color, linewidth=2)
 
-            ax.legend(handles=[plt.Line2D([0], [0], color=color, label=f'{category.capitalize()} Speed') for category, color in colormap.items()])
-            plt_path = os.path.join(dir_name, f'frame_{i:03d}.png')
-            plt.savefig(plt_path)
+        # frames[0].save('output.gif', save_all=True, append_images=frames[1:], duration=100, loop=0)
     else:
         # Create static plot of the entire trajectory
         for i in range(1, len(particle_df)):
             x_values = particle_df['x'].iloc[i-1:i+1]
             y_values = particle_df['y'].iloc[i-1:i+1]
-            speed_category = particle_df['speed_category'].iloc[i-1]
-            color = colormap.get(speed_category, 'black')
+            fac_category = particle_df[factorcategory].iloc[i-1]
+            color = colormap.get(fac_category, 'black')
             ax.plot(x_values, y_values, color=color, linewidth=2)
 
-        ax.legend(handles=[plt.Line2D([0], [0], color=color, label=f'{category.capitalize()} Speed') for category, color in colormap.items()])
-        static_path = os.path.join(dir_name, 'static_trajectory.png')
+        ax.legend(handles=[plt.Line2D([0], [0], color=color, label=f'{category.capitalize()}') for category, color in colormap.items()])
+        static_path = os.path.join(dir_name, f'static_particle_{unique_id}_cat_{threshold_col}.png')
         plt.savefig(static_path)
+        plt.show()
     
     plt.close(fig)
