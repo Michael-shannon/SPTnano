@@ -2632,8 +2632,7 @@
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">41</span>
-<span class="normal">42</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">42</span>
 <span class="normal">43</span>
 <span class="normal">44</span>
 <span class="normal">45</span>
@@ -2641,7 +2640,8 @@
 <span class="normal">47</span>
 <span class="normal">48</span>
 <span class="normal">49</span>
-<span class="normal">50</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">add_microns_and_secs</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">pixelsize_microns</span><span class="p">,</span> <span class="n">time_between_frames</span><span class="p">):</span>
+<span class="normal">50</span>
+<span class="normal">51</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">add_microns_and_secs</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">pixelsize_microns</span><span class="p">,</span> <span class="n">time_between_frames</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&#39;&#39;&#39;Adds columns to the DataFrame with positions in microns and time in seconds&#39;&#39;&#39;</span>
     <span class="c1">#space transformations</span>
     <span class="n">df</span><span class="p">[</span><span class="s1">&#39;x_um&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span> <span class="o">*</span> <span class="n">pixelsize_microns</span>
@@ -2940,8 +2940,7 @@ Condition and Location can be specified as a string or as an index.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">102</span>
-<span class="normal">103</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">103</span>
 <span class="normal">104</span>
 <span class="normal">105</span>
 <span class="normal">106</span>
@@ -2984,7 +2983,8 @@ Condition and Location can be specified as a string or as an index.</p>
 <span class="normal">143</span>
 <span class="normal">144</span>
 <span class="normal">145</span>
-<span class="normal">146</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">extract_single_particle_df</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">unique_id</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="normal">146</span>
+<span class="normal">147</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">extract_single_particle_df</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">unique_id</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Extracts a DataFrame for a single particle based on the specified condition and unique ID.</span>
 <span class="sd">    Condition and Location can be specified as a string or as an index.</span>
@@ -3050,8 +3050,7 @@ Condition and Location can be specified as a string or as an index.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">176</span>
-<span class="normal">177</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">177</span>
 <span class="normal">178</span>
 <span class="normal">179</span>
 <span class="normal">180</span>
@@ -3060,7 +3059,8 @@ Condition and Location can be specified as a string or as an index.</p>
 <span class="normal">183</span>
 <span class="normal">184</span>
 <span class="normal">185</span>
-<span class="normal">186</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_high_speeds</span><span class="p">(</span><span class="n">metrics_df</span><span class="p">,</span> <span class="n">speed_threshold</span><span class="p">):</span>
+<span class="normal">186</span>
+<span class="normal">187</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_high_speeds</span><span class="p">(</span><span class="n">metrics_df</span><span class="p">,</span> <span class="n">speed_threshold</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
 <span class="sd">    Filter based on speed instead - can be relevant if you have different exposure times and different times between frames</span>
 <span class="sd">    &#39;&#39;&#39;</span>
@@ -3100,8 +3100,7 @@ threshold : float
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">152</span>
-<span class="normal">153</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">153</span>
 <span class="normal">154</span>
 <span class="normal">155</span>
 <span class="normal">156</span>
@@ -3122,7 +3121,8 @@ threshold : float
 <span class="normal">171</span>
 <span class="normal">172</span>
 <span class="normal">173</span>
-<span class="normal">174</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_large_jumps</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">threshold</span><span class="p">):</span>
+<span class="normal">174</span>
+<span class="normal">175</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_large_jumps</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">threshold</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Filter out entire particles with any frames showing large jumps in micrometers.</span>
 
@@ -3167,8 +3167,7 @@ Works across exposure times, because it works on converted seconds, not frames</
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">77</span>
-<span class="normal">78</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">78</span>
 <span class="normal">79</span>
 <span class="normal">80</span>
 <span class="normal">81</span>
@@ -3181,7 +3180,8 @@ Works across exposure times, because it works on converted seconds, not frames</
 <span class="normal">88</span>
 <span class="normal">89</span>
 <span class="normal">90</span>
-<span class="normal">91</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_stubs</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">min_time</span><span class="p">):</span>
+<span class="normal">91</span>
+<span class="normal">92</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_stubs</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">min_time</span><span class="p">):</span>
 
 <span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
 <span class="sd">    Removes tracks that are shorter than &#39;min_time&#39; by finding the max duration of each time_s_zeroed column and filtering on that</span>
@@ -3226,8 +3226,7 @@ Works across exposure times, because it works on converted seconds, not frames</
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">212</span>
-<span class="normal">213</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">213</span>
 <span class="normal">214</span>
 <span class="normal">215</span>
 <span class="normal">216</span>
@@ -3274,7 +3273,8 @@ Works across exposure times, because it works on converted seconds, not frames</
 <span class="normal">257</span>
 <span class="normal">258</span>
 <span class="normal">259</span>
-<span class="normal">260</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">generalized_filter</span><span class="p">(</span><span class="n">df_in</span><span class="p">,</span> <span class="n">filter_col</span><span class="p">,</span> <span class="n">low</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">condition</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="normal">260</span>
+<span class="normal">261</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">generalized_filter</span><span class="p">(</span><span class="n">df_in</span><span class="p">,</span> <span class="n">filter_col</span><span class="p">,</span> <span class="n">low</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">condition</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Filters the input DataFrame based on a range of values in filter_col and additional conditions.</span>
 
@@ -8906,8 +8906,7 @@ Parameters:
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">41</span>
-<span class="normal">42</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">42</span>
 <span class="normal">43</span>
 <span class="normal">44</span>
 <span class="normal">45</span>
@@ -8915,7 +8914,8 @@ Parameters:
 <span class="normal">47</span>
 <span class="normal">48</span>
 <span class="normal">49</span>
-<span class="normal">50</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">add_microns_and_secs</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">pixelsize_microns</span><span class="p">,</span> <span class="n">time_between_frames</span><span class="p">):</span>
+<span class="normal">50</span>
+<span class="normal">51</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">add_microns_and_secs</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">pixelsize_microns</span><span class="p">,</span> <span class="n">time_between_frames</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&#39;&#39;&#39;Adds columns to the DataFrame with positions in microns and time in seconds&#39;&#39;&#39;</span>
     <span class="c1">#space transformations</span>
     <span class="n">df</span><span class="p">[</span><span class="s1">&#39;x_um&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span> <span class="o">*</span> <span class="n">pixelsize_microns</span>
@@ -8954,8 +8954,7 @@ Condition and Location can be specified as a string or as an index.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">102</span>
-<span class="normal">103</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">103</span>
 <span class="normal">104</span>
 <span class="normal">105</span>
 <span class="normal">106</span>
@@ -8998,7 +8997,8 @@ Condition and Location can be specified as a string or as an index.</p>
 <span class="normal">143</span>
 <span class="normal">144</span>
 <span class="normal">145</span>
-<span class="normal">146</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">extract_single_particle_df</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">unique_id</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="normal">146</span>
+<span class="normal">147</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">extract_single_particle_df</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">unique_id</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Extracts a DataFrame for a single particle based on the specified condition and unique ID.</span>
 <span class="sd">    Condition and Location can be specified as a string or as an index.</span>
@@ -9064,8 +9064,7 @@ Condition and Location can be specified as a string or as an index.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">176</span>
-<span class="normal">177</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">177</span>
 <span class="normal">178</span>
 <span class="normal">179</span>
 <span class="normal">180</span>
@@ -9074,7 +9073,8 @@ Condition and Location can be specified as a string or as an index.</p>
 <span class="normal">183</span>
 <span class="normal">184</span>
 <span class="normal">185</span>
-<span class="normal">186</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_high_speeds</span><span class="p">(</span><span class="n">metrics_df</span><span class="p">,</span> <span class="n">speed_threshold</span><span class="p">):</span>
+<span class="normal">186</span>
+<span class="normal">187</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_high_speeds</span><span class="p">(</span><span class="n">metrics_df</span><span class="p">,</span> <span class="n">speed_threshold</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
 <span class="sd">    Filter based on speed instead - can be relevant if you have different exposure times and different times between frames</span>
 <span class="sd">    &#39;&#39;&#39;</span>
@@ -9114,8 +9114,7 @@ threshold : float
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">152</span>
-<span class="normal">153</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">153</span>
 <span class="normal">154</span>
 <span class="normal">155</span>
 <span class="normal">156</span>
@@ -9136,7 +9135,8 @@ threshold : float
 <span class="normal">171</span>
 <span class="normal">172</span>
 <span class="normal">173</span>
-<span class="normal">174</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_large_jumps</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">threshold</span><span class="p">):</span>
+<span class="normal">174</span>
+<span class="normal">175</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_large_jumps</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">threshold</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Filter out entire particles with any frames showing large jumps in micrometers.</span>
 
@@ -9181,8 +9181,7 @@ Works across exposure times, because it works on converted seconds, not frames</
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">77</span>
-<span class="normal">78</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">78</span>
 <span class="normal">79</span>
 <span class="normal">80</span>
 <span class="normal">81</span>
@@ -9195,7 +9194,8 @@ Works across exposure times, because it works on converted seconds, not frames</
 <span class="normal">88</span>
 <span class="normal">89</span>
 <span class="normal">90</span>
-<span class="normal">91</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_stubs</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">min_time</span><span class="p">):</span>
+<span class="normal">91</span>
+<span class="normal">92</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_stubs</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">min_time</span><span class="p">):</span>
 
 <span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
 <span class="sd">    Removes tracks that are shorter than &#39;min_time&#39; by finding the max duration of each time_s_zeroed column and filtering on that</span>
@@ -9240,8 +9240,7 @@ Works across exposure times, because it works on converted seconds, not frames</
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">212</span>
-<span class="normal">213</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">213</span>
 <span class="normal">214</span>
 <span class="normal">215</span>
 <span class="normal">216</span>
@@ -9288,7 +9287,8 @@ Works across exposure times, because it works on converted seconds, not frames</
 <span class="normal">257</span>
 <span class="normal">258</span>
 <span class="normal">259</span>
-<span class="normal">260</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">generalized_filter</span><span class="p">(</span><span class="n">df_in</span><span class="p">,</span> <span class="n">filter_col</span><span class="p">,</span> <span class="n">low</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">condition</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="normal">260</span>
+<span class="normal">261</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">generalized_filter</span><span class="p">(</span><span class="n">df_in</span><span class="p">,</span> <span class="n">filter_col</span><span class="p">,</span> <span class="n">low</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">condition</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Filters the input DataFrame based on a range of values in filter_col and additional conditions.</span>
 
@@ -9390,8 +9390,7 @@ Works across exposure times, because it works on converted seconds, not frames</
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">41</span>
-<span class="normal">42</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">42</span>
 <span class="normal">43</span>
 <span class="normal">44</span>
 <span class="normal">45</span>
@@ -9399,7 +9398,8 @@ Works across exposure times, because it works on converted seconds, not frames</
 <span class="normal">47</span>
 <span class="normal">48</span>
 <span class="normal">49</span>
-<span class="normal">50</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">add_microns_and_secs</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">pixelsize_microns</span><span class="p">,</span> <span class="n">time_between_frames</span><span class="p">):</span>
+<span class="normal">50</span>
+<span class="normal">51</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">add_microns_and_secs</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">pixelsize_microns</span><span class="p">,</span> <span class="n">time_between_frames</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&#39;&#39;&#39;Adds columns to the DataFrame with positions in microns and time in seconds&#39;&#39;&#39;</span>
     <span class="c1">#space transformations</span>
     <span class="n">df</span><span class="p">[</span><span class="s1">&#39;x_um&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span> <span class="o">*</span> <span class="n">pixelsize_microns</span>
@@ -9586,8 +9586,7 @@ Condition and Location can be specified as a string or as an index.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">102</span>
-<span class="normal">103</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">103</span>
 <span class="normal">104</span>
 <span class="normal">105</span>
 <span class="normal">106</span>
@@ -9630,7 +9629,8 @@ Condition and Location can be specified as a string or as an index.</p>
 <span class="normal">143</span>
 <span class="normal">144</span>
 <span class="normal">145</span>
-<span class="normal">146</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">extract_single_particle_df</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">unique_id</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="normal">146</span>
+<span class="normal">147</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">extract_single_particle_df</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">unique_id</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Extracts a DataFrame for a single particle based on the specified condition and unique ID.</span>
 <span class="sd">    Condition and Location can be specified as a string or as an index.</span>
@@ -9696,8 +9696,7 @@ Condition and Location can be specified as a string or as an index.</p>
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">176</span>
-<span class="normal">177</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">177</span>
 <span class="normal">178</span>
 <span class="normal">179</span>
 <span class="normal">180</span>
@@ -9706,7 +9705,8 @@ Condition and Location can be specified as a string or as an index.</p>
 <span class="normal">183</span>
 <span class="normal">184</span>
 <span class="normal">185</span>
-<span class="normal">186</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_high_speeds</span><span class="p">(</span><span class="n">metrics_df</span><span class="p">,</span> <span class="n">speed_threshold</span><span class="p">):</span>
+<span class="normal">186</span>
+<span class="normal">187</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_high_speeds</span><span class="p">(</span><span class="n">metrics_df</span><span class="p">,</span> <span class="n">speed_threshold</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
 <span class="sd">    Filter based on speed instead - can be relevant if you have different exposure times and different times between frames</span>
 <span class="sd">    &#39;&#39;&#39;</span>
@@ -9746,8 +9746,7 @@ threshold : float
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">152</span>
-<span class="normal">153</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">153</span>
 <span class="normal">154</span>
 <span class="normal">155</span>
 <span class="normal">156</span>
@@ -9768,7 +9767,8 @@ threshold : float
 <span class="normal">171</span>
 <span class="normal">172</span>
 <span class="normal">173</span>
-<span class="normal">174</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_large_jumps</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">threshold</span><span class="p">):</span>
+<span class="normal">174</span>
+<span class="normal">175</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_large_jumps</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">threshold</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Filter out entire particles with any frames showing large jumps in micrometers.</span>
 
@@ -9813,8 +9813,7 @@ Works across exposure times, because it works on converted seconds, not frames</
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">77</span>
-<span class="normal">78</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">78</span>
 <span class="normal">79</span>
 <span class="normal">80</span>
 <span class="normal">81</span>
@@ -9827,7 +9826,8 @@ Works across exposure times, because it works on converted seconds, not frames</
 <span class="normal">88</span>
 <span class="normal">89</span>
 <span class="normal">90</span>
-<span class="normal">91</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_stubs</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">min_time</span><span class="p">):</span>
+<span class="normal">91</span>
+<span class="normal">92</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">filter_stubs</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">min_time</span><span class="p">):</span>
 
 <span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
 <span class="sd">    Removes tracks that are shorter than &#39;min_time&#39; by finding the max duration of each time_s_zeroed column and filtering on that</span>
@@ -9872,8 +9872,7 @@ Works across exposure times, because it works on converted seconds, not frames</
 
             <details class="quote">
               <summary>Source code in <code>src/SPTnano/helper_scripts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">212</span>
-<span class="normal">213</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">213</span>
 <span class="normal">214</span>
 <span class="normal">215</span>
 <span class="normal">216</span>
@@ -9920,7 +9919,8 @@ Works across exposure times, because it works on converted seconds, not frames</
 <span class="normal">257</span>
 <span class="normal">258</span>
 <span class="normal">259</span>
-<span class="normal">260</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">generalized_filter</span><span class="p">(</span><span class="n">df_in</span><span class="p">,</span> <span class="n">filter_col</span><span class="p">,</span> <span class="n">low</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">condition</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="normal">260</span>
+<span class="normal">261</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span> <span class="nf">generalized_filter</span><span class="p">(</span><span class="n">df_in</span><span class="p">,</span> <span class="n">filter_col</span><span class="p">,</span> <span class="n">low</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">condition</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">location</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Filters the input DataFrame based on a range of values in filter_col and additional conditions.</span>
 
