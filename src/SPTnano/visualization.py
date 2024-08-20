@@ -12,6 +12,15 @@ import napari
 import numpy as np
 from scipy.stats import sem
 import random
+from scipy.stats import linregress
+
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+from matplotlib.collections import LineCollection
+
+
+from scipy.stats import sem
+
 
 import config
 from napari_animation import Animation
@@ -974,13 +983,7 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
 
         #### To be refined::: #############
 
-import os
-import pims
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import pandas as pd
-import numpy as np
-from matplotlib.collections import LineCollection
+
 
 def plot_trajectory(traj, colorby='particle', mpp=None, label=False,
                     superimpose=None, cmap=None, ax=None, t_column=None,
@@ -1140,7 +1143,7 @@ def batch_plot_trajectories(master_folder, traj_df, batch=True, filename=None, c
 # traj_df = pd.read_csv('path_to_dataframe.csv')
 # batch_plot_trajectories(master_folder, traj_df, batch=True)
 # batch_plot_trajectories(master_folder, traj_df, batch=False, filename='file.tif')
-from mpl_toolkits.axes_grid1 import make_axes_locatable
+
 
 def plot_particle_trajectory(ax, particle_df, particle_id, condition, plot_size=None):
     
@@ -1997,11 +2000,7 @@ def bootstrap_ci_median(data, num_samples=1000, alpha=0.05):
 ################################### saved ##################################
 
 
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import os
-from scipy.stats import sem
+
 
 # # Placeholder bootstrap functions
 # def bootstrap_ci_mean(data, n_bootstraps=1000):
@@ -2578,7 +2577,96 @@ def plot_classification_pie_charts(df, group_by='Location', colormap_name='Dark2
 
 
 
-def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palette='colorblind', show_plot=True, master_dir=None, grid=True, bw=False, y_max=None, figsize=(10, 8)):
+# def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palette='colorblind', show_plot=True, master_dir=None, grid=True, bw=False, strip=False, y_max=None, figsize=(10, 8), ):
+#     """
+#     Plot boxplots for the specified feature against a categorical x_category with custom order and styling options.
+
+#     Parameters
+#     ----------
+#     data_df : DataFrame
+#         DataFrame containing the data.
+#     feature : str
+#         The feature to plot on the y-axis.
+#     x_category : str
+#         The categorical feature to plot on the x-axis.
+#     font_size : int, optional
+#         Font size for the plot text. Default is 12.
+#     order : list, optional
+#         Specific order for the categories. Default is None.
+#     palette : str, optional
+#         Color palette for the plot. Default is 'colorblind'.
+#     show_plot : bool, optional
+#         Whether to display the plot in the notebook. Default is True.
+#     master_dir : str, optional
+#         Directory to save the plot. Default is None.
+#     grid : bool, optional
+#         Whether to display grid lines. Default is True.
+#     bw : bool, optional
+#         Whether to use black-and-white styling. Default is False.
+#     y_max : float, optional
+#         Maximum value for the y-axis. Default is None.
+#     figsize : tuple, optional
+#         Size of the plot (width, height) in inches. Default is (10, 8).
+#     """
+    
+#     plt.figure(figsize=figsize)  # Use the figsize parameter to set the figure size
+#     sns.set_context("notebook", rc={"xtick.labelsize": font_size, "ytick.labelsize": font_size})
+
+#     if bw:
+#         # Black-and-white styling: no fill color, black edges
+#         boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, linewidth=1.5, showfliers=False, color='white', order=order)
+#         for patch in boxplot.patches:
+#             patch.set_edgecolor('black')  # Set edge color to black
+#             patch.set_linewidth(1.5)     # Set edge width
+#         for element in ['boxes', 'whiskers', 'medians', 'caps']:
+#             plt.setp(boxplot.artists, color='black')  # Set edge color to black
+#             plt.setp(boxplot.lines, color='black')    # Set whiskers and caps to black
+#     else:
+#         boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, palette=palette, order=order, showfliers=False)
+#         boxplot.patch.set_linewidth(1.5)
+
+    
+        
+
+#     plt.xlabel('', fontsize=font_size)
+#     plt.ylabel(feature, fontsize=font_size)
+#     plt.title(f'{feature} by {x_category}', fontsize=font_size)
+#     plt.xticks(rotation=45)
+
+#     if grid:
+#         plt.grid(True, linestyle='--', linewidth=0.5, color='gray', alpha=0.7, axis='y')  # Grid on y-axis
+#         plt.gca().set_axisbelow(True)  # Ensure grid is below the plot elements
+
+#     # Set the maximum y-axis limit if specified
+#     if y_max is not None:
+#         plt.ylim(top=y_max)
+
+#     # Customize spines
+#     ax = plt.gca()
+#     ax.spines['top'].set_color('lightgray')
+#     ax.spines['right'].set_color('lightgray')
+#     ax.spines['left'].set_color('black')
+#     ax.spines['bottom'].set_color('black')
+
+#     plt.tight_layout()
+
+#     if master_dir is None:
+#         master_dir = "plots"  # Default directory
+
+#     os.makedirs(master_dir, exist_ok=True)
+#     filename = f"{master_dir}/{feature}_by_{x_category}.png"
+#     plt.savefig(filename, bbox_inches='tight')
+
+#     if show_plot:
+#         plt.show()
+#     else:
+#         plt.close()
+
+# import matplotlib.pyplot as plt
+# import seaborn as sns
+# import os
+
+def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palette='colorblind', show_plot=True, master_dir=None, grid=True, bw=False, strip=False, y_max=None, figsize=(10, 8)):
     """
     Plot boxplots for the specified feature against a categorical x_category with custom order and styling options.
 
@@ -2604,12 +2692,14 @@ def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palett
         Whether to display grid lines. Default is True.
     bw : bool, optional
         Whether to use black-and-white styling. Default is False.
+    strip : bool, optional
+        Whether to overlay a stripplot on the boxplot. Default is False.
     y_max : float, optional
         Maximum value for the y-axis. Default is None.
     figsize : tuple, optional
         Size of the plot (width, height) in inches. Default is (10, 8).
     """
-    
+
     plt.figure(figsize=figsize)  # Use the figsize parameter to set the figure size
     sns.set_context("notebook", rc={"xtick.labelsize": font_size, "ytick.labelsize": font_size})
 
@@ -2625,6 +2715,9 @@ def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palett
     else:
         boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, palette=palette, order=order, showfliers=False)
         boxplot.patch.set_linewidth(1.5)
+
+    if strip:
+        sns.stripplot(x=x_category, y=feature, data=data_df, color='black', size=0.3, order=order, jitter=True)
 
     plt.xlabel('', fontsize=font_size)
     plt.ylabel(feature, fontsize=font_size)
@@ -2659,6 +2752,7 @@ def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palett
         plt.show()
     else:
         plt.close()
+
 
 
 def plot_stacked_bar(df, x_category, order=None, font_size=16, colormap='Dark2', figsize=(10, 5)):
@@ -3194,9 +3288,366 @@ def plot_single_particle_wrapper(time_windowed_df, metrics_df, filter_col, low=N
     # Step 4: Plot the single particle track
     plot_single_particle(single_particle_df, threshold_col, thresholds, animate)
 
-    # Optional: Save the plot (customize this part as needed)
+    # Optional: Save the plot 
     # plt.savefig(f'single_particle_plot_{single_particle_df["unique_id"].iloc[0]}.png')
     # plt.show()
 
-# Example usage
-# plot_single_particle_wrapper(time_windowed_df, metrics_df, filter_col='speed_um_s', low=0, high=10, condition='ConditionA', location='Location1', thresholds=[0, 10, 15, 1000], animate=False)
+
+def plot_jointplot(data_df, x_var, y_var, font_size=12, palette='colorblind', separate=None, show_plot=True, master_dir=None, 
+                   grid=True, bw=False, y_min=None, y_max=None, x_min=None, x_max=None, figsize=(10, 8), order=None, 
+                   kind='reg', height=7, color=None, point_size=50, small_multiples=False):
+    sns.set_theme(style="darkgrid" if not bw else "whitegrid")
+
+    # Set defaults for x_min and y_min if not provided
+    x_min = x_min if x_min is not None else np.floor(data_df[x_var].min())
+    y_min = y_min if y_min is not None else np.floor(data_df[y_var].min())
+
+    # Set defaults for x_max and y_max if not provided
+    x_max = x_max if x_max is not None else np.ceil(data_df[x_var].max())
+    y_max = y_max if y_max is not None else np.ceil(data_df[y_var].max())
+
+    # Calculate tick intervals based on the specified limits
+    x_tick_interval = (x_max - x_min) / 10
+    y_tick_interval = (y_max - y_min) / 10
+
+    def add_r_squared(ax, x, y):
+        slope, intercept, r_value, p_value, std_err = linregress(x, y)
+        r_squared = r_value**2
+        ax.text(0.05, 0.95, f'$R^2 = {r_squared:.2f}$', transform=ax.transAxes, fontsize=font_size, verticalalignment='top')
+
+    if separate is not None:
+        if order:
+            data_df[separate] = pd.Categorical(data_df[separate], categories=order, ordered=True)
+        else:
+            data_df[separate] = pd.Categorical(data_df[separate])
+
+    if small_multiples and separate:
+        unique_categories = data_df[separate].cat.categories
+        colors = sns.color_palette(palette, len(unique_categories))
+
+        for i, category in enumerate(unique_categories):
+            subset = data_df[data_df[separate] == category]
+
+            if kind == 'hex':
+                g = sns.jointplot(x=x_var, y=y_var, data=subset, kind=kind, height=height, color=colors[i])
+            else:
+                g = sns.jointplot(x=x_var, y=y_var, data=subset, kind=kind, height=height, color=colors[i], scatter_kws={'s': point_size})
+
+            g.fig.suptitle(f'{category}', fontsize=font_size + 2)
+            g.ax_joint.set_xlabel(x_var, fontsize=font_size)
+            g.ax_joint.set_ylabel(y_var, fontsize=font_size)
+
+            g.ax_joint.set_xlim(left=x_min, right=x_max)
+            g.ax_joint.set_ylim(bottom=y_min, top=y_max)
+            g.ax_joint.set_xticks(np.arange(x_min, x_max + x_tick_interval, x_tick_interval))
+            g.ax_joint.set_yticks(np.arange(y_min, y_max + y_tick_interval, y_tick_interval))
+            add_r_squared(g.ax_joint, subset[x_var], subset[y_var])
+
+            plt.tight_layout()
+
+            if master_dir is None:
+                master_dir = "plots"
+
+            os.makedirs(master_dir, exist_ok=True)
+            filename = f"{master_dir}/{category}_{y_var}_vs_{x_var}_jointplot.png"
+            plt.savefig(filename, bbox_inches='tight')
+
+            if show_plot:
+                plt.show()
+            else:
+                plt.close()
+
+    else:
+        if separate:
+            g = sns.FacetGrid(data_df, hue=separate, palette=palette, height=height, aspect=1.5)
+            g.map(sns.regplot, x_var, y_var, scatter_kws={'s': point_size}, ci=None)
+            g.add_legend()
+            for ax in g.axes.flatten():
+                for category in data_df[separate].unique():
+                    subset = data_df[data_df[separate] == category]
+                    add_r_squared(ax, subset[x_var], subset[y_var])
+
+        else:
+            g = sns.jointplot(x=x_var, y=y_var, data=data_df, kind=kind, height=height, color=color if color else sns.color_palette(palette, 1)[0], scatter_kws={'s': point_size})
+
+        g.ax_joint.set_xlim(left=x_min, right=x_max)
+        g.ax_joint.set_ylim(bottom=y_min, top=y_max)
+        g.ax_joint.set_xticks(np.arange(x_min, x_max + x_tick_interval, x_tick_interval))
+        g.ax_joint.set_yticks(np.arange(y_min, y_max + y_tick_interval, y_tick_interval))
+        
+        add_r_squared(g.ax_joint, data_df[x_var], data_df[y_var])
+
+        g.set_axis_labels(x_var, y_var, fontsize=font_size)
+        plt.suptitle(f'{y_var} vs {x_var}', fontsize=font_size, y=1.02)
+
+        plt.tight_layout()
+
+        if master_dir is None:
+            master_dir = "plots"
+
+        os.makedirs(master_dir, exist_ok=True)
+        filename = f"{master_dir}/{y_var}_vs_{x_var}_jointplot.png"
+        plt.savefig(filename, bbox_inches='tight')
+
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+
+
+
+
+def plot_joint_with_fit(data_df, x_var, y_var, font_size=12, palette='colorblind', separate=None, show_plot=True, master_dir=None, 
+                        grid=True, bw=False, y_max=None, x_max=None, figsize=(10, 8), tick_interval=5, order=None, 
+                        fit_type='linear', scatter=True, kind='reg', height=7, color=None, point_size=50):
+    """
+    Plot a joint plot with a line of best fit (linear or other) for the specified x and y variables, with options for scatter and fit type.
+
+    Parameters
+    ----------
+    data_df : DataFrame
+        DataFrame containing the data.
+    x_var : str
+        The variable to plot on the x-axis.
+    y_var : str
+        The variable to plot on the y-axis.
+    font_size : int, optional
+        Font size for the plot text. Default is 12.
+    palette : str, optional
+        Color palette for the plot. Default is 'colorblind'.
+    separate : str, optional
+        Column to separate the data by. If None, all data will be plotted together. Default is None.
+    show_plot : bool, optional
+        Whether to display the plot in the notebook. Default is True.
+    master_dir : str, optional
+        Directory to save the plot. Default is None.
+    grid : bool, optional
+        Whether to display grid lines. Default is True.
+    bw : bool, optional
+        Whether to use black-and-white styling. Default is False.
+    y_max : float, optional
+        Maximum value for the y-axis. Default is None.
+    x_max : float, optional
+        Maximum value for the x-axis. Default is None.
+    figsize : tuple, optional
+        Size of the plot (width, height) in inches. Default is (10, 8).
+    tick_interval : int, optional
+        Interval for x-axis ticks. Default is 5.
+    order : list, optional
+        Specific order for the categories in the separate variable. Default is None.
+    fit_type : str, optional
+        Type of fit to apply ('linear', 'polynomial', 'exponential'). Default is 'linear'.
+    scatter : bool, optional
+        Whether to include the scatter plot along with the line of best fit. Default is True.
+    kind : str, optional
+        The kind of plot to draw ('scatter', 'reg', 'resid', 'kde', 'hex'). Default is 'reg'.
+    height : float, optional
+        Size of the figure (it will be square). Default is 7.
+    color : str, optional
+        Color of the regression line. Default is None.
+    point_size : int, optional
+        Size of the points in the scatter plot. Default is 50.
+    """
+
+    sns.set_theme(style="darkgrid")
+
+    scatter_kws = {'s': point_size}
+
+    # Apply the order if specified
+    if separate and order:
+        data_df[separate] = pd.Categorical(data_df[separate], categories=order, ordered=True)
+
+    if separate:
+        unique_categories = data_df[separate].cat.categories if order else data_df[separate].unique()
+        colors = sns.color_palette(palette, len(unique_categories))
+
+        for i, category in enumerate(unique_categories):
+            subset = data_df[data_df[separate] == category]
+            reg_color = colors[i] if color is None else color
+
+            g = sns.jointplot(x=x_var, y=y_var, data=subset, kind=kind, height=height, color=reg_color, scatter_kws=scatter_kws)
+
+            if fit_type == 'linear':
+                sns.regplot(x=x_var, y=y_var, data=subset, scatter=scatter, color=reg_color, ci=None, ax=g.ax_joint)
+            elif fit_type == 'polynomial':
+                sns.regplot(x=x_var, y=y_var, data=subset, scatter=scatter, color=reg_color, ci=None, order=2, ax=g.ax_joint)
+            elif fit_type == 'exponential':
+                log_y = np.log(subset[y_var])
+                sns.regplot(x=x_var, y=log_y, data=subset, scatter=scatter, color=reg_color, ci=None, ax=g.ax_joint)
+                g.ax_joint.set_ylabel(f'log({y_var})')
+
+            if y_max is not None:
+                g.ax_joint.set_ylim(top=y_max)
+            if x_max is not None:
+                g.ax_joint.set_xlim(right=x_max)
+                g.ax_joint.set_xticks(np.arange(0, x_max + 1, tick_interval))
+
+            g.ax_joint.set_xlabel(x_var, fontsize=font_size)
+            g.ax_joint.set_ylabel(y_var, fontsize=font_size)
+            g.ax_joint.set_title(f'{category}: {y_var} vs {x_var}', fontsize=font_size, pad=20)
+
+            plt.tight_layout()
+
+            if master_dir is None:
+                master_dir = "plots"  # Default directory
+
+            os.makedirs(master_dir, exist_ok=True)
+            filename = f"{master_dir}/{category}_{y_var}_vs_{x_var}_jointplot_fit_{fit_type}.png"
+            plt.savefig(filename, bbox_inches='tight')
+
+            if show_plot:
+                plt.show()
+            else:
+                plt.close()
+
+    else:
+        g = sns.jointplot(x=x_var, y=y_var, data=data_df, kind=kind, height=height, color=color if color else sns.color_palette(palette, 1)[0], scatter_kws=scatter_kws)
+
+        if fit_type == 'linear':
+            sns.regplot(x=x_var, y=y_var, data=data_df, scatter=scatter, color=color if color else sns.color_palette(palette, 1)[0], ci=None, ax=g.ax_joint)
+        elif fit_type == 'polynomial':
+            sns.regplot(x=x_var, y=y_var, data=data_df, scatter=scatter, color=color if color else sns.color_palette(palette, 1)[0], ci=None, order=2, ax=g.ax_joint)
+        elif fit_type == 'exponential':
+            log_y = np.log(data_df[y_var])
+            sns.regplot(x=x_var, y=log_y, data=data_df, scatter=scatter, color=color if color else sns.color_palette(palette, 1)[0], ci=None, ax=g.ax_joint)
+            g.ax_joint.set_ylabel(f'log({y_var})')
+
+        if y_max is not None:
+            g.ax_joint.set_ylim(top=y_max)
+        if x_max is not None:
+            g.ax_joint.set_xlim(right=x_max)
+            g.ax_joint.set_xticks(np.arange(0, x_max + 1, tick_interval))
+
+        g.ax_joint.set_xlabel(x_var, fontsize=font_size)
+        g.ax_joint.set_ylabel(y_var, fontsize=font_size)
+        g.ax_joint.set_title(f'{y_var} vs {x_var}', fontsize=font_size, pad=20)
+
+        plt.tight_layout()
+
+        if master_dir is None:
+            master_dir = "plots"  # Default directory
+
+        os.makedirs(master_dir, exist_ok=True)
+        filename = f"{master_dir}/{y_var}_vs_{x_var}_jointplot_fit_{fit_type}.png"
+        plt.savefig(filename, bbox_inches='tight')
+
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+
+
+
+
+def plot_combo_hist_scatter_kde(data_df, x_var, y_var, font_size=12, palette='mako', scatter_color=".15", hist_bins=50, kde_levels=5, 
+                                figsize=(6, 6), separate=None, order=None, x_min=None, x_max=None, y_min=None, y_max=None, horizontal=False):
+    """
+    Draw a combination of histogram, scatterplot, and density contours with optional separation into subplots.
+
+    Parameters
+    ----------
+    data_df : DataFrame
+        DataFrame containing the data.
+    x_var : str
+        The feature to plot on the x-axis.
+    y_var : str
+        The feature to plot on the y-axis.
+    font_size : int, optional
+        Font size for the plot text, including axis labels, ticks, and titles. Default is 12.
+    palette : str, optional
+        Color palette for the histogram and KDE plot. Default is 'mako'.
+    scatter_color : str, optional
+        Color for the scatter plot points. Default is ".15".
+    hist_bins : int, optional
+        Number of bins for the histogram. Default is 50.
+    kde_levels : int, optional
+        Number of contour levels for the KDE plot. Default is 5.
+    figsize : tuple, optional
+        Size of the plot (width, height) in inches. Default is (6, 6).
+    separate : str, optional
+        Column name to separate the data by. Creates subplots for each category. Default is None.
+    order : list, optional
+        Specific order for the categories in the subplots. Default is None.
+    x_min : float, optional
+        Minimum value for the x-axis. Default is None.
+    x_max : float, optional
+        Maximum value for the x-axis. Default is None.
+    y_min : float, optional
+        Minimum value for the y-axis. Default is None.
+    y_max : float, optional
+        Maximum value for the y-axis. Default is None.
+    horizontal : bool, optional
+        If True, the subplots will be arranged horizontally. Default is False.
+    """
+
+    if separate is not None:
+        if order:
+            data_df[separate] = pd.Categorical(data_df[separate], categories=order, ordered=True)
+        else:
+            data_df[separate] = pd.Categorical(data_df[separate])
+
+        unique_categories = data_df[separate].cat.categories
+        num_categories = len(unique_categories)
+
+        # Create subplots horizontally or vertically based on the 'horizontal' flag
+        if horizontal:
+            fig, axes = plt.subplots(ncols=num_categories, figsize=(figsize[0] * num_categories, figsize[1]))
+        else:
+            fig, axes = plt.subplots(nrows=num_categories, figsize=(figsize[0], figsize[1] * num_categories))
+
+        if num_categories == 1:
+            axes = [axes]  # Ensure axes is iterable if there's only one subplot
+
+        for i, category in enumerate(unique_categories):
+            subset = data_df[data_df[separate] == category]
+            ax = axes[i]
+
+            # Scatterplot
+            sns.scatterplot(x=x_var, y=y_var, data=subset, s=5, color=scatter_color, ax=ax)
+
+            # 2D Histogram
+            sns.histplot(x=x_var, y=y_var, data=subset, bins=hist_bins, pthresh=.1, cmap=palette, ax=ax)
+
+            # KDE Plot
+            sns.kdeplot(x=x_var, y=y_var, data=subset, levels=kde_levels, color="w", linewidths=1, ax=ax)
+
+            ax.set_xlabel(x_var, fontsize=font_size)
+            ax.set_ylabel(y_var, fontsize=font_size)
+            ax.set_title(f'{category}', fontsize=font_size + 2)
+
+            ax.tick_params(axis='both', labelsize=font_size)
+
+            if x_min is not None and x_max is not None:
+                ax.set_xlim(x_min, x_max)
+            if y_min is not None and y_max is not None:
+                ax.set_ylim(y_min, y_max)
+
+        plt.tight_layout()
+        plt.show()
+
+    else:
+        f, ax = plt.subplots(figsize=figsize)
+
+        # Scatterplot
+        sns.scatterplot(x=x_var, y=y_var, data=data_df, s=5, color=scatter_color, ax=ax)
+
+        # 2D Histogram
+        sns.histplot(x=x_var, y=y_var, data=data_df, bins=hist_bins, pthresh=.1, cmap=palette, ax=ax)
+
+        # KDE Plot
+        sns.kdeplot(x=x_var, y=y_var, data=data_df, levels=kde_levels, color="w", linewidths=1, ax=ax)
+
+        ax.set_xlabel(x_var, fontsize=font_size)
+        ax.set_ylabel(y_var, fontsize=font_size)
+        ax.set_title(f'{y_var} vs {x_var} with Hist and KDE', fontsize=font_size + 2)
+
+        ax.tick_params(axis='both', labelsize=font_size)
+
+        if x_min is not None and x_max is not None:
+            ax.set_xlim(x_min, x_max)
+        if y_min is not None and y_max is not None:
+            ax.set_ylim(y_min, y_max)
+    
+        plt.tight_layout()
+        plt.show()
+
