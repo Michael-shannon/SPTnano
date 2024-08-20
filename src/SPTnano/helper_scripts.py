@@ -3,6 +3,7 @@ import scipy.io
 import pandas as pd
 import numpy as np
 from IPython.display import Markdown, display
+from tqdm.notebook import tqdm
 
 def generate_file_tree(startpath):
     tree = []
@@ -258,3 +259,54 @@ def generalized_filter(df_in, filter_col, low=None, high=None, condition=None, l
     unique_ids = df_filtered['unique_id'].unique()
     
     return df_filtered, unique_ids
+
+
+def optimized_assign_motion_class_by_unique_id(metrics_df, time_windowed_df, window_size=24, overlap=12):
+    
+    timewindowedids = time_windowed_df.unique_id.unique()
+    metricsdfids = metrics_df.unique_id.unique()
+    #filter the metrics_df to only include the unique_ids that are in the time_windowed_df
+    metrics_df = metrics_df[metrics_df.unique_id.isin(timewindowedids)]
+    # get the number of metrics_df unique_ids
+    metricsdfidsafter = metrics_df.unique_id.unique()
+    percentids = len(metricsdfidsafter)/len(metricsdfids) *100
+
+    # print the percentage of unique_ids that remain
+    print(f'Percentage of unique_ids that remain after removing intersection: {percentids}%')
+    
+    # Calculate the start and end frames for each time window in the time_windowed_df
+    time_windowed_df['start_frame'] = time_windowed_df['time_window'] * (window_size - overlap)
+    time_windowed_df['end_frame'] = time_windowed_df['start_frame'] + window_size
+    
+    # Initialize a column for the motion class
+    metrics_df['motion_class'] = None
+    
+    # Process each unique_id separately
+    for unique_id in tqdm(metrics_df['particle'].unique()):
+        # Extract the subset of the data for this unique_id
+        metrics_subset = metrics_df[metrics_df['particle'] == unique_id].copy()
+        time_window_subset = time_windowed_df[time_windowed_df['unique_id'].str.endswith(f"_{unique_id}")].copy()
+        
+        if time_window_subset.empty:
+            continue
+        
+        # Find the relevant time windows for the frames in this unique_id
+        for _, window_row in time_window_subset.iterrows():
+            start_frame = window_row['start_frame']
+            end_frame = window_row['end_frame']
+            motion_class = window_row['motion_class']
+            
+            # Assign the motion class to all frames within the window
+            condition = (metrics_subset['frame'] >= start_frame) & (metrics_subset['frame'] < end_frame)
+            metrics_df.loc[metrics_subset[condition].index, 'motion_class'] = motion_class
+    
+    # If any frames are still not assigned, assign the closest motion class
+    undefined_rows = metrics_df['motion_class'].isnull()
+    if undefined_rows.any():
+        metrics_df.loc[undefined_rows, 'motion_class'] = metrics_df.loc[undefined_rows].apply(
+            lambda row: time_window_subset.iloc[
+                (time_window_subset['start_frame'] - row['frame']).abs().argmin()
+            ]['motion_class'], axis=1
+        )
+    
+    return metrics_df
