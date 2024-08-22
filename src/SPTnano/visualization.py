@@ -1617,6 +1617,112 @@ def napari_visualize_image_with_tracksdev(tracks_df, master_dir=config.MASTER, c
 
 
 
+def napari_visualize_image_with_tracksdev2(tracks_df, master_dir=config.MASTER, condition=None, cell=None, location=None, save_movie_flag=False, feature='particle'):
+    
+    master_dir = config.MASTER + 'data'
+    movie_dir = config.MASTER + 'movies'
+
+    print('The master directory is:', master_dir)
+    if save_movie_flag:
+        print('The movie directory is:', movie_dir)
+    
+    # Handle location input
+    locationlist = tracks_df['Location'].unique()
+    if isinstance(location, int):
+        location = locationlist[location]
+    elif isinstance(location, str):
+        if location not in locationlist:
+            raise ValueError(f"Location '{location}' not found in available locations: {locationlist}")
+    elif location is None:
+        np.random.shuffle(locationlist)  # Shuffle the list to make random selection
+        for loc in locationlist:
+            if loc in locationlist:
+                location = loc
+                break
+        if location is None:
+            raise ValueError(f"No valid location found in available locations: {locationlist}")
+    else:
+        raise ValueError("Location must be a string, integer, or None.")
+    
+    # Filter the dataframe by the selected location
+    filtered_tracks_df = tracks_df[tracks_df['Location'] == location]
+    
+    # Handle condition input
+    conditionlist = filtered_tracks_df['condition'].unique()
+    if isinstance(condition, int):
+        condition = conditionlist[condition]
+    elif isinstance(condition, str):
+        if condition not in conditionlist:
+            raise ValueError(f"Condition '{condition}' not found in available conditions for location '{location}': {conditionlist}")
+    elif condition is None:
+        np.random.shuffle(conditionlist)  # Shuffle the list to make random selection
+        for cond in conditionlist:
+            if cond in conditionlist:
+                condition = cond
+                break
+        if condition is None:
+            raise ValueError(f"No valid condition found for location '{location}': {conditionlist}")
+    else:
+        raise ValueError("Condition must be a string, integer, or None.")
+    
+    # Handle cell input
+    celllist = filtered_tracks_df[filtered_tracks_df['condition'] == condition]['filename'].unique()
+    if isinstance(cell, int):
+        cell = celllist[cell]
+    elif isinstance(cell, str):
+        if cell not in celllist:
+            raise ValueError(f"Cell '{cell}' not found in available cells for condition '{condition}' and location '{location}': {celllist}")
+    elif cell is None:
+        np.random.shuffle(celllist)  # Shuffle the list to make random selection
+        for c in celllist:
+            if c in celllist:
+                cell = c
+                break
+        if cell is None:
+            raise ValueError(f"No valid cell found for condition '{condition}' and location '{location}': {celllist}")
+    else:
+        raise ValueError("Cell must be a string, integer, or None.")
+
+    # Construct the full file path by removing '_tracked' and adding '.tif'
+    image_filename = cell.replace('_tracked', '') + '.tif'
+    image_path = os.path.join(master_dir, condition, image_filename)
+    
+    # Load the image
+    image = load_image(image_path)
+
+    # Load the tracks
+    tracks = load_tracks(filtered_tracks_df, cell)
+
+    print(tracks.columns)
+
+    # Prepare the tracks DataFrame for Napari
+    tracks_new_df = tracks[["particle", "frame", "y", "x"]]
+
+    # Include 'particle' and all features from config.FEATURES
+    features_dict = {'particle': tracks['particle'].values}
+    features_dict.update({feature: tracks[feature].values for feature in config.FEATURES if feature in tracks.columns})
+
+    # Start Napari viewer
+    viewer = napari.Viewer()
+
+    # Add image layer
+    viewer.add_image(image, name=f'Raw {cell}')
+
+    # Add tracks layer, using 'particle' for coloring, with additional features
+    viewer.add_tracks(tracks_new_df.to_numpy(), features=features_dict, name=f'Tracks {cell}', color_by=feature)
+
+    # Save the movie if specified
+    if save_movie_flag:
+        movies_dir = os.path.join(movie_dir, 'movies')
+        os.makedirs(movies_dir, exist_ok=True)
+        movie_path = os.path.join(movies_dir, f'{condition}_{cell}.mov')
+        save_movie(viewer, tracks_new_df, feature=feature, save_path=movie_path)
+    
+    napari.run
+
+
+
+
 
 def bootstrap_ci_mean(data, num_samples=1000, alpha=0.05):
     n = len(data)
