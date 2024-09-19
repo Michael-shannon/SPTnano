@@ -11,9 +11,10 @@ import pandas as pd
 from tqdm.notebook import tqdm
 from concurrent.futures import ThreadPoolExecutor
 import tifffile as tiff
+from tifffile import TiffWriter
 
 class ROISelector:
-    def __init__(self, input_directory, output_directory, roi_width, roi_height):
+    def __init__(self, input_directory, output_directory, roi_width, roi_height, split_tiff=False): #added split_tiff=False
         self.input_directory = input_directory
         self.output_directory = output_directory
         self.roi_width = roi_width
@@ -25,6 +26,8 @@ class ROISelector:
         self.conditions = []
         self.file_index = 0
         self.condition_index = 0
+        self.split_tiff = split_tiff  # Control splitting of the TIFF
+
 
     def prepare_output_folders(self):
         self.conditions = [d for d in os.listdir(self.input_directory) if os.path.isdir(os.path.join(self.input_directory, d))]
@@ -142,13 +145,33 @@ class ROISelector:
             box = (center_x - self.roi_width // 2, center_y - self.roi_height // 2, center_x + self.roi_width // 2, center_y + self.roi_height // 2)
 
             # Process and save frames individually
-            if file.lower().endswith(('tif', 'tiff')):
-                cropped_ims = []
-                for im_frame in tqdm(frames, desc="Processing TIFF frames"):
-                    im_frame = im_frame.crop(box)
-                    cropped_ims.append(im_frame)
-                tiff.imwrite(output_filepath, [np.array(im_frame) for im_frame in cropped_ims], photometric='minisblack')
+            if file.lower().endswith(('tif', 'tiff')): # original line
+                cropped_ims = [] # original line
+                for im_frame in tqdm(frames, desc="Processing TIFF frames"): # original line
+                    im_frame = im_frame.crop(box) # original line
+                    cropped_ims.append(im_frame) # original line
+
+                if self.split_tiff and len(cropped_ims) > 1:
+                    # Split the stack into two parts
+                    mid_point = len(cropped_ims) // 2
+
+                    # Create arrays for p1 and p2
+                    p1_frames = [np.array(im_frame) for im_frame in cropped_ims[:mid_point]]
+                    p2_frames = [np.array(im_frame) for im_frame in cropped_ims[mid_point:]]
+
+                    # Define the output file paths
+                    output_filepath_p1 = os.path.splitext(output_filepath)[0] + '_p1.tif'
+                    output_filepath_p2 = os.path.splitext(output_filepath)[0] + '_p2.tif'
+
+                    # Save each part separately with the option for OME-TIFF
+                    self._save_large_tiff(output_filepath_p1, p1_frames)
+                    self._save_large_tiff(output_filepath_p2, p2_frames)
+                else:
+                    # Save as a single TIFF if no splitting is required
+                    tiff.imwrite(output_filepath, [np.array(im_frame) for im_frame in cropped_ims], photometric='minisblack')
+                
                 cropped_ims.clear()  # Clear the list to free memory
+
             elif file.lower().endswith('nd2'):
                 cropped_frames = []
                 with ThreadPoolExecutor() as executor:
@@ -156,6 +179,100 @@ class ROISelector:
                 tiff.imwrite(output_filepath, [np.array(frame) for frame in cropped_frames], photometric='minisblack')
                 cropped_frames.clear()  # Clear the list to free memory
                 print(f"Finished saving {output_filepath}.")
+
+
+
+
+
+            # if file.lower().endswith(('tif', 'tiff')): # original line
+            #     total_frames = len(frames)
+            #     frames_per_part = total_frames // self.split_factor
+            #     remaining_frames = total_frames % self.split_factor
+
+            #     for i in range(self.split_factor):
+            #         start_index = i * frames_per_part
+            #         end_index = start_index + frames_per_part
+            #         if i == self.split_factor - 1:  # Add remaining frames to the last part
+            #             end_index += remaining_frames
+
+            #         output_filepath_part = os.path.splitext(output_filepath)[0] + f'_p{i + 1}.tif'
+                    
+            #         with tiff.TiffWriter(output_filepath_part) as tif_writer:
+            #             for j in range(start_index, end_index):
+            #                 im_frame = frames[j].crop(box)
+            #                 tif_writer.save(np.array(im_frame), photometric='minisblack')
+
+            #     cropped_ims.clear()  # Clear the list to free memory
+
+
+
+
+
+
+
+                ############# below is a new bit again #########
+                # if self.split_factor > 1 and len(cropped_ims) > 1:
+                #     # Split the stack into specified number of parts
+                #     num_frames_per_part = len(cropped_ims) // self.split_factor
+
+                #     for i in range(self.split_factor):
+                #         start_frame = i * num_frames_per_part
+                #         end_frame = (i + 1) * num_frames_per_part if i < self.split_factor - 1 else len(cropped_ims)
+                #         part_frames = [np.array(im_frame) for im_frame in cropped_ims[start_frame:end_frame]]
+                        
+                #         # Define the output file path with part suffix
+                #         output_filepath_part = os.path.splitext(output_filepath)[0] + f'_p{i + 1}.tif'
+                        
+                #         # Save the part
+                #         tiff.imwrite(output_filepath_part, part_frames, photometric='minisblack')
+                # else:
+                #     # Save as a single TIFF if no splitting is required
+                #     tiff.imwrite(output_filepath, [np.array(im_frame) for im_frame in cropped_ims], photometric='minisblack')
+                
+                # cropped_ims.clear()  # Clear the list to free memory           
+
+
+                ###### above is a new bit again #########    
+
+                #################### new part below ################################
+                # if self.split_tiff and len(cropped_ims) > 1:
+                #     # Split the stack into two parts
+                #     mid_point = len(cropped_ims) // 2
+
+                #     # Create arrays for p1 and p2
+                #     p1_frames = [np.array(im_frame) for im_frame in cropped_ims[:mid_point]]
+                #     p2_frames = [np.array(im_frame) for im_frame in cropped_ims[mid_point:]]
+
+                #     # Define the output file paths
+                #     output_filepath_p1 = os.path.splitext(output_filepath)[0] + '_p1.tif'
+                #     output_filepath_p2 = os.path.splitext(output_filepath)[0] + '_p2.tif'
+
+                #     # Save each part separately
+                #     tiff.imwrite(output_filepath_p1, p1_frames, photometric='minisblack')
+                #     tiff.imwrite(output_filepath_p2, p2_frames, photometric='minisblack')
+                # else:
+                #     # Save as a single TIFF if no splitting is required
+                #     tiff.imwrite(output_filepath, [np.array(im_frame) for im_frame in cropped_ims], photometric='minisblack')
+                
+                # cropped_ims.clear()  # Clear the list to free memory
+
+
+
+
+                # if self.split_tiff and len(cropped_ims) > 1:
+                #     # Split the stack into two parts
+                #     mid_point = len(cropped_ims) // 2
+                #     output_filepath_p1 = os.path.splitext(output_filepath)[0] + '_p1.tif'
+                #     output_filepath_p2 = os.path.splitext(output_filepath)[0] + '_p2.tif'
+                #     tiff.imwrite(output_filepath_p1, [np.array(im_frame) for im_frame in cropped_ims[:mid_point]], photometric='minisblack')
+                #     tiff.imwrite(output_filepath_p2, [np.array(im_frame) for im_frame in cropped_ims[mid_point:]], photometric='minisblack')
+                # else:
+                #     tiff.imwrite(output_filepath, [np.array(im_frame) for im_frame in cropped_ims], photometric='minisblack')
+
+            #################### new part above ################################
+
+                # tiff.imwrite(output_filepath, [np.array(im_frame) for im_frame in cropped_ims], photometric='minisblack') #this removed
+                # cropped_ims.clear()  # Clear the list to free memory
 
             # Append metadata
             self.metadata.append({
@@ -182,6 +299,16 @@ class ROISelector:
 
         # Display the button
         display(button)
+
+    # def _save_tiff(self, filepath, frames):
+    #     if self.save_as_ome_tiff:
+    #         imwrite(filepath, frames, photometric='minisblack', metadata={'axes': 'TYX'}, ome=True)
+    #     else:
+    #         imwrite(filepath, frames, photometric='minisblack')
+    def _save_large_tiff(self, filepath, frames):
+        with TiffWriter(filepath, bigtiff=True) as tif_writer:
+            for frame in frames:
+                tif_writer.write(frame, photometric='minisblack')
 
     def save_metadata(self):
         saved_data_dir = os.path.join(self.output_directory, 'saved_data')
