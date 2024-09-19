@@ -74,6 +74,27 @@ def read_mat_file(file_path):
     
     return df
 
+# def read_mat_BNP_file(file_path):
+#     mat = scipy.io.loadmat(file_path)
+#     tr_data = mat['data']['tr'][0, 0]
+    
+#     # Initialize an empty list to store the combined data
+#     combined_data = []
+
+#     # Iterate over the cells in tr_data and concatenate them
+#     for cell in tr_data[0]:
+#         if cell.size > 0:
+#             combined_data.append(cell)
+
+#     # Convert the combined data into a numpy array
+#     combined_data = np.vstack(combined_data)
+
+#     # Create a DataFrame with the appropriate columns
+#     # Adjust column names based on inspection
+#     df = pd.DataFrame(combined_data, columns=['x', 'y', 'frame', 'particle', 'column5', 'column6', 'column7', 'column8'])
+    
+#     return df
+
 # Filter stubs
 def filter_stubs(df, min_time):
 
