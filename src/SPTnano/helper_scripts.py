@@ -5,6 +5,11 @@ import numpy as np
 from IPython.display import Markdown, display
 from tqdm.notebook import tqdm
 
+# import os
+# import numpy as np
+import tifffile as tiff
+from nd2reader import ND2Reader
+
 def generate_file_tree(startpath):
     tree = []
     for root, dirs, files in os.walk(startpath):
@@ -331,3 +336,68 @@ def optimized_assign_motion_class_by_unique_id(metrics_df, time_windowed_df, win
         )
     
     return metrics_df
+
+
+
+
+def extract_median_dark_frame(dark_frame_directory):
+    """
+    Extract the median dark frame from a directory containing either ND2 or TIFF files.
+    """
+    # Find ND2 or TIFF files in the dark frame directory
+    dark_frame_files = [f for f in os.listdir(dark_frame_directory) if f.lower().endswith(('nd2', 'tif', 'tiff'))]
+    if not dark_frame_files:
+        raise FileNotFoundError("No ND2 or TIFF files found in the dark frame directory.")
+    
+    dark_frame_path = os.path.join(dark_frame_directory, dark_frame_files[0])
+
+    # Read the dark frame stack
+    if dark_frame_path.lower().endswith('nd2'):
+        with ND2Reader(dark_frame_path) as nd2_dark:
+            dark_frames = [np.array(frame) for frame in nd2_dark]
+    elif dark_frame_path.lower().endswith(('tif', 'tiff')):
+        with tiff.TiffFile(dark_frame_path) as tif:
+            dark_frames = [page.asarray() for page in tif.pages]
+
+    # Calculate the median dark frame
+    median_dark_frame = np.median(np.array(dark_frames), axis=0)
+
+    return median_dark_frame
+
+def apply_dark_frame_correction(input_directory, dark_frame_directory, output_directory):
+    """
+    Apply dark frame correction to all ND2 or TIFF files in the input directory
+    using a median dark frame extracted from the dark_frame_directory.
+    Saves the dark-corrected images to the output directory.
+    """
+    # Extract the median dark frame
+    median_dark_frame = extract_median_dark_frame(dark_frame_directory)
+
+    # Ensure output directory exists
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
+
+    # Process each ND2 or TIFF file in the input directory
+    for file in os.listdir(input_directory):
+        if file.lower().endswith(('nd2', 'tif', 'tiff')):
+            input_filepath = os.path.join(input_directory, file)
+            print(f"Processing: {input_filepath}")
+
+            # Read the image stack
+            if file.lower().endswith('nd2'):
+                with ND2Reader(input_filepath) as nd2_file:
+                    frames = [np.array(frame) for frame in nd2_file]
+            elif file.lower().endswith(('tif', 'tiff')):
+                with tiff.TiffFile(input_filepath) as tif:
+                    frames = [page.asarray() for page in tif.pages]
+
+            # Subtract the median dark frame
+            corrected_stack = np.array(frames) - median_dark_frame
+            corrected_stack[corrected_stack < 0] = 0  # Ensure no negative values
+
+            # Save the dark-corrected stack
+            output_filepath = os.path.join(output_directory, os.path.splitext(file)[0] + '_dark_corrected.tif')
+            tiff.imwrite(output_filepath, corrected_stack, photometric='minisblack')
+            print(f"Saved dark-corrected file to: {output_filepath}")
+
+
