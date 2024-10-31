@@ -2772,7 +2772,7 @@ def plot_classification_pie_charts(df, group_by='Location', colormap_name='Dark2
 # import seaborn as sns
 # import os
 
-def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palette='colorblind', show_plot=True, master_dir=None, grid=True, bw=False, strip=False, y_max=None, figsize=(10, 8)):
+def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palette='colorblind', show_plot=True, master_dir=None, grid=True, bw=False, strip=False, y_max=None, figsize=(10, 8), annotate_median=False):
     """
     Plot boxplots for the specified feature against a categorical x_category with custom order and styling options.
 
@@ -2828,7 +2828,7 @@ def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palett
     plt.xlabel('', fontsize=font_size)
     plt.ylabel(feature, fontsize=font_size)
     plt.title(f'{feature} by {x_category}', fontsize=font_size)
-    plt.xticks(rotation=45)
+    # plt.xticks(rotation=45)
 
     if grid:
         plt.grid(True, linestyle='--', linewidth=0.5, color='gray', alpha=0.7, axis='y')  # Grid on y-axis
@@ -2844,6 +2844,25 @@ def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palett
     ax.spines['right'].set_color('lightgray')
     ax.spines['left'].set_color('black')
     ax.spines['bottom'].set_color('black')
+
+        # Annotate median values if requested
+    # Annotate median values if requested
+    # Annotate median values if requested
+    if annotate_median:
+        medians = data_df.groupby(x_category)[feature].median()
+        y_max = plt.ylim()[1]  # Get the top y-limit of the plot
+
+        if order is not None:
+            sorted_medians = medians.reindex(order)  # Reorder the medians based on the 'order' parameter
+        else:
+            sorted_medians = medians
+
+        for i, median in enumerate(sorted_medians):
+            plt.text(i, y_max * 0.95, f'{median:.2f}', 
+                     horizontalalignment='center', size=font_size, color='black', weight='bold')
+
+
+
 
     plt.tight_layout()
 
@@ -2891,6 +2910,91 @@ def plot_stacked_bar(df, x_category, order=None, font_size=16, colormap='Dark2',
 
     # Determine the unique motion classes
     motion_classes = df['motion_class'].unique()
+
+    # Use a consistent colormap for the motion classes
+    if colormap == 'colorblind':
+        colors = sns.color_palette("colorblind", len(motion_classes))
+    elif colormap == 'Dark2':
+        cmap = cm.get_cmap("Dark2", len(motion_classes))
+        colors = cmap(np.linspace(0, 1, len(motion_classes)))
+    else:
+        colors = plt.get_cmap(colormap, len(motion_classes)).colors
+
+    # Plotting
+    ax = percentage_data.plot(kind='bar', stacked=True, figsize=figsize, color=colors)
+
+    # Add black outlines to the bars
+    for patch in ax.patches:
+        patch.set_edgecolor('black')
+
+    # Rotate x-tick labels for readability if necessary
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+
+    # Annotate percentages on the bars
+    for patch in ax.patches:
+        width, height = patch.get_width(), patch.get_height()
+        x, y = patch.get_xy()
+        if height > 0:  # Only annotate if there's a height to show
+            ax.annotate(f'{height:.1f}%', (x + width / 2, y + height / 2),
+                        ha='center', va='center', fontsize=font_size, color='k')
+
+    # Move the legend outside the plot
+    plt.legend(title='Motion Type', bbox_to_anchor=(1.05, 1), loc='upper left',
+               title_fontsize=font_size, prop={'size': font_size})
+
+    plt.title('Distribution of Motion Classes', fontsize=font_size)
+    plt.xlabel('', fontsize=font_size)
+    plt.ylabel('Percentage (%)', fontsize=font_size)
+    plt.xticks(fontsize=font_size, rotation=45)
+    plt.yticks(fontsize=font_size)
+
+    # Add grid
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+
+    # Ensure bars are above the grid
+    for patch in ax.patches:
+        patch.set_zorder(2)
+
+    # Make top and right spines visible and set their color to light gray
+    ax.spines['top'].set_visible(True)
+    ax.spines['top'].set_color('gray')
+    ax.spines['right'].set_visible(True)
+    ax.spines['right'].set_color('gray')
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_stacked_bar2(df, x_category, order=None, font_size=16, colormap='Dark2', figsize=(10, 5), motionclasses='motion_class'):
+    """
+    Plot a stacked bar chart showing the percentage of motion classes for each category on the x-axis.
+    
+    Parameters
+    ----------
+    df : DataFrame
+        DataFrame containing the data with a 'motion_class' column and specified category.
+    x_category : str
+        The column name of the category to plot on the x-axis.
+    order : list, optional
+        Custom order for the categories on the x-axis. Default is None.
+    font_size : int, optional
+        Font size for the plot. Default is 16.
+    colormap : str, optional
+        Colormap for the plot. Default is 'Dark2'.
+    figsize : tuple, optional
+        Size of the plot (width, height) in inches. Default is (10, 5).
+    """
+    # Apply custom order if provided
+    if order is not None:
+        df[x_category] = pd.Categorical(df[x_category], categories=order, ordered=True)
+
+    
+    # Calculate the percentage of each motion class within each category
+    percentage_data = (df.groupby([x_category, motionclasses]).size()
+                       .unstack(fill_value=0)
+                       .apply(lambda x: x / x.sum() * 100, axis=1))
+
+    # Determine the unique motion classes
+    motion_classes = df[motionclasses].unique()
 
     # Use a consistent colormap for the motion classes
     if colormap == 'colorblind':
