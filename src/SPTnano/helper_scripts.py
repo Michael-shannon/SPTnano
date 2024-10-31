@@ -8,6 +8,8 @@ from tqdm.notebook import tqdm
 # import os
 # import numpy as np
 import tifffile as tiff
+# import tifffile as tiff
+from tifffile import TiffWriter
 from nd2reader import ND2Reader
 
 def generate_file_tree(startpath):
@@ -399,5 +401,49 @@ def apply_dark_frame_correction(input_directory, dark_frame_directory, output_di
             output_filepath = os.path.join(output_directory, os.path.splitext(file)[0] + '_dark_corrected.tif')
             tiff.imwrite(output_filepath, corrected_stack, photometric='minisblack')
             print(f"Saved dark-corrected file to: {output_filepath}")
+
+
+def create_cut_directory(master_folder_path):
+    # Define the new master directory with '_cut' suffix
+    new_master_folder_path = master_folder_path + '_cut'
+    if not os.path.exists(new_master_folder_path):
+        os.makedirs(new_master_folder_path)
+
+    # Define paths for 'data' folder in both master and new master directory
+    data_folder_path = os.path.join(master_folder_path, 'data')
+    new_data_folder_path = os.path.join(new_master_folder_path, 'data')
+
+    # Ensure the new 'data' folder exists
+    os.makedirs(new_data_folder_path, exist_ok=True)
+
+    # Loop through all condition folders
+    condition_folders = [f for f in os.listdir(data_folder_path) if f.startswith('Condition_')]
+    for condition in condition_folders:
+        condition_folder_path = os.path.join(data_folder_path, condition)
+        new_condition_folder_path = os.path.join(new_data_folder_path, condition)
+
+        # Ensure the new condition folder exists
+        os.makedirs(new_condition_folder_path, exist_ok=True)
+
+        # Loop through all TIFF stacks in this condition folder
+        tiff_files = [f for f in os.listdir(condition_folder_path) if f.lower().endswith(('.tif', '.tiff'))]
+        for tiff_file in tqdm(tiff_files, desc=f"Processing {condition}"):
+            tiff_path = os.path.join(condition_folder_path, tiff_file)
+            new_tiff_path = os.path.join(new_condition_folder_path, tiff_file)
+
+            # Open the TIFF stack and remove every second frame
+            with tiff.TiffFile(tiff_path) as stack:
+                frames = stack.asarray()
+                # Select every other frame
+                cut_frames = frames[::2]
+
+            # Save the reduced stack to the new directory
+            with TiffWriter(new_tiff_path, bigtiff=True) as tif_writer:
+                for frame in cut_frames:
+                    tif_writer.write(frame, photometric='minisblack')
+
+            print(f"Finished processing {tiff_file} in {condition}")
+
+
 
 
