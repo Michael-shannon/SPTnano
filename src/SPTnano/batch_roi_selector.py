@@ -12,6 +12,7 @@ from tqdm.notebook import tqdm
 from concurrent.futures import ThreadPoolExecutor
 import tifffile as tiff
 from tifffile import TiffWriter
+import gc
 
 class ROISelector:
     # Bit of a rearrange, 9-23-24#
@@ -37,7 +38,7 @@ class ROISelector:
 
     def __init__(self, input_directory, output_directory, roi_width, roi_height, split_tiff=False,
                  dark_frame_subtraction=False, dark_frame_directory=None, save_dark_corrected=False,
-                 ROI_from_metadata=False, metadata_path=None):  # New parameters added
+                 ROI_from_metadata=False, metadata_path=None, percentile_correction=False, pmin=1, pmax=99.9):# PERSIMMON 
         self.input_directory = input_directory
         self.output_directory = output_directory
         self.roi_width = roi_width
@@ -49,6 +50,9 @@ class ROISelector:
         self.ROI_from_metadata = ROI_from_metadata  # Boolean to enable ROI selection from metadata
         self.metadata_path = metadata_path  # Path to metadata CSV
         self.metadata_df = None  # DataFrame to hold metadata for ROI selection
+        self.percentile_correction = percentile_correction
+        self.pmin = pmin
+        self.pmax = pmax
         
         # Load metadata if ROI_from_metadata is enabled
         if self.ROI_from_metadata and self.metadata_path:
@@ -426,7 +430,8 @@ class ROISelector:
                     'pixel_microns': nd2_metadata.get('pixel_microns', 'No pixel size available'),
                     'num_frames': num_frames
                 }
-
+        original_min = np.min(frames) #persimmon
+        original_max = np.max(frames) #persimmon
         # Apply dark frame subtraction if enabled
         if self.dark_frame_subtraction:
             frames = self.subtract_dark_frame(np.array(frames))
@@ -436,6 +441,10 @@ class ROISelector:
                 dark_corrected_output = os.path.splitext(input_filepath)[0] + '_dark_corrected.tif'
                 tiff.imwrite(dark_corrected_output, frames, photometric='minisblack')
                 print(f"Dark-corrected file saved to: {dark_corrected_output}")
+            # if self.percentile_correction: #persimmon
+            #     frames = np.array([self.apply_percentile_correction(frame) for frame in frames]) #persimmon
+            #     print("Percentile correction applied after dark correction.") #persimmon
+        gc.collect() #persimmon
 
         # If ROI selection from metadata is enabled
         if self.ROI_from_metadata and self.metadata_df is not None:
@@ -462,8 +471,21 @@ class ROISelector:
                     cropped_frames = []
                     with ThreadPoolExecutor() as executor:
                         cropped_frames = list(tqdm(executor.map(lambda frame: Image.fromarray(frame).crop(box), frames), desc="Processing ND2 frames", total=num_frames))
+                        if self.percentile_correction: #persimmon
+                            cropped_frames = [self.apply_percentile_correction(np.array(frame)) for frame in cropped_frames]
+                            print("Percentile correction applied to cropped frames.")
+
+                            # cropped_frames = [self.apply_percentile_correction(np.array(frame)) for frame in cropped_frames]
+                            # print("Percentile correction applied to cropped frames.")
+
+                            cropped_frames = [(frame * (original_max - original_min) + original_min).astype(frames[0].dtype)
+                                                for frame in cropped_frames] #persimmon
+
+
                     tiff.imwrite(output_filepath, [np.array(frame) for frame in cropped_frames], photometric='minisblack')
                     cropped_frames.clear()
+                    del cropped_frames #persimmon   
+                    gc.collect() #persimmon
                 
                 # Append to metadata list
                 self.metadata.append({
@@ -548,6 +570,13 @@ class ROISelector:
                 cropped_frames = []
                 with ThreadPoolExecutor() as executor:
                     cropped_frames = list(tqdm(executor.map(lambda frame: Image.fromarray(frame).crop(box), frames), desc="Processing ND2 frames", total=num_frames))
+                    if self.percentile_correction:
+                        cropped_frames = [self.apply_percentile_correction(np.array(frame)) for frame in cropped_frames] #persimmon
+                        print("Percentile correction applied to cropped frames.") #persimmon
+                        # Rescale back to the original intensity range
+                        cropped_frames = [(frame * (original_max - original_min) + original_min).astype(frames[0].dtype)
+                                        for frame in cropped_frames] #persimmon
+
                 tiff.imwrite(output_filepath, [np.array(frame) for frame in cropped_frames], photometric='minisblack')
                 cropped_frames.clear()  # Clear the list to free memory
                 print(f"Finished saving {output_filepath}.")
@@ -591,12 +620,34 @@ class ROISelector:
             for frame in frames:
                 tif_writer.write(frame, photometric='minisblack')
 
+    def normalize_mi_ma(self, x, mi, ma, clip=False, eps=1e-20, dtype=np.float32):
+        """Normalize an array to the range [0, 1] using specified minimum and maximum values."""
+        if dtype is not None:
+            x = x.astype(dtype, copy=False)
+            mi = dtype(mi) if np.isscalar(mi) else mi.astype(dtype, copy=False)
+            ma = dtype(ma) if np.isscalar(ma) else ma.astype(dtype, copy=False)
+            eps = dtype(eps)
+        try:
+            import numexpr
+            x = numexpr.evaluate("(x - mi) / (ma - mi + eps)")
+        except ImportError:
+            x = (x - mi) / (ma - mi + eps)
+        if clip:
+            x = np.clip(x, 0, 1)
+        return x
+
+
     def save_metadata(self):
         saved_data_dir = os.path.join(self.output_directory, 'saved_data')
         os.makedirs(saved_data_dir, exist_ok=True)
         metadata_df = pd.DataFrame(self.metadata)
         metadata_df.to_csv(os.path.join(saved_data_dir, 'metadata_summary.csv'), index=False)
         print("Metadata saved to CSV.")
+
+    def apply_percentile_correction(self, image_data): #persimmon
+        global_min = np.percentile(image_data, self.pmin) #persimmon
+        global_max = np.percentile(image_data, self.pmax) #persimmon
+        return self.normalize_mi_ma(x=image_data, mi=global_min, ma=global_max, clip=True, eps=1e-20, dtype=np.float32) #persimmon
 
 def process_directory(input_directory, output_directory, roi_width, roi_height):
     if not os.path.exists(output_directory):
