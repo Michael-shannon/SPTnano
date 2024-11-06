@@ -126,13 +126,15 @@ class ROISelector:
 
         # Determine file type and read the image
         if file.lower().endswith(('tif', 'tiff')):
-            im = Image.open(input_filepath)
-            frames = [frame.copy() for frame in ImageSequence.Iterator(im)]
+            with Image.open(input_filepath) as im: #calamansi
+            # im = Image.open(input_filepath)
+                frames = [frame.copy() for frame in ImageSequence.Iterator(im)] #calamansi
             first_frame = frames[0]
             num_frames = len(frames)
             metadata_info['num_frames'] = num_frames
         elif file.lower().endswith('nd2'):
             with ND2Reader(input_filepath) as nd2_file:
+            
                 first_frame = np.array(nd2_file[0])
                 first_frame = Image.fromarray(first_frame)
                 frames = [np.array(frame) for frame in nd2_file]
@@ -207,6 +209,7 @@ class ROISelector:
 
 
                     tiff.imwrite(output_filepath, [np.array(frame) for frame in cropped_frames], photometric='minisblack')
+
                     cropped_frames.clear()
                     del cropped_frames #persimmon   
                     gc.collect() #persimmon
