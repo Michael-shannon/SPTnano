@@ -20,7 +20,7 @@ from matplotlib.collections import LineCollection
 
 
 from scipy.stats import sem
-
+from matplotlib.colors import is_color_like
 
 import config
 from napari_animation import Animation
@@ -153,412 +153,10 @@ def plot_histograms_seconds(traj_df, bins=100, coltoseparate='tracker', xlimit=N
     
 
 
-# def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind', use_kde=False, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None):
-#     """
-#     Plot histograms or KDEs of a specified feature for each category in `separate`, with consistent binning.
-
-#     Parameters
-#     ----------
-#     data_df : DataFrame
-#         DataFrame containing track data with the specified feature and optionally a separating column.
-#     feature : str
-#         The feature to plot histograms for.
-#     bins : int, optional
-#         Number of bins for the histogram. Default is 100.
-#     separate : str, optional
-#         Column to separate the data by. If None, all data will be plotted together. Default is None.
-#     xlimit : float, optional
-#         Upper limit for the x-axis. Default is None.
-#     small_multiples : bool, optional
-#         Whether to plot each category separately as small multiples. Default is False.
-#     palette : str, optional
-#         Color palette for the plot. Default is 'colorblind'.
-#     use_kde : bool, optional
-#         Whether to use KDE plot instead of histogram. Default is False.
-#     show_plot : bool, optional
-#         Whether to display the plot in the notebook. Default is True.
-#     master_dir : str, optional
-#         The directory where the plots folder will be created and the plot will be saved. Default is None.
-#     tick_interval : int, optional
-#         Interval for x-axis ticks. Default is 5.
-#     average : str, optional
-#         Whether to draw 'mean' or 'median' line on the plot. Default is 'mean'.
-#     order : list, optional
-#         Specific order for the conditions. Default is None.
-#     """
-
-#     data_df = data_df.replace(0, np.nan)
-
-#     if master_dir is None:
-#         master_dir = config.master  # Use the master directory from config if not provided
-
-#     if separate is not None and order is not None:
-#         # Ensure the data is ordered according to the specified order
-#         data_df[separate] = pd.Categorical(data_df[separate], categories=order, ordered=True)
-
-#     # Use the categories attribute to maintain the specified order
-#     if separate is not None:
-#         unique_categories = data_df[separate].cat.categories
-#     else:
-#         unique_categories = [None]
-
-#     color_palette = sns.color_palette(palette, len(unique_categories))
-
-#     if small_multiples and separate is not None:
-#         num_categories = len(unique_categories)
-#         fig, axes = plt.subplots(num_categories, 1, figsize=(20, 6 * num_categories), sharex=True)
-#         # multiplier = 
-#         if num_categories == 1:
-#             axes = [axes]  # To handle the case with only one subplot
-        
-#         for i, category in enumerate(unique_categories):
-#             if pd.isna(category):
-#                 continue
-#             subset = data_df[data_df[separate] == category]
-#             subsetvalues = subset[feature]
-            
-#             max_value = subsetvalues.max()
-#             bin_edges = np.linspace(0, max_value, bins + 1)
-            
-#             # Plot histogram or KDE
-#             if use_kde:
-#                 sns.kdeplot(subsetvalues, fill=True, ax=axes[i], color=color_palette[i])
-#             else:
-#                 sns.histplot(subsetvalues, bins=bin_edges, kde=False, ax=axes[i], stat="percent", color=color_palette[i])
-            
-#             # Plot average line
-#             if average == 'mean':
-#                 avg_value = subsetvalues.mean()
-#                 axes[i].axvline(avg_value, color='black', linestyle='--')
-#                 axes[i].text(0.4, 0.6, f"Mean: {avg_value:.2f}", transform=axes[i].transAxes, fontsize=16)
-#             elif average == 'median':
-#                 avg_value = subsetvalues.median()
-#                 axes[i].axvline(avg_value, color='black', linestyle='--')
-#                 axes[i].text(0.4, 0.6, f"Median: {avg_value:.2f}", transform=axes[i].transAxes, fontsize=16)
-            
-#             axes[i].set_title(f'{category}', fontsize=16)
-#             axes[i].tick_params(axis='both', which='major', labelsize=16)
-#             axes[i].set_xlabel(f'{feature}', fontsize=16)
-#             axes[i].set_ylabel('Percentage', fontsize=16)
-            
-#             if xlimit is not None:
-#                 axes[i].set_xlim(0, xlimit)
-#             else:
-#                 axes[i].set_xlim(0, max_value)
-        
-#         plt.xlabel(f'{feature}', fontsize=16)
-#         plt.tight_layout()
-    
-#     else:
-#         plt.figure(figsize=(20, 12))
-#         size = 10
-#         multiplier = 2
-#         sns.set_context("notebook", rc={"xtick.labelsize": size * multiplier, "ytick.labelsize": size * multiplier})
-        
-#         max_value = data_df[feature].max()
-#         bin_edges = np.linspace(0, max_value, bins + 1)
-        
-#         if separate is None:
-#             subsetvalues = data_df[feature]
-            
-#             # Plot histogram or KDE
-#             if use_kde:
-#                 sns.kdeplot(subsetvalues, fill=True, alpha=0.5, color=color_palette[0])
-#             else:
-#                 sns.histplot(subsetvalues, bins=bin_edges, kde=False, alpha=0.5, stat="percent", color=color_palette[0])
-            
-#             # Plot average line
-#             if average == 'mean':
-#                 avg_value = subsetvalues.mean()
-#                 plt.axvline(avg_value, color='r', linestyle='--')
-#                 plt.text(0.4, 0.6, f"Overall Mean: {avg_value:.2f}", transform=plt.gca().transAxes, fontsize=10 * multiplier)
-#             elif average == 'median':
-#                 avg_value = subsetvalues.median()
-#                 plt.axvline(avg_value, color='b', linestyle='--')
-#                 plt.text(0.4, 0.6, f"Overall Median: {avg_value:.2f}", transform=plt.gca().transAxes, fontsize=10 * multiplier)
-        
-#         else:
-#             for i, category in enumerate(unique_categories):
-#                 if pd.isna(category):
-#                     continue
-#                 subset = data_df[data_df[separate] == category]
-#                 subsetvalues = subset[feature]
-                
-#                 # Plot histogram or KDE
-#                 if use_kde:
-#                     sns.kdeplot(subsetvalues, fill=True, label=category, alpha=0.5, color=color_palette[i])
-#                 else:
-#                     sns.histplot(subsetvalues, bins=bin_edges, kde=False, label=category, alpha=0.5, stat="percent", color=color_palette[i])
-                
-#                 # Plot average line
-#                 if average == 'mean':
-#                     avg_value = subsetvalues.mean()
-#                     plt.axvline(avg_value, color=color_palette[i], linestyle='--')
-#                 elif average == 'median':
-#                     avg_value = subsetvalues.median()
-#                     plt.axvline(avg_value, color=color_palette[i], linestyle='--')
-                
-#                 number_of_tracks = len(subset['unique_id'].unique())
-#                 shift = i * 0.05
-#                 plt.text(0.4, 0.6 - shift, f"{category}: {average.capitalize()}: {avg_value:.2f} from {number_of_tracks} tracks", transform=plt.gca().transAxes, fontsize=10 * multiplier)
-        
-#         plt.xlabel(f'{feature}', fontsize=size * multiplier)
-#         plt.ylabel('Percentage', fontsize=size * multiplier)
-#         plt.legend(title='', fontsize=size * multiplier)
-#         ax = plt.gca()
-#         if xlimit is not None:
-#             ax.set_xlim(0, xlimit)
-#         else:
-#             ax.set_xlim(0, max_value)
-        
-#         ax.set_xticks(np.arange(0, max_value + 1, tick_interval))  # Ensure ticks are at integer intervals
-#         ax.set_xlim(0, xlimit or max_value)  # Start x-axis at 0
-#         ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)  # Add faint gridlines
-
-#     # Create directory for plots if it doesn't exist
-#     plots_dir = os.path.join(master_dir, 'plots')
-#     os.makedirs(plots_dir, exist_ok=True)
-    
-#     # Generate filename
-#     kde_text = 'kde' if use_kde else 'histogram'
-#     average_text = f'{average}'
-#     if small_multiples:
-#         multitext = 'small_multiples'
-#     else:
-#         multitext = 'single_plot'
-
-#     filename = f"{plots_dir}/{kde_text}_{feature}_{average_text}_{multitext}.png"
-    
-#     # Save plot
-#     plt.savefig(filename, bbox_inches='tight')
-#     print(f"Plot saved as {filename}")
-    
-#     # Show plot if specified
-#     if show_plot:
-#         plt.show()
-#     else:
-#         plt.close()
 
 
-# import os
-# import numpy as np
-# import matplotlib.pyplot as plt
-# import seaborn as sns
-# import pandas as pd
-# from .. import config
+###########################################################
 
-# def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind', use_kde=False, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None, grid=False):
-#     """
-#     Plot histograms or KDEs of a specified feature for each category in `separate`, with consistent binning.
-
-#     Parameters
-#     ----------
-#     data_df : DataFrame
-#         DataFrame containing track data with the specified feature and optionally a separating column.
-#     feature : str
-#         The feature to plot histograms for.
-#     bins : int, optional
-#         Number of bins for the histogram. Default is 100.
-#     separate : str, optional
-#         Column to separate the data by. If None, all data will be plotted together. Default is None.
-#     xlimit : float, optional
-#         Upper limit for the x-axis. Default is None.
-#     small_multiples : bool, optional
-#         Whether to plot each category separately as small multiples. Default is False.
-#     palette : str, optional
-#         Color palette for the plot. Default is 'colorblind'.
-#     use_kde : bool, optional
-#         Whether to use KDE plot instead of histogram. Default is False.
-#     show_plot : bool, optional
-#         Whether to display the plot in the notebook. Default is True.
-#     master_dir : str, optional
-#         The directory where the plots folder will be created and the plot will be saved. Default is None.
-#     tick_interval : int, optional
-#         Interval for x-axis ticks. Default is 5.
-#     average : str, optional
-#         Whether to draw 'mean' or 'median' line on the plot. Default is 'mean'.
-#     order : list, optional
-#         Specific order for the conditions. Default is None.
-#     """
-
-#     if master_dir is None:
-#         master_dir = config.master  # Use the master directory from config if not provided
-
-#     if separate is not None and order is not None:
-#         # Ensure the data is ordered according to the specified order
-#         data_df[separate] = pd.Categorical(data_df[separate], categories=order, ordered=True)
-
-#     textpositionx=  0.6
-#     textpositiony= 0.8
-
-#     # Use the categories attribute to maintain the specified order
-#     if separate is not None:
-#         unique_categories = data_df[separate].cat.categories
-#     else:
-#         unique_categories = [None]
-
-#     color_palette = sns.color_palette(palette, len(unique_categories))
-
-#     # Determine global maximum y-value for consistent y-axis limits
-#     global_max_y = 0
-
-#     if small_multiples and separate is not None:
-#         num_categories = len(unique_categories)
-#         fig, axes = plt.subplots(num_categories, 1, figsize=(20, 6 * num_categories), sharex=True)
-        
-#         if num_categories == 1:
-#             axes = [axes]  # To handle the case with only one subplot
-        
-#         for i, category in enumerate(unique_categories):
-#             if pd.isna(category):
-#                 continue
-#             subset = data_df[data_df[separate] == category]
-#             subsetvalues = subset[feature]
-            
-#             max_value = subsetvalues.max()
-
-#             # Determine bin edges for the entire data range, including negative values
-#             min_value = data_df[feature].min()
-#             max_value = data_df[feature].max()
-#             bin_edges = np.linspace(min_value, max_value, bins + 1)
-#             # bin_edges = np.linspace(0, max_value, bins + 1)
-            
-#             # Plot histogram or KDE
-#             if use_kde:
-#                 sns.kdeplot(subsetvalues, fill=True, ax=axes[i], color=color_palette[i])
-#                 current_max_y = axes[i].get_ylim()[1]  # Get the current maximum y-value from the plot
-#             else:
-#                 plot = sns.histplot(subsetvalues, bins=bin_edges, kde=False, ax=axes[i], stat="percent", color=color_palette[i])
-#                 current_max_y = plot.get_ylim()[1]
-            
-#             # Update global maximum y-value
-#             if current_max_y > global_max_y:
-#                 global_max_y = current_max_y
-            
-#             # Plot average line
-#             if average == 'mean':
-#                 avg_value = subsetvalues.mean()
-#                 axes[i].axvline(avg_value, color='black', linestyle='--')
-#                 axes[i].text(textpositionx, textpositiony, f"Mean: {avg_value:.2f}", transform=axes[i].transAxes, fontsize=16)
-#             elif average == 'median':
-#                 avg_value = subsetvalues.median()
-#                 axes[i].axvline(avg_value, color='black', linestyle='--')
-#                 axes[i].text(textpositionx, textpositiony, f"Median: {avg_value:.2f}", transform=axes[i].transAxes, fontsize=16)
-            
-#             axes[i].set_title(f'{category}', fontsize=16)
-#             axes[i].tick_params(axis='both', which='major', labelsize=16)
-#             axes[i].set_xlabel(f'{feature}', fontsize=16)
-#             axes[i].set_ylabel('Percentage', fontsize=16)
-            
-#             if xlimit is not None:
-#                 x_lower = min_value if min_value < 0 else 0
-#                 axes[i].set_xlim(x_lower, xlimit)
-#             else:
-#                 axes[i].set_xlim(min_value, max_value)
-        
-#         # Set common y-axis limits for all subplots
-#         for ax in axes:
-#             ax.set_ylim(0, global_max_y)
-        
-#         plt.tight_layout()
-    
-#     else:
-#         plt.figure(figsize=(20, 12))
-#         sns.set_context("notebook", rc={"xtick.labelsize": 16, "ytick.labelsize": 16})
-        
-#         max_value = data_df[feature].max()
-#         bin_edges = np.linspace(0, max_value, bins + 1)
-        
-#         if separate is None:
-#             subsetvalues = data_df[feature]
-            
-#             # Plot histogram or KDE
-#             if use_kde:
-#                 sns.kdeplot(subsetvalues, fill=True, alpha=0.5, color=color_palette[0])
-#             else:
-#                 sns.histplot(subsetvalues, bins=bin_edges, kde=False, alpha=0.5, stat="percent", color=color_palette[0])
-            
-#             # Plot average line
-#             if average == 'mean':
-#                 avg_value = subsetvalues.mean()
-#                 plt.axvline(avg_value, color='r', linestyle='--')
-#                 plt.text(textpositionx, textpositiony, f"Overall Mean: {avg_value:.2f}", transform=plt.gca().transAxes, fontsize=16)
-#             elif average == 'median':
-#                 avg_value = subsetvalues.median()
-#                 plt.axvline(avg_value, color='b', linestyle='--')
-#                 plt.text(0.4, 0.6, f"Overall Median: {avg_value:.2f}", transform=plt.gca().transAxes, fontsize=16)
-        
-#         else:
-#             for i, category in enumerate(unique_categories):
-#                 if pd.isna(category):
-#                     continue
-#                 subset = data_df[data_df[separate] == category]
-#                 subsetvalues = subset[feature]
-                
-#                 # Plot histogram or KDE
-#                 if use_kde:
-#                     sns.kdeplot(subsetvalues, fill=True, label=category, alpha=0.5, color=color_palette[i])
-#                 else:
-#                     sns.histplot(subsetvalues, bins=bin_edges, kde=False, label=category, alpha=0.5, stat="percent", color=color_palette[i])
-                
-#                 # Plot average line
-#                 if average == 'mean':
-#                     avg_value = subsetvalues.mean()
-#                     plt.axvline(avg_value, color=color_palette[i], linestyle='--')
-#                 elif average == 'median':
-#                     avg_value = subsetvalues.median()
-#                     plt.axvline(avg_value, color=color_palette[i], linestyle='--')
-                
-#                 number_of_tracks = len(subset['unique_id'].unique())
-#                 shift = i * 0.05
-#                 plt.text(textpositionx, textpositiony - shift, f"{category}: {average.capitalize()}: {avg_value:.2f} from {number_of_tracks} tracks", transform=plt.gca().transAxes, fontsize=16)
-        
-#         plt.xlabel(f'{feature}', fontsize=16)
-#         plt.ylabel('Percentage', fontsize=16)
-#         plt.legend(title='', fontsize=16)
-#         ax = plt.gca()
-#         if xlimit is not None:
-#             x_lower = min_value if min_value < 0 else 0
-#             axes[i].set_xlim(x_lower, xlimit)
-#         else:
-#             axes[i].set_xlim(min_value, max_value)
-        
-#         ax.set_xticks(np.arange(0, max_value + 1, tick_interval))  # Ensure ticks are at integer intervals
-#         ax.set_xlim(0, xlimit or max_value)  # Start x-axis at 0
-#         if grid:
-#             ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)  # Add faint gridlines
-#         else:
-#             print("No grid")
-
-#     # Create directory for plots if it doesn't exist
-#     plots_dir = os.path.join(master_dir, 'plots')
-#     os.makedirs(plots_dir, exist_ok=True)
-#     histodir = os.path.join(plots_dir, 'histograms')
-#     os.makedirs(histodir, exist_ok=True)
-    
-#     # Generate filename
-#     kde_text = 'kde' if use_kde else 'histogram'
-#     average_text = f'{average}'
-#     if small_multiples:
-#         multitext = 'small_multiples'
-#     else:
-#         multitext = 'single_plot'
-
-#     filename = f"{histodir}/{kde_text}_{feature}_{average_text}_{multitext}.png"
-    
-#     # Save plot
-#     plt.savefig(filename, bbox_inches='tight')
-    
-#     # Show plot if specified
-#     if show_plot:
-#         plt.show()
-#     else:
-#         plt.close()
-
-########################
-######################################
-##############################################################################
-#############################################################################################THIS ONE ############################################################
 # def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind',
 #                     use_kde=False, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None, grid=False):
 #     """
@@ -632,11 +230,9 @@ def plot_histograms_seconds(traj_df, bins=100, coltoseparate='tracker', xlimit=N
 #             subset = data_df[data_df[separate] == category]
 #             subsetvalues = subset[feature]
 
-#             max_value = subsetvalues.max()
-
 #             # Determine bin edges for the entire data range, including negative values
 #             min_value = data_df[feature].min()
-#             max_value = data_df[feature].max()
+#             max_value = data_df[feature].max() if xlimit is None else xlimit
 #             bin_edges = np.linspace(min_value, max_value, bins + 1)
 
 #             # Plot histogram or KDE
@@ -666,20 +262,13 @@ def plot_histograms_seconds(traj_df, bins=100, coltoseparate='tracker', xlimit=N
 #             axes[i].set_xlabel(f'{feature}', fontsize=16)
 #             axes[i].set_ylabel('Percentage', fontsize=16)
 
-#             if xlimit is not None:
-#                 x_lower = min_value if min_value < 0 else 0
-#                 axes[i].set_xlim(x_lower, xlimit)
-#             else:
-#                 axes[i].set_xlim(min_value, max_value)
+#             # Apply x-axis limits
+#             x_lower = min_value if min_value < 0 else 0
+#             axes[i].set_xlim(x_lower, max_value)
 
 #         # Set common y-axis limits for all subplots
 #         for ax in axes:
 #             ax.set_ylim(0, global_max_y)
-#             if xlimit is not None:
-#                 x_lower = min_value if min_value < 0 else 0
-#                 ax.set_xlim(x_lower, xlimit)
-#             else:
-#                 ax.set_xlim(min_value , xlimit)
 
 #         plt.tight_layout()
 
@@ -687,8 +276,8 @@ def plot_histograms_seconds(traj_df, bins=100, coltoseparate='tracker', xlimit=N
 #         plt.figure(figsize=(20, 12))
 #         sns.set_context("notebook", rc={"xtick.labelsize": 16, "ytick.labelsize": 16})
 
-#         max_value = data_df[feature].max()
 #         min_value = data_df[feature].min()
+#         max_value = data_df[feature].max() if xlimit is None else xlimit
 #         bin_edges = np.linspace(min_value, max_value, bins + 1)
 
 #         if separate is None:
@@ -739,11 +328,10 @@ def plot_histograms_seconds(traj_df, bins=100, coltoseparate='tracker', xlimit=N
 #         plt.ylabel('Percentage', fontsize=16)
 #         plt.legend(title='', fontsize=16)
 #         ax = plt.gca()
-#         if xlimit is not None:
-#             x_lower = min_value if min_value < 0 else 0
-#             ax.set_xlim(x_lower, xlimit)
-#         else:
-#             ax.set_xlim(min_value, max_value)
+
+#         # Apply x-axis limits
+#         x_lower = min_value if min_value < 0 else 0
+#         ax.set_xlim(x_lower, max_value)
 
 #         ax.set_xticks(np.arange(0, max_value + 1, tick_interval))  # Ensure ticks are at integer intervals
 #         if grid:
@@ -758,10 +346,7 @@ def plot_histograms_seconds(traj_df, bins=100, coltoseparate='tracker', xlimit=N
 #     # Generate filename
 #     kde_text = 'kde' if use_kde else 'histogram'
 #     average_text = f'{average}'
-#     if small_multiples:
-#         multitext = 'small_multiples'
-#     else:
-#         multitext = 'single_plot'
+#     multitext = 'small_multiples' if small_multiples else 'single_plot'
 
 #     filename = f"{histodir}/{kde_text}_{feature}_{average_text}_{multitext}.png"
     
@@ -774,10 +359,10 @@ def plot_histograms_seconds(traj_df, bins=100, coltoseparate='tracker', xlimit=N
 #     else:
 #         plt.close()
 
-###########################################################
 
 def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind',
-                    use_kde=False, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None, grid=False):
+                    use_kde=False, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None, 
+                    grid=False, background='white', transparent=False, line_color='black', font_size=16):
     """
     Plot histograms or KDEs of a specified feature for each category in `separate`, with consistent binning.
 
@@ -809,174 +394,120 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
         Whether to draw 'mean' or 'median' line on the plot. Default is 'mean'.
     order : list, optional
         Specific order for the conditions. Default is None.
+    background : str, tuple, optional
+        Background color as color name, RGB tuple, or hex code. Default is 'white'.
+    transparent : bool, optional
+        If True, makes the plot fully transparent except for histogram bars and lines. Default is False.
+    line_color : str, optional
+        Color of all plot lines, including axis lines, grid lines, labels, and average lines. Default is 'black'.
+    font_size : int, optional
+        Font size for all text in the plot. Default is 16.
     """
     if master_dir is None:
         master_dir = "plots"  # Use a default directory if not provided
 
+    # Set up background and transparency
+    if transparent:
+        figure_background = 'none'
+        axis_background = (0, 0, 0, 0)  # Transparent RGBA for axes
+    else:
+        figure_background = background if is_color_like(background) else 'white'
+        axis_background = figure_background
+
+    # Prepare data for separation by category if specified
     if separate is not None:
-        # Ensure the column used for separation is of categorical type
         if not pd.api.types.is_categorical_dtype(data_df[separate]):
             data_df[separate] = data_df[separate].astype('category')
-
         if order is not None:
-            # Ensure the data is ordered according to the specified order
             data_df[separate] = pd.Categorical(data_df[separate], categories=order, ordered=True)
-
-    textpositionx = 0.6
-    textpositiony = 0.8
-
-    # Use the categories attribute to maintain the specified order
-    if separate is not None:
         unique_categories = data_df[separate].cat.categories
     else:
         unique_categories = [None]
 
+    # Create a color palette for the categories
     color_palette = sns.color_palette(palette, len(unique_categories))
 
-    # Determine global maximum y-value for consistent y-axis limits
-    global_max_y = 0
-
+    # Set up figure and axes for small multiples or single plot
     if small_multiples and separate is not None:
-        num_categories = len(unique_categories)
-        fig, axes = plt.subplots(num_categories, 1, figsize=(20, 6 * num_categories), sharex=True)
-
-        if num_categories == 1:
-            axes = [axes]  # To handle the case with only one subplot
-
-        for i, category in enumerate(unique_categories):
-            if pd.isna(category):
-                continue
-            subset = data_df[data_df[separate] == category]
-            subsetvalues = subset[feature]
-
-            # Determine bin edges for the entire data range, including negative values
-            min_value = data_df[feature].min()
-            max_value = data_df[feature].max() if xlimit is None else xlimit
-            bin_edges = np.linspace(min_value, max_value, bins + 1)
-
-            # Plot histogram or KDE
-            if use_kde:
-                sns.kdeplot(subsetvalues, fill=True, ax=axes[i], color=color_palette[i])
-                current_max_y = axes[i].get_ylim()[1]  # Get the current maximum y-value from the plot
-            else:
-                plot = sns.histplot(subsetvalues, bins=bin_edges, kde=False, ax=axes[i], stat="percent", color=color_palette[i])
-                current_max_y = plot.get_ylim()[1]
-
-            # Update global maximum y-value
-            if current_max_y > global_max_y:
-                global_max_y = current_max_y
-
-            # Plot average line
-            if average == 'mean':
-                avg_value = subsetvalues.mean()
-                axes[i].axvline(avg_value, color='black', linestyle='--')
-                axes[i].text(textpositionx, textpositiony, f"Mean: {avg_value:.2f}", transform=axes[i].transAxes, fontsize=16)
-            elif average == 'median':
-                avg_value = subsetvalues.median()
-                axes[i].axvline(avg_value, color='black', linestyle='--')
-                axes[i].text(textpositionx, textpositiony, f"Median: {avg_value:.2f}", transform=axes[i].transAxes, fontsize=16)
-
-            axes[i].set_title(f'{category}', fontsize=16)
-            axes[i].tick_params(axis='both', which='major', labelsize=16)
-            axes[i].set_xlabel(f'{feature}', fontsize=16)
-            axes[i].set_ylabel('Percentage', fontsize=16)
-
-            # Apply x-axis limits
-            x_lower = min_value if min_value < 0 else 0
-            axes[i].set_xlim(x_lower, max_value)
-
-        # Set common y-axis limits for all subplots
-        for ax in axes:
-            ax.set_ylim(0, global_max_y)
-
-        plt.tight_layout()
-
+        fig, axes = plt.subplots(len(unique_categories), 1, figsize=(20, 6 * len(unique_categories)), 
+                                 sharex=True, facecolor=figure_background)
+        if len(unique_categories) == 1:
+            axes = [axes]  # Handle single subplot case
     else:
-        plt.figure(figsize=(20, 12))
-        sns.set_context("notebook", rc={"xtick.labelsize": 16, "ytick.labelsize": 16})
+        fig, ax = plt.subplots(figsize=(20, 12), facecolor=figure_background)
+        axes = [ax]  # Use a single axis in a list for consistency
 
+    # Initial vertical offset for median text
+    text_position_y = 0.8
+
+    for i, category in enumerate(unique_categories):
+        ax = axes[i] if small_multiples and separate else axes[0]
+        subsetvalues = data_df[data_df[separate] == category][feature] if category is not None else data_df[feature]
+
+        # Set axis background color
+        ax.set_facecolor(axis_background)
+
+        # Determine bin edges for consistent binning
         min_value = data_df[feature].min()
         max_value = data_df[feature].max() if xlimit is None else xlimit
         bin_edges = np.linspace(min_value, max_value, bins + 1)
 
-        if separate is None:
-            subsetvalues = data_df[feature]
-
-            # Plot histogram or KDE
-            if use_kde:
-                sns.kdeplot(subsetvalues, fill=True, alpha=0.5, color=color_palette[0])
-            else:
-                sns.histplot(subsetvalues, bins=bin_edges, kde=False, alpha=0.5, stat="percent", color=color_palette[0])
-
-            # Plot average line
-            if average == 'mean':
-                avg_value = subsetvalues.mean()
-                plt.axvline(avg_value, color='r', linestyle='--')
-                plt.text(textpositionx, textpositiony, f"Overall Mean: {avg_value:.2f}", transform=plt.gca().transAxes, fontsize=16)
-            elif average == 'median':
-                avg_value = subsetvalues.median()
-                plt.axvline(avg_value, color='b', linestyle='--')
-                plt.text(0.4, 0.6, f"Overall Median: {avg_value:.2f}", transform=plt.gca().transAxes, fontsize=16)
-
+        # Plot histogram or KDE
+        if use_kde:
+            sns.kdeplot(subsetvalues, fill=True, ax=ax, color=color_palette[i], linewidth=1.5, label=category)
         else:
-            for i, category in enumerate(unique_categories):
-                if pd.isna(category):
-                    continue
-                subset = data_df[data_df[separate] == category]
-                subsetvalues = subset[feature]
+            sns.histplot(subsetvalues, bins=bin_edges, kde=False, ax=ax, color=color_palette[i], alpha=0.5, 
+                         stat="percent", label=category)
 
-                # Plot histogram or KDE
-                if use_kde:
-                    sns.kdeplot(subsetvalues, fill=True, label=category, alpha=0.5, color=color_palette[i])
-                else:
-                    sns.histplot(subsetvalues, bins=bin_edges, kde=False, label=category, alpha=0.5, stat="percent", color=color_palette[i])
+        # Plot average line
+        avg_value = subsetvalues.mean() if average == 'mean' else subsetvalues.median()
+        ax.axvline(avg_value, color=line_color, linestyle='--')
 
-                # Plot average line
-                if average == 'mean':
-                    avg_value = subsetvalues.mean()
-                    plt.axvline(avg_value, color=color_palette[i], linestyle='--')
-                elif average == 'median':
-                    avg_value = subsetvalues.median()
-                    plt.axvline(avg_value, color=color_palette[i], linestyle='--')
+        # Display category and value below each other, adjusting vertical position for each category
+        ax.text(0.8, text_position_y - (i * 0.05), f"{category}: {avg_value:.2f}", 
+                transform=ax.transAxes, fontsize=font_size, color=line_color, ha='center')
 
-                number_of_tracks = len(subset['unique_id'].unique())
-                shift = i * 0.05
-                plt.text(textpositionx, textpositiony - shift, f"{category}: {average.capitalize()}: {avg_value:.2f} from {number_of_tracks} tracks", transform=plt.gca().transAxes, fontsize=16)
-
-        plt.xlabel(f'{feature}', fontsize=16)
-        plt.ylabel('Percentage', fontsize=16)
-        plt.legend(title='', fontsize=16)
-        ax = plt.gca()
-
-        # Apply x-axis limits
-        x_lower = min_value if min_value < 0 else 0
-        ax.set_xlim(x_lower, max_value)
-
-        ax.set_xticks(np.arange(0, max_value + 1, tick_interval))  # Ensure ticks are at integer intervals
+        # Customize x and y labels, and tick parameters
+        ax.set_xlabel(feature, fontsize=font_size, color=line_color)
+        ax.set_ylabel('Percentage', fontsize=font_size, color=line_color)
+        ax.tick_params(axis='both', which='both', color=line_color, labelcolor=line_color, labelsize=font_size)
+        
+        # Set grid and axis line colors
         if grid:
-            ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)  # Add faint gridlines
+            ax.grid(True, linestyle='--', linewidth=0.5, color=line_color if not transparent else (0, 0, 0, 0.5), alpha=0.7, axis='y')
+        
+        # Set axis spine colors
+        for spine in ax.spines.values():
+            spine.set_edgecolor(line_color)
+            if transparent:
+                spine.set_alpha(0.5)
+        
+        # Set x-axis limits
+        ax.set_xlim(0, max_value)
+        ax.set_xticks(np.arange(0, max_value + 1, tick_interval))
 
-    # Create directory for plots if it doesn't exist
-    plots_dir = os.path.join(master_dir, 'plots')
-    os.makedirs(plots_dir, exist_ok=True)
-    histodir = os.path.join(plots_dir, 'histograms')
-    os.makedirs(histodir, exist_ok=True)
+        # Title for each subplot if small multiples
+        if small_multiples and separate:
+            ax.set_title(f'{category}', fontsize=font_size, color=line_color)
 
-    # Generate filename
-    kde_text = 'kde' if use_kde else 'histogram'
-    average_text = f'{average}'
-    multitext = 'small_multiples' if small_multiples else 'single_plot'
+    # Legend and title handling for non-multiples
+    if separate and not small_multiples:
+        ax.legend(title=separate, fontsize=font_size, title_fontsize=font_size)
+    elif separate:
+        fig.suptitle(f"{feature} distribution by {separate}", fontsize=font_size + 4, color=line_color)
 
-    filename = f"{histodir}/{kde_text}_{feature}_{average_text}_{multitext}.png"
-    
-    # Save plot
-    plt.savefig(filename, bbox_inches='tight')
-    
-    # Show plot if specified
+    # Save and show plot
+    plot_dir = os.path.join(master_dir, 'plots', 'histograms')
+    os.makedirs(plot_dir, exist_ok=True)
+    plt.savefig(f"{plot_dir}/{feature}_histogram.png", bbox_inches='tight', transparent=transparent)
+
     if show_plot:
         plt.show()
     else:
         plt.close()
+
+
+
 
 
 
@@ -2772,7 +2303,236 @@ def plot_classification_pie_charts(df, group_by='Location', colormap_name='Dark2
 # import seaborn as sns
 # import os
 
-def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palette='colorblind', show_plot=True, master_dir=None, grid=True, bw=False, strip=False, y_max=None, figsize=(10, 8), annotate_median=False):
+# def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palette='colorblind', show_plot=True, master_dir=None, grid=True, bw=False, strip=False, y_max=None, figsize=(10, 8), annotate_median=False):
+#     """
+#     Plot boxplots for the specified feature against a categorical x_category with custom order and styling options.
+
+#     Parameters
+#     ----------
+#     data_df : DataFrame
+#         DataFrame containing the data.
+#     feature : str
+#         The feature to plot on the y-axis.
+#     x_category : str
+#         The categorical feature to plot on the x-axis.
+#     font_size : int, optional
+#         Font size for the plot text. Default is 12.
+#     order : list, optional
+#         Specific order for the categories. Default is None.
+#     palette : str, optional
+#         Color palette for the plot. Default is 'colorblind'.
+#     show_plot : bool, optional
+#         Whether to display the plot in the notebook. Default is True.
+#     master_dir : str, optional
+#         Directory to save the plot. Default is None.
+#     grid : bool, optional
+#         Whether to display grid lines. Default is True.
+#     bw : bool, optional
+#         Whether to use black-and-white styling. Default is False.
+#     strip : bool, optional
+#         Whether to overlay a stripplot on the boxplot. Default is False.
+#     y_max : float, optional
+#         Maximum value for the y-axis. Default is None.
+#     figsize : tuple, optional
+#         Size of the plot (width, height) in inches. Default is (10, 8).
+#     """
+
+#     plt.figure(figsize=figsize)  # Use the figsize parameter to set the figure size
+#     sns.set_context("notebook", rc={"xtick.labelsize": font_size, "ytick.labelsize": font_size})
+
+#     if bw:
+#         # Black-and-white styling: no fill color, black edges
+#         boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, linewidth=1.5, showfliers=False, color='white', order=order)
+#         for patch in boxplot.patches:
+#             patch.set_edgecolor('black')  # Set edge color to black
+#             patch.set_linewidth(1.5)     # Set edge width
+#         for element in ['boxes', 'whiskers', 'medians', 'caps']:
+#             plt.setp(boxplot.artists, color='black')  # Set edge color to black
+#             plt.setp(boxplot.lines, color='black')    # Set whiskers and caps to black
+#     else:
+#         boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, palette=palette, order=order, showfliers=False)
+#         boxplot.patch.set_linewidth(1.5)
+
+#     if strip:
+#         sns.stripplot(x=x_category, y=feature, data=data_df, color='black', size=0.3, order=order, jitter=True)
+
+#     plt.xlabel('', fontsize=font_size)
+#     plt.ylabel(feature, fontsize=font_size)
+#     plt.title(f'{feature} by {x_category}', fontsize=font_size)
+#     # plt.xticks(rotation=45)
+
+#     if grid:
+#         plt.grid(True, linestyle='--', linewidth=0.5, color='gray', alpha=0.7, axis='y')  # Grid on y-axis
+#         plt.gca().set_axisbelow(True)  # Ensure grid is below the plot elements
+
+#     # Set the maximum y-axis limit if specified
+#     if y_max is not None:
+#         plt.ylim(top=y_max)
+
+#     # Customize spines
+#     ax = plt.gca()
+#     ax.spines['top'].set_color('lightgray')
+#     ax.spines['right'].set_color('lightgray')
+#     ax.spines['left'].set_color('black')
+#     ax.spines['bottom'].set_color('black')
+
+#         # Annotate median values if requested
+#     # Annotate median values if requested
+#     # Annotate median values if requested
+#     if annotate_median:
+#         medians = data_df.groupby(x_category)[feature].median()
+#         y_max = plt.ylim()[1]  # Get the top y-limit of the plot
+
+#         if order is not None:
+#             sorted_medians = medians.reindex(order)  # Reorder the medians based on the 'order' parameter
+#         else:
+#             sorted_medians = medians
+
+#         for i, median in enumerate(sorted_medians):
+#             plt.text(i, y_max * 0.95, f'{median:.2f}', 
+#                      horizontalalignment='center', size=font_size, color='black', weight='bold')
+
+
+
+
+#     plt.tight_layout()
+
+#     if master_dir is None:
+#         master_dir = "plots"  # Default directory
+
+#     os.makedirs(master_dir, exist_ok=True)
+#     filename = f"{master_dir}/{feature}_by_{x_category}.png"
+#     plt.savefig(filename, bbox_inches='tight')
+
+#     if show_plot:
+#         plt.show()
+#     else:
+#         plt.close()
+
+
+# from matplotlib.colors import is_color_like
+
+# def plot_boxplots_test(data_df, feature, x_category, font_size=12, order=None, palette='colorblind', 
+#                   background='white', transparent=False, show_plot=True, master_dir=None, 
+#                   grid=True, bw=False, strip=False, y_max=None, figsize=(10, 8), 
+#                   annotate_median=False):
+#     """
+#     Plot boxplots for the specified feature against a categorical x_category with custom order and styling options.
+
+#     Parameters
+#     ----------
+#     data_df : DataFrame
+#         DataFrame containing the data.
+#     feature : str
+#         The feature to plot on the y-axis.
+#     x_category : str
+#         The categorical feature to plot on the x-axis.
+#     font_size : int, optional
+#         Font size for the plot text. Default is 12.
+#     order : list, optional
+#         Specific order for the categories. Default is None.
+#     palette : str, optional
+#         Color palette for the plot. Default is 'colorblind'.
+#     background : str, tuple, optional
+#         Background color as color name, RGB tuple, or hex code. Default is 'white'.
+#     transparent : bool, optional
+#         If True, makes the plot fully transparent except for box plots and axes. Default is False.
+#     show_plot : bool, optional
+#         Whether to display the plot in the notebook. Default is True.
+#     master_dir : str, optional
+#         Directory to save the plot. Default is None.
+#     grid : bool, optional
+#         Whether to display grid lines. Default is True.
+#     bw : bool, optional
+#         Whether to use black-and-white styling. Default is False.
+#     strip : bool, optional
+#         Whether to overlay a stripplot on the boxplot. Default is False.
+#     y_max : float, optional
+#         Maximum value for the y-axis. Default is None.
+#     figsize : tuple, optional
+#         Size of the plot (width, height) in inches. Default is (10, 8).
+#     """
+
+#     # Validate and apply background color
+#     if is_color_like(background):
+#         figure_background = background
+#     else:
+#         print("Invalid color provided for background. Defaulting to white.")
+#         figure_background = 'white'
+
+#     # Create figure and set background color
+#     fig, ax = plt.subplots(figsize=figsize, facecolor=figure_background)
+#     if not transparent:
+#         ax.set_facecolor(figure_background)  # Set plot area background color
+#     else:
+#         fig.patch.set_alpha(0)  # Make the figure background transparent
+#         ax.set_facecolor((0, 0, 0, 0))  # Make the plot area transparent
+
+#     sns.set_context("notebook", rc={"xtick.labelsize": font_size, "ytick.labelsize": font_size})
+
+#     if bw:
+#         boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, linewidth=1.5, showfliers=False, color='white', order=order)
+#         for patch in boxplot.patches:
+#             patch.set_edgecolor('black')
+#             patch.set_linewidth(1.5)
+#         for element in ['boxes', 'whiskers', 'medians', 'caps']:
+#             plt.setp(boxplot.artists, color='black')
+#             plt.setp(boxplot.lines, color='black')
+#     else:
+#         boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, palette=palette, order=order, showfliers=False)
+#         boxplot.patch.set_linewidth(1.5)
+
+#     if strip:
+#         sns.stripplot(x=x_category, y=feature, data=data_df, color='black', size=0.3, order=order, jitter=True)
+
+#     # Customize grid and axes based on transparency
+#     if grid:
+#         ax.grid(True, linestyle='--', linewidth=0.5, color='gray' if not transparent else (0, 0, 0, 0.5), alpha=0.7, axis='y')
+
+#     plt.xlabel('', fontsize=font_size)
+#     plt.ylabel(feature, fontsize=font_size)
+#     plt.title(f'{feature} by {x_category}', fontsize=font_size)
+
+#     # Set the maximum y-axis limit if specified
+#     if y_max is not None:
+#         plt.ylim(top=y_max)
+
+#     # Customize spines
+#     for spine in ax.spines.values():
+#         spine.set_edgecolor('black')
+#         spine.set_linewidth(1.5)
+#         if transparent:
+#             spine.set_alpha(0.5)
+
+#     if annotate_median:
+#         medians = data_df.groupby(x_category)[feature].median()
+#         y_max = plt.ylim()[1]
+#         sorted_medians = medians.reindex(order) if order else medians
+#         for i, median in enumerate(sorted_medians):
+#             plt.text(i, y_max * 0.95, f'{median:.2f}', 
+#                      horizontalalignment='center', size=font_size, color='black', weight='bold')
+
+#     plt.tight_layout()
+
+#     if master_dir is None:
+#         master_dir = "plots"
+#     os.makedirs(master_dir, exist_ok=True)
+#     filename = f"{master_dir}/{feature}_by_{x_category}.png"
+#     plt.savefig(filename, bbox_inches='tight', transparent=transparent)  # Save with transparency if specified
+
+#     if show_plot:
+#         plt.show()
+#     else:
+#         plt.close()
+
+
+
+
+
+def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palette='colorblind', 
+                  background='white', transparent=False, line_color='black', show_plot=True, 
+                  master_dir=None, grid=True, bw=False, strip=False, y_max=None, figsize=(10, 8), 
+                  annotate_median=False):
     """
     Plot boxplots for the specified feature against a categorical x_category with custom order and styling options.
 
@@ -2790,6 +2550,12 @@ def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palett
         Specific order for the categories. Default is None.
     palette : str, optional
         Color palette for the plot. Default is 'colorblind'.
+    background : str, tuple, optional
+        Background color as color name, RGB tuple, or hex code. Default is 'white'.
+    transparent : bool, optional
+        If True, makes the plot fully transparent except for box plots and axes. Default is False.
+    line_color : str, optional
+        Color of all plot lines, including box edges, axis lines, grid lines, labels, and strip plot dots. Default is 'black'.
     show_plot : bool, optional
         Whether to display the plot in the notebook. Default is True.
     master_dir : str, optional
@@ -2806,72 +2572,84 @@ def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palett
         Size of the plot (width, height) in inches. Default is (10, 8).
     """
 
-    plt.figure(figsize=figsize)  # Use the figsize parameter to set the figure size
+    # Validate and apply background color
+    if is_color_like(background):
+        figure_background = background
+    else:
+        print("Invalid color provided for background. Defaulting to white.")
+        figure_background = 'white'
+
+    # Create figure and set background color
+    fig, ax = plt.subplots(figsize=figsize, facecolor=figure_background)
+    if not transparent:
+        ax.set_facecolor(figure_background)  # Set plot area background color
+    else:
+        fig.patch.set_alpha(0)  # Make the figure background transparent
+        ax.set_facecolor((0, 0, 0, 0))  # Make the plot area transparent
+
     sns.set_context("notebook", rc={"xtick.labelsize": font_size, "ytick.labelsize": font_size})
 
     if bw:
-        # Black-and-white styling: no fill color, black edges
-        boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, linewidth=1.5, showfliers=False, color='white', order=order)
+        boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, linewidth=1.5, 
+                              showfliers=False, color='white', order=order)
         for patch in boxplot.patches:
-            patch.set_edgecolor('black')  # Set edge color to black
-            patch.set_linewidth(1.5)     # Set edge width
+            patch.set_edgecolor(line_color)
+            patch.set_linewidth(1.5)
         for element in ['boxes', 'whiskers', 'medians', 'caps']:
-            plt.setp(boxplot.artists, color='black')  # Set edge color to black
-            plt.setp(boxplot.lines, color='black')    # Set whiskers and caps to black
+            plt.setp(boxplot.artists, color=line_color)
+            plt.setp(boxplot.lines, color=line_color)
     else:
-        boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, palette=palette, order=order, showfliers=False)
-        boxplot.patch.set_linewidth(1.5)
+        boxplot = sns.boxplot(x=x_category, y=feature, data=data_df, palette=palette, 
+                              order=order, showfliers=False, linewidth=1.5)
+        for patch in boxplot.patches:
+            patch.set_edgecolor(line_color)
+            patch.set_linewidth(1.5)
+        for line in boxplot.lines:  # Apply color to all boxplot lines, including medians and quartiles
+            line.set_color(line_color)
+            line.set_linewidth(1.5)
 
     if strip:
-        sns.stripplot(x=x_category, y=feature, data=data_df, color='black', size=0.3, order=order, jitter=True)
+        sns.stripplot(x=x_category, y=feature, data=data_df, color=line_color, size=3, 
+                      order=order, jitter=True)
 
-    plt.xlabel('', fontsize=font_size)
-    plt.ylabel(feature, fontsize=font_size)
-    plt.title(f'{feature} by {x_category}', fontsize=font_size)
-    # plt.xticks(rotation=45)
+    plt.xlabel('', fontsize=font_size, color=line_color)
+    plt.ylabel(feature, fontsize=font_size, color=line_color)
+    # plt.title(f'{feature} by {x_category}', fontsize=font_size, color=line_color)
 
+    # Set tick and label colors
+    ax.tick_params(axis='both', which='both', color=line_color, labelcolor=line_color, labelsize=font_size)
+
+    # Set grid and axis line colors
     if grid:
-        plt.grid(True, linestyle='--', linewidth=0.5, color='gray', alpha=0.7, axis='y')  # Grid on y-axis
-        plt.gca().set_axisbelow(True)  # Ensure grid is below the plot elements
+        # ax.grid(True, linestyle='--', linewidth=0.5, color=line_color if not transparent else (0, 0, 0, 0.5), alpha=0.7, axis='y')
+        ax.grid(True, linestyle='--', linewidth=0.5, color=line_color, alpha=0.7, axis='y')
 
-    # Set the maximum y-axis limit if specified
+    # Set maximum y-axis limit if specified
     if y_max is not None:
         plt.ylim(top=y_max)
 
     # Customize spines
-    ax = plt.gca()
-    ax.spines['top'].set_color('lightgray')
-    ax.spines['right'].set_color('lightgray')
-    ax.spines['left'].set_color('black')
-    ax.spines['bottom'].set_color('black')
+    for spine in ax.spines.values():
+        spine.set_edgecolor(line_color)
+        spine.set_linewidth(1.5)
+        if transparent:
+            spine.set_alpha(0.5)
 
-        # Annotate median values if requested
-    # Annotate median values if requested
-    # Annotate median values if requested
     if annotate_median:
         medians = data_df.groupby(x_category)[feature].median()
-        y_max = plt.ylim()[1]  # Get the top y-limit of the plot
-
-        if order is not None:
-            sorted_medians = medians.reindex(order)  # Reorder the medians based on the 'order' parameter
-        else:
-            sorted_medians = medians
-
+        y_max = plt.ylim()[1]
+        sorted_medians = medians.reindex(order) if order else medians
         for i, median in enumerate(sorted_medians):
-            plt.text(i, y_max * 0.95, f'{median:.2f}', 
-                     horizontalalignment='center', size=font_size, color='black', weight='bold')
-
-
-
+            plt.text(i, y_max * 0.965, f'{median:.2f}', 
+                     horizontalalignment='center', size=font_size, color=line_color, weight='bold')
 
     plt.tight_layout()
 
     if master_dir is None:
-        master_dir = "plots"  # Default directory
-
+        master_dir = "plots"
     os.makedirs(master_dir, exist_ok=True)
     filename = f"{master_dir}/{feature}_by_{x_category}.png"
-    plt.savefig(filename, bbox_inches='tight')
+    plt.savefig(filename, bbox_inches='tight', transparent=transparent)
 
     if show_plot:
         plt.show()
@@ -2880,7 +2658,97 @@ def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palett
 
 
 
-def plot_stacked_bar(df, x_category, order=None, font_size=16, colormap='Dark2', figsize=(10, 5)):
+
+
+
+# def plot_stacked_bar(df, x_category, order=None, font_size=16, colormap='Dark2', figsize=(10, 5)):
+#     """
+#     Plot a stacked bar chart showing the percentage of motion classes for each category on the x-axis.
+    
+#     Parameters
+#     ----------
+#     df : DataFrame
+#         DataFrame containing the data with a 'motion_class' column and specified category.
+#     x_category : str
+#         The column name of the category to plot on the x-axis.
+#     order : list, optional
+#         Custom order for the categories on the x-axis. Default is None.
+#     font_size : int, optional
+#         Font size for the plot. Default is 16.
+#     colormap : str, optional
+#         Colormap for the plot. Default is 'Dark2'.
+#     figsize : tuple, optional
+#         Size of the plot (width, height) in inches. Default is (10, 5).
+#     """
+#     # Apply custom order if provided
+#     if order is not None:
+#         df[x_category] = pd.Categorical(df[x_category], categories=order, ordered=True)
+
+#     # Calculate the percentage of each motion class within each category
+#     percentage_data = (df.groupby([x_category, 'motion_class']).size()
+#                        .unstack(fill_value=0)
+#                        .apply(lambda x: x / x.sum() * 100, axis=1))
+
+#     # Determine the unique motion classes
+#     motion_classes = df['motion_class'].unique()
+
+#     # Use a consistent colormap for the motion classes
+#     if colormap == 'colorblind':
+#         colors = sns.color_palette("colorblind", len(motion_classes))
+#     elif colormap == 'Dark2':
+#         cmap = cm.get_cmap("Dark2", len(motion_classes))
+#         colors = cmap(np.linspace(0, 1, len(motion_classes)))
+#     else:
+#         colors = plt.get_cmap(colormap, len(motion_classes)).colors
+
+#     # Plotting
+#     ax = percentage_data.plot(kind='bar', stacked=True, figsize=figsize, color=colors)
+
+#     # Add black outlines to the bars
+#     for patch in ax.patches:
+#         patch.set_edgecolor('black')
+
+#     # Rotate x-tick labels for readability if necessary
+#     ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+
+#     # Annotate percentages on the bars
+#     for patch in ax.patches:
+#         width, height = patch.get_width(), patch.get_height()
+#         x, y = patch.get_xy()
+#         if height > 0:  # Only annotate if there's a height to show
+#             ax.annotate(f'{height:.1f}%', (x + width / 2, y + height / 2),
+#                         ha='center', va='center', fontsize=font_size, color='k')
+
+#     # Move the legend outside the plot
+#     plt.legend(title='Motion Type', bbox_to_anchor=(1.05, 1), loc='upper left',
+#                title_fontsize=font_size, prop={'size': font_size})
+
+#     plt.title('Distribution of Motion Classes', fontsize=font_size)
+#     plt.xlabel('', fontsize=font_size)
+#     plt.ylabel('Percentage (%)', fontsize=font_size)
+#     plt.xticks(fontsize=font_size, rotation=45)
+#     plt.yticks(fontsize=font_size)
+
+#     # Add grid
+#     ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+
+#     # Ensure bars are above the grid
+#     for patch in ax.patches:
+#         patch.set_zorder(2)
+
+#     # Make top and right spines visible and set their color to light gray
+#     ax.spines['top'].set_visible(True)
+#     ax.spines['top'].set_color('gray')
+#     ax.spines['right'].set_visible(True)
+#     ax.spines['right'].set_color('gray')
+
+#     plt.tight_layout()
+#     plt.show()
+
+
+
+def plot_stacked_bar(df, x_category, order=None, font_size=16, colormap='Dark2', figsize=(10, 8), 
+                     background='white', transparent=False, line_color='black'):
     """
     Plot a stacked bar chart showing the percentage of motion classes for each category on the x-axis.
     
@@ -2898,7 +2766,21 @@ def plot_stacked_bar(df, x_category, order=None, font_size=16, colormap='Dark2',
         Colormap for the plot. Default is 'Dark2'.
     figsize : tuple, optional
         Size of the plot (width, height) in inches. Default is (10, 5).
+    background : str, optional
+        Background color for the plot. Default is 'white'.
+    transparent : bool, optional
+        If True, makes the plot fully transparent except for the bars and text elements. Default is False.
+    line_color : str, optional
+        Color of all lines, including axis lines, bar outlines, and gridlines. Default is 'black'.
     """
+    # Apply background and transparency
+    if transparent:
+        figure_background = 'none'
+        axis_background = (0, 0, 0, 0)  # Transparent background for axes
+    else:
+        figure_background = background
+        axis_background = background
+
     # Apply custom order if provided
     if order is not None:
         df[x_category] = pd.Categorical(df[x_category], categories=order, ordered=True)
@@ -2908,10 +2790,8 @@ def plot_stacked_bar(df, x_category, order=None, font_size=16, colormap='Dark2',
                        .unstack(fill_value=0)
                        .apply(lambda x: x / x.sum() * 100, axis=1))
 
-    # Determine the unique motion classes
+    # Determine the unique motion classes and assign colors
     motion_classes = df['motion_class'].unique()
-
-    # Use a consistent colormap for the motion classes
     if colormap == 'colorblind':
         colors = sns.color_palette("colorblind", len(motion_classes))
     elif colormap == 'Dark2':
@@ -2921,14 +2801,13 @@ def plot_stacked_bar(df, x_category, order=None, font_size=16, colormap='Dark2',
         colors = plt.get_cmap(colormap, len(motion_classes)).colors
 
     # Plotting
-    ax = percentage_data.plot(kind='bar', stacked=True, figsize=figsize, color=colors)
+    fig, ax = plt.subplots(figsize=figsize, facecolor=figure_background)
+    ax.set_facecolor(axis_background)
+    percentage_data.plot(kind='bar', stacked=True, ax=ax, color=colors, edgecolor=line_color)
 
     # Add black outlines to the bars
     for patch in ax.patches:
-        patch.set_edgecolor('black')
-
-    # Rotate x-tick labels for readability if necessary
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+        patch.set_edgecolor(line_color)
 
     # Annotate percentages on the bars
     for patch in ax.patches:
@@ -2936,118 +2815,40 @@ def plot_stacked_bar(df, x_category, order=None, font_size=16, colormap='Dark2',
         x, y = patch.get_xy()
         if height > 0:  # Only annotate if there's a height to show
             ax.annotate(f'{height:.1f}%', (x + width / 2, y + height / 2),
-                        ha='center', va='center', fontsize=font_size, color='k')
+                        ha='center', va='center', fontsize=font_size, color=line_color)
+
+    # Customize text elements
+    ax.set_title('Distribution of Motion Classes', fontsize=font_size, color=line_color)
+    ax.set_xlabel('', fontsize=font_size, color=line_color)
+    ax.set_ylabel('Percentage (%)', fontsize=font_size, color=line_color)
+    ax.tick_params(axis='both', which='both', color=line_color, labelcolor=line_color, labelsize=font_size)
+
+    # Rotate x-tick labels for readability
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
 
     # Move the legend outside the plot
-    plt.legend(title='Motion Type', bbox_to_anchor=(1.05, 1), loc='upper left',
-               title_fontsize=font_size, prop={'size': font_size})
+    legend = plt.legend(title='Motion Type', bbox_to_anchor=(1.05, 1), loc='upper left',
+               title_fontsize=font_size, prop={'size': font_size}, frameon=False,)
+    
+    # Set legend text color
+    for text in legend.get_texts():
+        text.set_color(line_color)
 
-    plt.title('Distribution of Motion Classes', fontsize=font_size)
-    plt.xlabel('', fontsize=font_size)
-    plt.ylabel('Percentage (%)', fontsize=font_size)
-    plt.xticks(fontsize=font_size, rotation=45)
-    plt.yticks(fontsize=font_size)
+    # Set title color
+    legend.get_title().set_color(line_color)
 
-    # Add grid
-    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+    # Add grid with line color
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5, color=line_color, zorder=0)
 
-    # Ensure bars are above the grid
-    for patch in ax.patches:
-        patch.set_zorder(2)
-
-    # Make top and right spines visible and set their color to light gray
-    ax.spines['top'].set_visible(True)
-    ax.spines['top'].set_color('gray')
-    ax.spines['right'].set_visible(True)
-    ax.spines['right'].set_color('gray')
+    # Customize axis spines
+    for spine in ax.spines.values():
+        spine.set_edgecolor(line_color)
+        if transparent:
+            spine.set_alpha(0.5)
 
     plt.tight_layout()
     plt.show()
 
-def plot_stacked_bar2(df, x_category, order=None, font_size=16, colormap='Dark2', figsize=(10, 5), motionclasses='motion_class'):
-    """
-    Plot a stacked bar chart showing the percentage of motion classes for each category on the x-axis.
-    
-    Parameters
-    ----------
-    df : DataFrame
-        DataFrame containing the data with a 'motion_class' column and specified category.
-    x_category : str
-        The column name of the category to plot on the x-axis.
-    order : list, optional
-        Custom order for the categories on the x-axis. Default is None.
-    font_size : int, optional
-        Font size for the plot. Default is 16.
-    colormap : str, optional
-        Colormap for the plot. Default is 'Dark2'.
-    figsize : tuple, optional
-        Size of the plot (width, height) in inches. Default is (10, 5).
-    """
-    # Apply custom order if provided
-    if order is not None:
-        df[x_category] = pd.Categorical(df[x_category], categories=order, ordered=True)
-
-    
-    # Calculate the percentage of each motion class within each category
-    percentage_data = (df.groupby([x_category, motionclasses]).size()
-                       .unstack(fill_value=0)
-                       .apply(lambda x: x / x.sum() * 100, axis=1))
-
-    # Determine the unique motion classes
-    motion_classes = df[motionclasses].unique()
-
-    # Use a consistent colormap for the motion classes
-    if colormap == 'colorblind':
-        colors = sns.color_palette("colorblind", len(motion_classes))
-    elif colormap == 'Dark2':
-        cmap = cm.get_cmap("Dark2", len(motion_classes))
-        colors = cmap(np.linspace(0, 1, len(motion_classes)))
-    else:
-        colors = plt.get_cmap(colormap, len(motion_classes)).colors
-
-    # Plotting
-    ax = percentage_data.plot(kind='bar', stacked=True, figsize=figsize, color=colors)
-
-    # Add black outlines to the bars
-    for patch in ax.patches:
-        patch.set_edgecolor('black')
-
-    # Rotate x-tick labels for readability if necessary
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
-
-    # Annotate percentages on the bars
-    for patch in ax.patches:
-        width, height = patch.get_width(), patch.get_height()
-        x, y = patch.get_xy()
-        if height > 0:  # Only annotate if there's a height to show
-            ax.annotate(f'{height:.1f}%', (x + width / 2, y + height / 2),
-                        ha='center', va='center', fontsize=font_size, color='k')
-
-    # Move the legend outside the plot
-    plt.legend(title='Motion Type', bbox_to_anchor=(1.05, 1), loc='upper left',
-               title_fontsize=font_size, prop={'size': font_size})
-
-    plt.title('Distribution of Motion Classes', fontsize=font_size)
-    plt.xlabel('', fontsize=font_size)
-    plt.ylabel('Percentage (%)', fontsize=font_size)
-    plt.xticks(fontsize=font_size, rotation=45)
-    plt.yticks(fontsize=font_size)
-
-    # Add grid
-    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
-
-    # Ensure bars are above the grid
-    for patch in ax.patches:
-        patch.set_zorder(2)
-
-    # Make top and right spines visible and set their color to light gray
-    ax.spines['top'].set_visible(True)
-    ax.spines['top'].set_color('gray')
-    ax.spines['right'].set_visible(True)
-    ax.spines['right'].set_color('gray')
-
-    plt.tight_layout()
-    plt.show()
 
 
 # def plot_single_particle(particle_df, speed_thresholds, animation=True):
