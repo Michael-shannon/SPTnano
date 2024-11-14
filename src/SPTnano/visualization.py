@@ -3667,150 +3667,6 @@ def plot_combo_hist_scatter_kde(data_df, x_var, y_var, font_size=12, palette='ma
         plt.show()
 
 
-
-# def plot_tracks_by_motion_class(
-#     time_windowed_df, 
-#     metrics_df, 
-#     num_tracks=10, 
-#     colormap='Dark2', 
-#     axis_range=None, 
-#     show_annotations=False, 
-#     order=None, 
-#     transparent_background=False, 
-#     annotation_color="black",
-#     text_size=10, 
-#     figsizemultiplier=5,  # Overall figure size, default adaptable to subplot size
-#     time_window=config.TIME_WINDOW, 
-#     overlap=config.OVERLAP
-# ):
-#     # Determine unique motion classes and assign colors using the specified colormap
-#     motion_classes = time_windowed_df['motion_class'].unique()
-    
-#     # Use provided order or default to the natural order
-#     if order:
-#         motion_classes = [cls for cls in order if cls in motion_classes]
-#     print(f"Plotting motion classes in the following order: {motion_classes}")
-    
-#     if colormap == 'colorblind':
-#         colors = sns.color_palette("colorblind", len(motion_classes))
-#     elif colormap == 'Dark2':
-#         cmap = cm.get_cmap("Dark2", len(motion_classes))
-#         colors = cmap(np.linspace(0, 1, len(motion_classes)))
-#     else:
-#         colors = plt.get_cmap(colormap, len(motion_classes)).colors
-    
-#     # Map each motion class to a specific color
-#     motion_color_map = {motion_class: colors[i] for i, motion_class in enumerate(motion_classes)}
-
-#     # Collect all selected track segments for range calculation
-#     track_segments = []
-#     track_info = []  # To store unique_id, time_window, and anomalous_exponent for annotations
-#     for motion_class in motion_classes:
-#         # Filter by motion class and pick unique IDs
-#         class_df = time_windowed_df[time_windowed_df['motion_class'] == motion_class]
-#         unique_ids = class_df['unique_id'].unique()
-        
-#         # Randomly select num_tracks unique IDs for this motion class
-#         selected_ids = random.sample(list(unique_ids), min(num_tracks, len(unique_ids)))
-        
-#         for unique_id in selected_ids:
-#             # Filter to find the time windows for this unique ID and motion class
-#             track_df = class_df[class_df['unique_id'] == unique_id].sample(n=1)  # Pick one random time window
-            
-#             # Extract starting x, y, time window, and anomalous exponent for the selected track segment
-#             x_start = track_df['x_um_start'].values[0]
-#             y_start = track_df['y_um_start'].values[0]
-#             time_window_id = track_df['time_window'].values[0]
-#             anomalous_exponent = track_df['anomalous_exponent'].values[0]
-
-#             # Find the starting point in metrics_df
-#             start_index = metrics_df[(metrics_df['unique_id'] == unique_id) & 
-#                                      (metrics_df['x_um'] == x_start) & 
-#                                      (metrics_df['y_um'] == y_start)].index
-            
-#             # Skip if no matching start index is found
-#             if len(start_index) == 0:
-#                 continue
-            
-#             # Extract the segment based on the time_window length
-#             start_index = start_index[0]
-#             metrics_track_segment = metrics_df.iloc[start_index:start_index + time_window]
-            
-#             # Check if we have exactly time_window frames; if not, skip this track
-#             if len(metrics_track_segment) < time_window:
-#                 continue
-            
-#             # Append to the track segments list
-#             track_segments.append(metrics_track_segment[['x_um', 'y_um']])
-#             track_info.append((motion_class, unique_id, time_window_id, anomalous_exponent, x_start, y_start))  # Store info for annotations
-
-#     # Determine global axis range if not provided
-#     if axis_range is None:
-#         x_ranges = [segment['x_um'].max() - segment['x_um'].min() for segment in track_segments]
-#         y_ranges = [segment['y_um'].max() - segment['y_um'].min() for segment in track_segments]
-#         max_range = max(max(x_ranges), max(y_ranges))
-#         axis_range = max_range  # Use this as the global axis range
-
-#     # Set up figure with optional transparency and adaptable subplot size
-#     figure_background = 'none' if transparent_background else 'white'
-#     axis_background = (0, 0, 0, 0) if transparent_background else 'white'
-    
-#     fig, axes = plt.subplots(len(motion_classes), num_tracks, figsize=(figsizemultiplier * num_tracks, figsizemultiplier * len(motion_classes)), facecolor=figure_background)
-#     fig.subplots_adjust(wspace=0.0001, hspace=0.0001)  # Tighter spacing
-    
-#     if len(motion_classes) == 1:
-#         axes = [axes]
-
-#     # Plot each track segment
-#     for idx, (segment, info) in enumerate(zip(track_segments, track_info)):
-#         motion_class, unique_id, time_window_id, anomalous_exponent, x_start, y_start = info
-#         x_coords = segment['x_um'].values
-#         y_coords = segment['y_um'].values
-
-#         # Calculate centroid for the current track segment
-#         x_centroid = x_coords.mean()
-#         y_centroid = y_coords.mean()
-
-#         # Calculate subplot row and column index
-#         i = list(motion_classes).index(motion_class)
-#         j = idx % num_tracks
-        
-#         # Plot the track on the subplot
-#         ax = axes[i][j] if len(motion_classes) > 1 else axes[j]
-#         ax.plot(x_coords, y_coords, color=motion_color_map[motion_class], linewidth=1.5)
-        
-#         # Set axis limits centered around the centroid with the global range
-#         ax.set_xlim(x_centroid - axis_range / 2, x_centroid + axis_range / 2)
-#         ax.set_ylim(y_centroid - axis_range / 2, y_centroid + axis_range / 2)
-        
-#         # Set transparent axis background if requested
-#         ax.set_facecolor(axis_background)  # Transparent axis background
-
-#         # Remove all plot aesthetics
-#         ax.axis('off')  # Turn off the axis, including ticks and lines
-
-#         # Add motion class label only to the first plot in each row
-#         if j == 0:
-#             ax.text(0.5, 1.15, motion_class, ha='center', va='top', transform=ax.transAxes, fontsize=text_size, weight='bold', color=annotation_color)
-
-#         # Optionally add annotations for unique_id, time window, and anomalous exponent
-#         if show_annotations:
-#             ax.text(0.5, 1.05, f'{unique_id}\nTW: {time_window_id}\nα: {anomalous_exponent:.2f}', 
-#                     ha='center', va='top', transform=ax.transAxes, fontsize=text_size, color=annotation_color)
-
-#     # Prepare the DataFrame with plotted tracks info
-#     plotted_info_df = pd.DataFrame(track_info, columns=['motion_class', 'unique_id', 'time_window', 'anomalous_exponent', 'x_start', 'y_start'])
-
-#     # Show the minimalist plot
-#     plt.show()
-
-#     return plotted_info_df
-
-
-
-
-
-
 def plot_tracks_by_motion_class(
     time_windowed_df, 
     metrics_df, 
@@ -3826,14 +3682,11 @@ def plot_tracks_by_motion_class(
     time_window=config.TIME_WINDOW, 
     overlap=config.OVERLAP
 ):
-    # Determine unique motion classes and assign colors using the specified colormap
-    motion_classes = time_windowed_df['motion_class'].unique()
-    
-    # Use provided order or default to the natural order
-    if order:
-        motion_classes = [cls for cls in order if cls in motion_classes]
+    # Use the specified order for motion classes, or get unique classes from the data
+    motion_classes = order if order else time_windowed_df['motion_class'].unique()
     print(f"Plotting motion classes in the following order: {motion_classes}")
     
+    # Assign colors based on the order of motion classes
     if colormap == 'colorblind':
         colors = sns.color_palette("colorblind", len(motion_classes))
     elif colormap == 'Dark2':
@@ -3842,7 +3695,7 @@ def plot_tracks_by_motion_class(
     else:
         colors = plt.get_cmap(colormap, len(motion_classes)).colors
     
-    # Map each motion class to a specific color
+    # Map each motion class to a specific color based on the specified or default order
     motion_color_map = {motion_class: colors[i] for i, motion_class in enumerate(motion_classes)}
 
     # Collect all selected track segments for range calculation
@@ -3894,17 +3747,17 @@ def plot_tracks_by_motion_class(
         max_range = max(max(x_ranges), max(y_ranges))
         axis_range = max_range  # Use this as the global axis range
 
-    # Calculate an optimal layout for each motion class
-    fig_rows = len(motion_classes)
-    fig_cols = num_tracks if num_tracks <= 10 else math.ceil(num_tracks / 2)
-    subplot_rows = 2 if num_tracks > 10 else 1
+    # Adjust layout to keep each motion class in columns with a maximum of 10 tracks per column
+    columns_per_class = math.ceil(num_tracks / 10)  # Number of columns per motion class
+    fig_cols = len(motion_classes) * columns_per_class
+    fig_rows = min(num_tracks, 10)
 
     # Set up figure with optional transparency and adaptable subplot size
     figure_background = 'none' if transparent_background else 'white'
     axis_background = (0, 0, 0, 0) if transparent_background else 'white'
     
     # Calculate adaptable figsize based on rows and columns
-    fig, axes = plt.subplots(fig_rows * subplot_rows, fig_cols, figsize=(figsizemultiplier * fig_cols, figsizemultiplier * fig_rows), facecolor=figure_background)
+    fig, axes = plt.subplots(fig_rows, fig_cols, figsize=(figsizemultiplier * fig_cols, figsizemultiplier * fig_rows / 2), facecolor=figure_background)
     fig.subplots_adjust(wspace=0.0001, hspace=0.0001)  # Tighter spacing
     
     if len(motion_classes) == 1:
@@ -3920,9 +3773,9 @@ def plot_tracks_by_motion_class(
         x_centroid = x_coords.mean()
         y_centroid = y_coords.mean()
 
-        # Calculate subplot row and column index for multi-row display
-        i = list(motion_classes).index(motion_class) * subplot_rows + (idx // fig_cols) % subplot_rows
-        j = idx % fig_cols
+        # Calculate subplot column and row index
+        j = list(motion_classes).index(motion_class) * columns_per_class + (idx // fig_rows) % columns_per_class
+        i = idx % fig_rows
 
         # Plot the track on the subplot
         ax = axes[i, j] if len(motion_classes) > 1 else axes[j]
@@ -3938,8 +3791,8 @@ def plot_tracks_by_motion_class(
         # Remove all plot aesthetics
         ax.axis('off')  # Turn off the axis, including ticks and lines
 
-        # Add motion class label only to the first plot in each row
-        if j == 0 and i % subplot_rows == 0:
+        # Add motion class label only to the first plot in each set of columns
+        if i == 0 and (idx // fig_rows) % columns_per_class == 0:
             ax.text(0.5, 1.15, motion_class, ha='center', va='top', transform=ax.transAxes, fontsize=text_size, weight='bold', color=annotation_color)
 
         # Optionally add annotations for unique_id, time window, and anomalous exponent
