@@ -810,7 +810,7 @@ class ParticleMetrics:
         D, alpha = popt[0], popt[1]
 
         # Print the chosen tolerance for consistency
-        print(f"Using consistent tolerance: {self.tolerance}")
+        # print(f"Using consistent tolerance: {self.tolerance}") #took this out for now
 
         # Classify the type of motion with consistent tolerance
         if alpha < 1 - self.tolerance:
