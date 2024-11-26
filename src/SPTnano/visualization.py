@@ -1046,19 +1046,21 @@ def save_movie(viewer, tracks, feature='particle', save_path='movie.mov'):
     
     # Automatically set the keyframes for the start, middle, and end
     num_frames = len(tracks['frame'].unique())
+
+    
     
     # Start keyframe (frame 0)
     viewer.dims.set_point(0, 0)
-    animation.capture_keyframe()
+    animation.capture_keyframe(steps=num_frames-1)
 
     # Middle keyframe (middle frame)
     middle_frame = num_frames // 2
     viewer.dims.set_point(0, middle_frame)
-    animation.capture_keyframe()
+    animation.capture_keyframe(steps=num_frames-1)
 
     # End keyframe (last frame)
     viewer.dims.set_point(0, num_frames - 1)
-    animation.capture_keyframe()
+    animation.capture_keyframe(steps=num_frames-1)
 
     # Save the animation to the specified path
     animation.animate(save_path, canvas_only=True)  # canvas_only=True to exclude controls
