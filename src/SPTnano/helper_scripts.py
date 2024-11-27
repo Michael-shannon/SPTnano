@@ -447,3 +447,482 @@ def create_cut_directory(master_folder_path):
 
 
 
+# def clean_and_split_tracks(df, segment_length_threshold=0.3, remove_short_tracks=True, min_track_length=None):
+#     """
+#     Clean and split tracks based on segment length thresholds. Tracks with segments exceeding the threshold
+#     are split, erroneous segments are removed, and resulting subtracks are reassigned unique IDs.
+    
+#     Parameters:
+#     - df: pd.DataFrame, input dataframe containing particle tracking data with `x_um`, `y_um`, `unique_id`, and `time_s`.
+#     - segment_length_threshold: float, the maximum allowable segment length (in micrometers).
+#     - remove_short_tracks: bool, whether to remove tracks shorter than the minimum track length after splitting.
+#     - min_track_length: int, the minimum number of frames for a track to be considered valid after splitting.
+#                         Defaults to the size of the time window if not provided.
+    
+#     Returns:
+#     - cleaned_df: pd.DataFrame, the cleaned and split dataframe.
+#     - report: dict, a summary report detailing the modifications made to the dataset.
+#     """
+#     # Ensure `min_track_length` is specified
+#     if min_track_length is None:
+#         raise ValueError("Please specify `min_track_length` to remove short tracks.")
+
+#     original_track_count = df['unique_id'].nunique()
+#     original_row_count = len(df)
+
+#     # Calculate segment lengths
+#     df = df.sort_values(by=['unique_id', 'frame'])
+#     df[['x_um_prev', 'y_um_prev']] = df.groupby('unique_id')[['x_um', 'y_um']].shift(1)
+#     df['segment_len_um'] = np.sqrt(
+#         (df['x_um'] - df['x_um_prev'])**2 + 
+#         (df['y_um'] - df['y_um_prev'])**2
+#     )
+#     df['segment_len_um'] = df['segment_len_um'].fillna(0)
+
+#     # Initialize variables for splitting
+#     new_tracks = []
+#     new_unique_id = 0
+#     split_track_count = 0
+#     deleted_segments_count = 0
+
+#     # Process each track individually
+#     for unique_id, track_data in df.groupby('unique_id'):
+#         current_track = []
+#         previous_valid = None
+
+#         for i, row in track_data.iterrows():
+#             segment_length = row['segment_len_um']
+            
+#             if segment_length > segment_length_threshold:
+#                 # Count deleted rows
+#                 deleted_segments_count += 1
+
+#                 # Save current valid track if exists
+#                 if current_track:
+#                     split_track_count += 1
+#                     track_df = pd.DataFrame(current_track)
+#                     track_df['unique_id'] = new_unique_id
+#                     new_tracks.append(track_df)
+#                     new_unique_id += 1
+#                     current_track = []
+#                 previous_valid = False  # Mark the current segment as invalid
+#             else:
+#                 if previous_valid is False:
+#                     # Start a new track after invalid segments
+#                     split_track_count += 1
+#                     track_df = pd.DataFrame(current_track)
+#                     track_df['unique_id'] = new_unique_id
+#                     new_tracks.append(track_df)
+#                     new_unique_id += 1
+#                     current_track = []
+#                 current_track.append(row)
+#                 previous_valid = True
+
+#         # Save leftover valid track if exists
+#         if current_track:
+#             track_df = pd.DataFrame(current_track)
+#             track_df['unique_id'] = new_unique_id
+#             new_tracks.append(track_df)
+#             new_unique_id += 1
+
+#     # Combine all new tracks
+#     if new_tracks:
+#         cleaned_df = pd.concat(new_tracks).reset_index(drop=True)
+
+#         # Optionally remove short tracks
+#         if remove_short_tracks:
+#             cleaned_df['track_length'] = cleaned_df.groupby('unique_id')['unique_id'].transform('size')
+#             cleaned_df = cleaned_df[cleaned_df['track_length'] >= min_track_length]
+#             cleaned_df.drop(columns=['track_length'], inplace=True)
+#     else:
+#         cleaned_df = pd.DataFrame(columns=df.columns)  # Empty dataframe if no valid tracks remain
+
+#     # Generate report
+#     final_track_count = cleaned_df['unique_id'].nunique()
+#     final_row_count = len(cleaned_df)
+
+#     report = {
+#         'original_track_count': original_track_count,
+#         'final_track_count': final_track_count,
+#         'tracks_split': split_track_count,
+#         'deleted_segments': deleted_segments_count,
+#         'original_row_count': original_row_count,
+#         'final_row_count': final_row_count,
+#     }
+
+#     return cleaned_df, report
+
+
+# def clean_and_split_tracks(df, segment_length_threshold=0.3, remove_short_tracks=True, min_track_length=None):
+#     """
+#     Clean and split tracks based on segment length thresholds. Tracks with segments exceeding the threshold
+#     are split, erroneous segments are removed, and resulting subtracks are reassigned unique IDs.
+
+#     Parameters:
+#     - df: pd.DataFrame, input dataframe containing particle tracking data with `x_um`, `y_um`, `unique_id`, and `time_s`.
+#     - segment_length_threshold: float, the maximum allowable segment length (in micrometers).
+#     - remove_short_tracks: bool, whether to remove tracks shorter than the minimum track length after splitting.
+#     - min_track_length: int, the minimum number of frames for a track to be considered valid after splitting.
+#                         Defaults to the size of the time window if not provided.
+
+#     Returns:
+#     - cleaned_df: pd.DataFrame, the cleaned and split dataframe.
+#     - report: dict, a summary report detailing the modifications made to the dataset.
+#     """
+#     if min_track_length is None:
+#         raise ValueError("Please specify `min_track_length` to remove short tracks.")
+
+#     original_track_count = df['unique_id'].nunique()
+#     original_row_count = len(df)
+
+#     # Calculate segment lengths
+#     df = df.sort_values(by=['unique_id', 'frame'])
+#     df[['x_um_prev', 'y_um_prev']] = df.groupby('unique_id')[['x_um', 'y_um']].shift(1)
+#     df['segment_len_um'] = np.sqrt(
+#         (df['x_um'] - df['x_um_prev'])**2 + 
+#         (df['y_um'] - df['y_um_prev'])**2
+#     )
+#     df['segment_len_um'] = df['segment_len_um'].fillna(0)
+
+#     # Assign `file_id` for consistent unique_id generation
+#     df['file_id'] = pd.Categorical(df['filename']).codes
+
+#     # Initialize variables for splitting
+#     new_tracks = []
+#     split_track_count = 0
+#     deleted_segments_count = 0
+#     next_particle_id = 0  # Used to assign new particle IDs within the same file
+
+#     # Process each track individually
+#     for unique_id, track_data in df.groupby('unique_id'):
+#         current_track = []
+#         previous_valid = None
+
+#         for i, row in track_data.iterrows():
+#             segment_length = row['segment_len_um']
+
+#             if segment_length > segment_length_threshold:
+#                 # Count deleted rows
+#                 deleted_segments_count += 1
+
+#                 # Save the current valid track if it exists
+#                 if current_track:
+#                     split_track_count += 1
+#                     track_df = pd.DataFrame(current_track)
+#                     track_df['particle'] = next_particle_id
+#                     track_df['file_id'] = track_data['file_id'].iloc[0]  # Carry over `file_id`
+#                     track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
+#                     new_tracks.append(track_df)
+#                     next_particle_id += 1
+#                     current_track = []
+#                 previous_valid = False  # Mark the current segment as invalid
+#             else:
+#                 if previous_valid is False:
+#                     # Start a new track after invalid segments
+#                     split_track_count += 1
+#                     track_df = pd.DataFrame(current_track)
+#                     track_df['particle'] = next_particle_id
+#                     track_df['file_id'] = track_data['file_id'].iloc[0]  # Carry over `file_id`
+#                     track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str) + '.0'
+#                     new_tracks.append(track_df)
+#                     next_particle_id += 1
+#                     current_track = []
+#                 current_track.append(row)
+#                 previous_valid = True
+
+#         # Save any leftover valid track
+#         if current_track:
+#             track_df = pd.DataFrame(current_track)
+#             track_df['particle'] = next_particle_id
+#             track_df['file_id'] = track_data['file_id'].iloc[0]  # Carry over `file_id`
+#             track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str) + '.0'
+#             new_tracks.append(track_df)
+#             next_particle_id += 1
+
+#     # Combine all new tracks
+#     if new_tracks:
+#         cleaned_df = pd.concat(new_tracks).reset_index(drop=True)
+
+#         # Optionally remove short tracks
+#         if remove_short_tracks:
+#             cleaned_df['track_length'] = cleaned_df.groupby('unique_id')['unique_id'].transform('size')
+#             cleaned_df = cleaned_df[cleaned_df['track_length'] >= min_track_length]
+#             cleaned_df.drop(columns=['track_length'], inplace=True)
+#     else:
+#         cleaned_df = pd.DataFrame(columns=df.columns)  # Empty dataframe if no valid tracks remain
+
+#     # Generate report
+#     final_track_count = cleaned_df['unique_id'].nunique()
+#     final_row_count = len(cleaned_df)
+
+#     report = {
+#         'original_track_count': original_track_count,
+#         'final_track_count': final_track_count,
+#         'tracks_split': split_track_count,
+#         'deleted_segments': deleted_segments_count,
+#         'original_row_count': original_row_count,
+#         'final_row_count': final_row_count,
+#     }
+
+#     return cleaned_df, report
+
+
+
+# def clean_and_split_tracks(df, segment_length_threshold=0.3, remove_short_tracks=True, min_track_length=None):
+#     """
+#     Clean and split tracks based on segment length thresholds. Tracks with segments exceeding the threshold
+#     are split, erroneous segments are removed, and resulting subtracks are reassigned unique IDs.
+
+#     Parameters:
+#     - df: pd.DataFrame, input dataframe containing particle tracking data with `x_um`, `y_um`, `unique_id`, and `time_s`.
+#     - segment_length_threshold: float, the maximum allowable segment length (in micrometers).
+#     - remove_short_tracks: bool, whether to remove tracks shorter than the minimum track length after splitting.
+#     - min_track_length: int, the minimum number of frames for a track to be considered valid after splitting.
+
+#     Returns:
+#     - cleaned_df: pd.DataFrame, the cleaned and split dataframe.
+#     - removed_unique_ids: list, `unique_id`s that were removed due to short length or other reasons.
+#     - report: dict, a summary report detailing the modifications made to the dataset.
+#     """
+#     if min_track_length is None:
+#         raise ValueError("Please specify `min_track_length` to remove short tracks.")
+
+#     original_track_count = df['unique_id'].nunique()
+#     original_row_count = len(df)
+
+#     # Calculate segment lengths
+#     df = df.sort_values(by=['unique_id', 'frame'])
+#     df[['x_um_prev', 'y_um_prev']] = df.groupby('unique_id')[['x_um', 'y_um']].shift(1)
+#     df['segment_len_um'] = np.sqrt(
+#         (df['x_um'] - df['x_um_prev'])**2 + 
+#         (df['y_um'] - df['y_um_prev'])**2
+#     )
+#     df['segment_len_um'] = df['segment_len_um'].fillna(0)
+
+#     # Assign `file_id` for consistent unique_id generation
+#     df['file_id'] = pd.Categorical(df['filename']).codes
+
+#     # Initialize variables for splitting
+#     new_tracks = []
+#     split_track_count = 0
+#     deleted_segments_count = 0
+#     next_particle_id = 0
+#     removed_unique_ids = set()  # To track removed IDs
+
+#     # Process each track individually
+#     for unique_id, track_data in df.groupby('unique_id'):
+#         current_track = []
+#         previous_valid = None
+
+#         for i, row in track_data.iterrows():
+#             segment_length = row['segment_len_um']
+
+#             if segment_length > segment_length_threshold:
+#                 # Count deleted rows
+#                 deleted_segments_count += 1
+
+#                 # Save the current valid track if it exists
+#                 if current_track:
+#                     split_track_count += 1
+#                     track_df = pd.DataFrame(current_track)
+#                     track_df['particle'] = next_particle_id
+#                     track_df['file_id'] = track_data['file_id'].iloc[0]
+#                     track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
+#                     new_tracks.append(track_df)
+#                     next_particle_id += 1
+#                     current_track = []
+#                 previous_valid = False
+#             else:
+#                 if previous_valid is False:
+#                     split_track_count += 1
+#                     track_df = pd.DataFrame(current_track)
+#                     track_df['particle'] = next_particle_id
+#                     track_df['file_id'] = track_data['file_id'].iloc[0]
+#                     track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
+#                     new_tracks.append(track_df)
+#                     next_particle_id += 1
+#                     current_track = []
+#                 current_track.append(row)
+#                 previous_valid = True
+
+#         # Save any leftover valid track
+#         if current_track:
+#             track_df = pd.DataFrame(current_track)
+#             track_df['particle'] = next_particle_id
+#             track_df['file_id'] = track_data['file_id'].iloc[0]
+#             track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
+#             new_tracks.append(track_df)
+#             next_particle_id += 1
+
+#     # Combine all new tracks
+#     if new_tracks:
+#         cleaned_df = pd.concat(new_tracks).reset_index(drop=True)
+
+#         # Optionally remove short tracks
+#         if remove_short_tracks:
+#             cleaned_df['track_length'] = cleaned_df.groupby('unique_id')['unique_id'].transform('size')
+#             removed_unique_ids = set(cleaned_df.loc[cleaned_df['track_length'] < min_track_length, 'unique_id'])
+#             cleaned_df = cleaned_df[cleaned_df['track_length'] >= min_track_length]
+#             cleaned_df.drop(columns=['track_length'], inplace=True)
+#     else:
+#         cleaned_df = pd.DataFrame(columns=df.columns)  # Empty dataframe if no valid tracks remain
+
+#     # Generate report
+#     final_track_count = cleaned_df['unique_id'].nunique()
+#     final_row_count = len(cleaned_df)
+
+#     report = {
+#         'original_track_count': original_track_count,
+#         'final_track_count': final_track_count,
+#         'tracks_split': split_track_count,
+#         'deleted_segments': deleted_segments_count,
+#         'original_row_count': original_row_count,
+#         'final_row_count': final_row_count,
+#     }
+
+#     return cleaned_df, removed_unique_ids, report
+
+
+def clean_and_split_tracks(
+    df, 
+    segment_length_threshold=0.3, 
+    remove_short_tracks=True, 
+    min_track_length_seconds=None, 
+    time_between_frames=0.1
+):
+    """
+    Clean and split tracks based on segment length thresholds. Tracks with segments exceeding the threshold
+    are split, erroneous segments are removed, and resulting subtracks are reassigned unique IDs.
+
+    Parameters:
+    - df: pd.DataFrame, input dataframe containing particle tracking data with `x_um`, `y_um`, `unique_id`, and `time_s`.
+    - segment_length_threshold: float, the maximum allowable segment length (in micrometers).
+    - remove_short_tracks: bool, whether to remove tracks shorter than the minimum track length after splitting.
+    - min_track_length_seconds: float, the minimum track duration in seconds to be retained.
+    - time_between_frames: float, time duration between frames in seconds (from config).
+
+    Returns:
+    - cleaned_df: pd.DataFrame, the cleaned and split dataframe.
+    - removed_unique_ids: list, `unique_id`s that were removed due to short length or other reasons.
+    - report: dict, a summary report detailing the modifications made to the dataset.
+    """
+    if min_track_length_seconds is not None:
+        min_track_length_frames = int(min_track_length_seconds / time_between_frames)
+    else:
+        raise ValueError("Please specify `min_track_length_seconds`.")
+
+    original_track_count = df['unique_id'].nunique()
+    original_row_count = len(df)
+
+    # Calculate segment lengths
+    df = df.sort_values(by=['unique_id', 'frame'])
+    df[['x_um_prev', 'y_um_prev']] = df.groupby('unique_id')[['x_um', 'y_um']].shift(1)
+    df['segment_len_um'] = np.sqrt(
+        (df['x_um'] - df['x_um_prev'])**2 + 
+        (df['y_um'] - df['y_um_prev'])**2
+    )
+    df['segment_len_um'] = df['segment_len_um'].fillna(0)
+
+    # Assign `file_id` for consistent unique_id generation
+    df['file_id'] = pd.Categorical(df['filename']).codes
+
+    # Initialize variables for splitting
+    new_tracks = []
+    split_track_count = 0
+    deleted_segments_count = 0
+    next_particle_id = 0.0
+    removed_unique_ids = set()  # To track removed IDs
+
+    # Process each track individually
+    for unique_id, track_data in df.groupby('unique_id'):
+        current_track = []
+        previous_valid = None
+
+        for i, row in track_data.iterrows():
+            segment_length = row['segment_len_um']
+
+            if segment_length > segment_length_threshold:
+                # Count deleted rows
+                deleted_segments_count += 1
+
+                # Save the current valid track if it exists
+                if current_track:
+                    split_track_count += 1
+                    track_df = pd.DataFrame(current_track)
+                    track_df['particle'] = next_particle_id
+                    track_df['file_id'] = track_data['file_id'].iloc[0]
+                    # track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
+                    track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].map('{:.1f}'.format)
+
+                    print(f'Current track particle ID: {next_particle_id}')  # Print particle ID for each track]}')
+                    print(f'Current track file ID: {track_data["file_id"].iloc[0]}')  # Print file ID for each track
+                    print(f'Current track df:')
+                    print(track_df.particle.unique())
+                    new_tracks.append(track_df)
+                    next_particle_id += 1.0
+                    current_track = []
+                previous_valid = False
+            else:
+                if previous_valid is False:
+                    split_track_count += 1
+                    track_df = pd.DataFrame(current_track)
+                    track_df['particle'] = next_particle_id
+                    track_df['file_id'] = track_data['file_id'].iloc[0]
+                    # track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
+                    track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].map('{:.1f}'.format)
+
+
+                    print(f'Current track particle ID: {next_particle_id}')  # Print particle ID for each track]}')
+                    print(f'Current track file ID: {track_data["file_id"].iloc[0]}')  # Print file ID for each track
+                    print(f'Current track df:')
+                    print(track_df.particle.unique())
+
+                    new_tracks.append(track_df)
+                    next_particle_id += 1.0
+                    current_track = []
+                current_track.append(row)
+                previous_valid = True
+
+        # Save any leftover valid track
+        if current_track:
+            track_df = pd.DataFrame(current_track)
+            track_df['particle'] = next_particle_id
+            track_df['file_id'] = track_data['file_id'].iloc[0]
+            # track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
+            track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].map('{:.1f}'.format)
+
+            print(f'Current track particle ID: {next_particle_id}')  # Print particle ID for each track]}')
+            print(f'Current track file ID: {track_data["file_id"].iloc[0]}')  # Print file ID for each track
+            print(f'Current track df:')
+            print(track_df.particle.unique())
+            new_tracks.append(track_df)
+            next_particle_id += 1.0
+
+    # Combine all new tracks
+    if new_tracks:
+        cleaned_df = pd.concat(new_tracks).reset_index(drop=True)
+
+        # Optionally remove short tracks
+        if remove_short_tracks:
+            cleaned_df['track_length'] = cleaned_df.groupby('unique_id')['unique_id'].transform('size')
+            removed_unique_ids = set(cleaned_df.loc[cleaned_df['track_length'] < min_track_length_frames, 'unique_id'])
+            cleaned_df = cleaned_df[cleaned_df['track_length'] >= min_track_length_frames]
+            cleaned_df.drop(columns=['track_length'], inplace=True)
+    else:
+        cleaned_df = pd.DataFrame(columns=df.columns)  # Empty dataframe if no valid tracks remain
+
+    # Generate report
+    final_track_count = cleaned_df['unique_id'].nunique()
+    final_row_count = len(cleaned_df)
+
+    report = {
+        'original_track_count': original_track_count,
+        'final_track_count': final_track_count,
+        'tracks_split': split_track_count,
+        'deleted_segments': deleted_segments_count,
+        'original_row_count': original_row_count,
+        'final_row_count': final_row_count,
+    }
+
+    return cleaned_df, removed_unique_ids, report
+
