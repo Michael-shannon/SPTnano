@@ -63,19 +63,37 @@ class ParticleMetrics:
     def msd_model(t, D, alpha):
         return 4 * D * t**alpha
     
+    # def calculate_distances(self):
+    #     """
+    #     Calculate the distances between consecutive frames for each particle in micrometers.
+    #     Skip calculation if 'segment_len_um' already exists.
+    #     """
+    #     self.metrics_df = self.metrics_df.sort_values(by=['unique_id', 'frame'])
+    #     self.metrics_df[['x_um_prev', 'y_um_prev']] = self.metrics_df.groupby('unique_id')[['x_um', 'y_um']].shift(1)
+    #     self.metrics_df['segment_len_um'] = np.sqrt(
+    #         (self.metrics_df['x_um'] - self.metrics_df['x_um_prev'])**2 + 
+    #         (self.metrics_df['y_um'] - self.metrics_df['y_um_prev'])**2
+    #     )
+    #     # Fill NaN values with 0
+    #     self.metrics_df['segment_len_um'] = self.metrics_df['segment_len_um'].fillna(0)
+    #     return self.metrics_df
+    
     def calculate_distances(self):
         """
         Calculate the distances between consecutive frames for each particle in micrometers.
+        Skip calculation if 'segment_len_um' already exists.
         """
-        self.metrics_df = self.metrics_df.sort_values(by=['unique_id', 'frame'])
-        self.metrics_df[['x_um_prev', 'y_um_prev']] = self.metrics_df.groupby('unique_id')[['x_um', 'y_um']].shift(1)
-        self.metrics_df['segment_len_um'] = np.sqrt(
-            (self.metrics_df['x_um'] - self.metrics_df['x_um_prev'])**2 + 
-            (self.metrics_df['y_um'] - self.metrics_df['y_um_prev'])**2
-        )
-        # Fill NaN values with 0
-        self.metrics_df['segment_len_um'] = self.metrics_df['segment_len_um'].fillna(0)
+        if 'segment_len_um' not in self.metrics_df.columns:
+            self.metrics_df = self.metrics_df.sort_values(by=['unique_id', 'frame'])
+            self.metrics_df[['x_um_prev', 'y_um_prev']] = self.metrics_df.groupby('unique_id')[['x_um', 'y_um']].shift(1)
+            self.metrics_df['segment_len_um'] = np.sqrt(
+                (self.metrics_df['x_um'] - self.metrics_df['x_um_prev'])**2 + 
+                (self.metrics_df['y_um'] - self.metrics_df['y_um_prev'])**2
+            )
+            self.metrics_df['segment_len_um'] = self.metrics_df['segment_len_um'].fillna(0)
         return self.metrics_df
+
+
 
     def calculate_speeds(self):
         """
