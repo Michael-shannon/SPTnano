@@ -11,6 +11,7 @@ import tifffile as tiff
 # import tifffile as tiff
 from tifffile import TiffWriter
 from nd2reader import ND2Reader
+import config
 
 def generate_file_tree(startpath):
     tree = []
@@ -854,10 +855,10 @@ def clean_and_split_tracks(
                     # track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
                     track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].map('{:.1f}'.format)
 
-                    print(f'Current track particle ID: {next_particle_id}')  # Print particle ID for each track]}')
-                    print(f'Current track file ID: {track_data["file_id"].iloc[0]}')  # Print file ID for each track
-                    print(f'Current track df:')
-                    print(track_df.particle.unique())
+                    # print(f'Current track particle ID: {next_particle_id}')  # Print particle ID for each track]}')
+                    # print(f'Current track file ID: {track_data["file_id"].iloc[0]}')  # Print file ID for each track
+                    # print(f'Current track df:')
+                    # print(track_df.particle.unique())
                     new_tracks.append(track_df)
                     next_particle_id += 1.0
                     current_track = []
@@ -872,10 +873,10 @@ def clean_and_split_tracks(
                     track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].map('{:.1f}'.format)
 
 
-                    print(f'Current track particle ID: {next_particle_id}')  # Print particle ID for each track]}')
-                    print(f'Current track file ID: {track_data["file_id"].iloc[0]}')  # Print file ID for each track
-                    print(f'Current track df:')
-                    print(track_df.particle.unique())
+                    # print(f'Current track particle ID: {next_particle_id}')  # Print particle ID for each track]}')
+                    # print(f'Current track file ID: {track_data["file_id"].iloc[0]}')  # Print file ID for each track
+                    # print(f'Current track df:')
+                    # print(track_df.particle.unique())
 
                     new_tracks.append(track_df)
                     next_particle_id += 1.0
@@ -891,10 +892,10 @@ def clean_and_split_tracks(
             # track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
             track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].map('{:.1f}'.format)
 
-            print(f'Current track particle ID: {next_particle_id}')  # Print particle ID for each track]}')
-            print(f'Current track file ID: {track_data["file_id"].iloc[0]}')  # Print file ID for each track
-            print(f'Current track df:')
-            print(track_df.particle.unique())
+            # print(f'Current track particle ID: {next_particle_id}')  # Print particle ID for each track]}')
+            # print(f'Current track file ID: {track_data["file_id"].iloc[0]}')  # Print file ID for each track
+            # print(f'Current track df:')
+            # print(track_df.particle.unique())
             new_tracks.append(track_df)
             next_particle_id += 1.0
 
@@ -925,4 +926,166 @@ def clean_and_split_tracks(
     }
 
     return cleaned_df, removed_unique_ids, report
+
+
+# def add_motion_class(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW):
+#     """
+#     Add a 'motion_class' column to metrics_df based on time_windowed_df with debugging.
+    
+#     Parameters:
+#     - metrics_df: DataFrame containing the particle tracking data.
+#     - time_windowed_df: DataFrame containing the motion class for time windows.
+#     - time_window: Number of frames in a time window (default 6).
+    
+#     Returns:
+#     - Updated metrics_df with 'motion_class' column added.
+#     """
+#     # Initialize the motion_class column with empty values
+#     metrics_df['motion_class'] = ''
+
+#     # Temporary dictionary to store motion classes per frame
+#     frame_classes = {}
+
+#     # Debugging counters
+#     total_windows = 0
+#     matched_windows = 0
+#     unmatched_rows = set(metrics_df.index)  # Track unmatched rows
+
+#     # Tolerance for floating-point comparison
+#     tolerance = 1e-5
+
+#     # Iterate over each unique ID in the time_windowed_df
+#     for unique_id in time_windowed_df['unique_id'].unique():
+#         # Filter data for the current unique_id
+#         tw_df = time_windowed_df[time_windowed_df['unique_id'] == unique_id]
+#         m_df = metrics_df[metrics_df['unique_id'] == unique_id]  # Match particle ID
+
+#         if m_df.empty:
+#             print(f"Warning: No matching data found in metrics_df for unique_id '{unique_id}'")
+#             continue
+
+#         for _, tw_row in tw_df.iterrows():
+#             total_windows += 1
+#             x_start, y_start = tw_row['x_um_start'], tw_row['y_um_start']
+#             time_win_class = tw_row['motion_class']
+
+#             # Locate the start index in metrics_df (using tolerance for floating-point comparison)
+#             start_idx = m_df[
+#                 (abs(m_df['x_um'] - x_start) < tolerance) & 
+#                 (abs(m_df['y_um'] - y_start) < tolerance)
+#             ].index
+
+#             if not start_idx.empty:
+#                 matched_windows += 1
+#                 # Calculate frame range for the time window
+#                 start_idx = start_idx[0]
+#                 frame_range = range(start_idx, start_idx + time_window)
+
+#                 # Assign the motion_class for this time window
+#                 for frame_idx in frame_range:
+#                     if frame_idx < len(metrics_df):
+#                         if frame_idx in unmatched_rows:
+#                             unmatched_rows.remove(frame_idx)
+#                         if frame_idx not in frame_classes:
+#                             frame_classes[frame_idx] = []
+#                         frame_classes[frame_idx].append(time_win_class)
+#             else:
+#                 print(f"Warning: No matching start point found for x_start={x_start}, y_start={y_start} in unique_id '{unique_id}'")
+
+#     # Apply majority rule to resolve overlaps
+#     for frame_idx, classes in frame_classes.items():
+#         # Assign the most frequent motion_class for this frame
+#         metrics_df.at[frame_idx, 'motion_class'] = max(set(classes), key=classes.count)
+
+#     # Assign 'unlabeled' to unmatched rows
+#     for idx in unmatched_rows:
+#         metrics_df.at[idx, 'motion_class'] = 'unlabeled'
+
+#     # Debugging output
+#     print(f"Total time windows processed: {total_windows}")
+#     print(f"Matched time windows: {matched_windows}")
+#     print(f"Unmatched rows assigned 'unlabeled': {len(unmatched_rows)}")
+
+#     return metrics_df
+
+def add_motion_class(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW):
+    """
+    Add a 'motion_class' column to metrics_df based on time_windowed_df with debugging.
+    
+    Parameters:
+    - metrics_df: DataFrame containing the particle tracking data.
+    - time_windowed_df: DataFrame containing the motion class for time windows.
+    - time_window: Number of frames in a time window (default 6).
+    
+    Returns:
+    - Updated metrics_df with 'motion_class' column added.
+    """
+    # Initialize the motion_class column with empty values
+    metrics_df['motion_class'] = ''
+
+    # Temporary dictionary to store motion classes per frame
+    frame_classes = {}
+
+    # Debugging counters
+    total_windows = 0
+    matched_windows = 0
+    unmatched_rows = set(metrics_df.index)  # Track unmatched rows
+
+    # Tolerance for floating-point comparison
+    tolerance = 1e-5
+
+    # Iterate over each unique ID in the time_windowed_df
+    for unique_id in time_windowed_df['unique_id'].unique():
+        # Filter data for the current unique_id
+        tw_df = time_windowed_df[time_windowed_df['unique_id'] == unique_id]
+        m_df = metrics_df[metrics_df['unique_id'] == unique_id]  # Match particle ID
+
+        if m_df.empty:
+            print(f"Warning: No matching data found in metrics_df for unique_id '{unique_id}'")
+            continue
+
+        for _, tw_row in tw_df.iterrows():
+            total_windows += 1
+            x_start, y_start = tw_row['x_um_start'], tw_row['y_um_start']
+            time_win_class = tw_row['motion_class']
+
+            # Locate the start index in metrics_df (using tolerance for floating-point comparison)
+            start_idx = m_df[
+                (abs(m_df['x_um'] - x_start) < tolerance) & 
+                (abs(m_df['y_um'] - y_start) < tolerance)
+            ].index
+
+            if not start_idx.empty:
+                matched_windows += 1
+                # Calculate frame range for the time window
+                start_idx = start_idx[0]
+                frame_range = range(start_idx, start_idx + time_window)
+                # print(len(frame_range))
+
+                # Assign the motion_class for this time window
+                for frame_idx in frame_range:
+                    if frame_idx < len(metrics_df):
+                        if frame_idx in unmatched_rows:
+                            unmatched_rows.remove(frame_idx)
+                        if frame_idx not in frame_classes:
+                            frame_classes[frame_idx] = []
+                        frame_classes[frame_idx].append(time_win_class)
+            else:
+                print(f"Warning: No matching start point found for x_start={x_start}, y_start={y_start} in unique_id '{unique_id}'")
+
+    # Apply majority rule to resolve overlaps
+    for frame_idx, classes in frame_classes.items():
+        # Assign the most frequent motion_class for this frame
+        metrics_df.at[frame_idx, 'motion_class'] = max(set(classes), key=classes.count)
+
+    # Assign 'unlabeled' to unmatched rows
+    for idx in unmatched_rows:
+        metrics_df.at[idx, 'motion_class'] = 'unlabeled'
+
+    # Debugging output
+    print(f"Total time windows processed: {total_windows}")
+    print(f"Matched time windows: {matched_windows}")
+    print(f"Unmatched rows assigned 'unlabeled': {len(unmatched_rows)}")
+
+    return metrics_df
 
