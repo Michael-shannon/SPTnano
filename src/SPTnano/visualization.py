@@ -4772,11 +4772,17 @@ def plot_tracks_static(
             else:
                 num_classes = max(tracks_df['segment_color'].max() - tracks_df['segment_color'].min(), 1)
 
+            # line_color = (
+            #     plt.cm.inferno(i / n_points) if gradient else
+            #     plt.cm.get_cmap(colorway)(track['segment_color'].iloc[i] / num_classes)
+            # )
+# Normalize `segment_color` values to the range [0, 1]
+            normalized_color = (track['segment_color'].iloc[i] - tracks_df['segment_color'].min()) / num_classes
+
             line_color = (
                 plt.cm.inferno(i / n_points) if gradient else
-                plt.cm.get_cmap(colorway)(track['segment_color'].iloc[i] / num_classes)
+                plt.cm.get_cmap(colorway)(normalized_color)
             )
-
 
             ax.plot(
                 track.iloc[i:i+2]['x_um'], track.iloc[i:i+2]['y_um'],
@@ -4836,29 +4842,45 @@ def plot_tracks_static(
 
 
 
-    # Add a legend for the coloring
+    # # Add a legend for the coloring
+    # if tracks_df[color_by].dtype == object or pd.api.types.is_categorical_dtype(tracks_df[color_by]):
+    #     # For categorical or string-based coloring
+    #     handles = [
+    #         # plt.Line2D([0], [0], color=plt.cm.get_cmap(colorway)(i % 20 / 20), lw=2, label=cls)
+    #         plt.Line2D([0], [0], color=plt.cm.get_cmap(colorway)(i / max(len(unique_classes) - 1, 1)), lw=2, label=cls)
+    #         for i, cls in enumerate(unique_classes)
+    #     ]
+    # else:
+    #     # For numeric coloring, show a gradient
+    #     handles = [
+    #         plt.Line2D([0], [0], color=plt.cm.get_cmap(colorway)(i / 10), lw=2, label=f"Value {i}")
+    #         for i in range(10)
+    #     ]
+
+    # # Place the legend outside the plot area
+    # ax.legend(
+    #     handles=handles,
+    #     loc='upper left',
+    #     bbox_to_anchor=(1.05, 1),
+    #     borderaxespad=0.,
+    #     title=f"Legend: {color_by}"
+    # )
+
+    # Add a legend only for categorical or string-based coloring
     if tracks_df[color_by].dtype == object or pd.api.types.is_categorical_dtype(tracks_df[color_by]):
-        # For categorical or string-based coloring
         handles = [
-            # plt.Line2D([0], [0], color=plt.cm.get_cmap(colorway)(i % 20 / 20), lw=2, label=cls)
             plt.Line2D([0], [0], color=plt.cm.get_cmap(colorway)(i / max(len(unique_classes) - 1, 1)), lw=2, label=cls)
             for i, cls in enumerate(unique_classes)
         ]
-    else:
-        # For numeric coloring, show a gradient
-        handles = [
-            plt.Line2D([0], [0], color=plt.cm.get_cmap(colorway)(i / 10), lw=2, label=f"Value {i}")
-            for i in range(10)
-        ]
+        ax.legend(
+            handles=handles,
+            loc='upper left',
+            bbox_to_anchor=(1.05, 1),
+            borderaxespad=0.,
+            title=f"Legend: {color_by}"
+        )
+    # No legend for numeric `color_by` like 'particle'
 
-    # Place the legend outside the plot area
-    ax.legend(
-        handles=handles,
-        loc='upper left',
-        bbox_to_anchor=(1.05, 1),
-        borderaxespad=0.,
-        title=f"Legend: {color_by}"
-    )
 
 
     # Save or show plot
