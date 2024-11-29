@@ -3972,6 +3972,649 @@ def plot_tracks_by_motion_class(
 
 
 
+
+# def plot_tracks_static(
+#     tracks_df,
+#     filename=None,
+#     file_id=None,
+#     location=None,
+#     condition=None,
+#     time_start=None,
+#     time_end=None,
+#     color_by='particle',
+#     overlay_image=False,
+#     master_dir=config.MASTER,
+#     scale_bar_length=5,
+#     scale_bar_position=(0.9, 0.1),
+#     scale_bar_color='white',
+#     transparent_background=True,
+#     save_path=None,
+#     display_final_frame=True,
+#     max_projection=False,
+#     contrast_limits=None,  # Tuple: (lower, upper) or None for auto
+#     invert_image=False,
+#     pixel_size_um=config.PIXELSIZE_MICRONS,  # Conversion factor: microns per pixel
+#     frame_interval=config.TIME_BETWEEN_FRAMES,
+#     gradient = False,  # Frame interval in seconds
+#     colorway = 'tab20'
+# ):
+#     """
+#     Create a static plot of tracks filtered by file and condition within a time range.
+    
+#     Parameters:
+#     (Previous parameters remain the same.)
+#     - frame_interval (float): Time interval between frames in seconds.
+#     """
+#     # remove the '' from colorway
+#     # colorway = colorway.strip("'")
+
+#     if tracks_df[color_by].dtype == object:  # Check if the column contains strings
+#         unique_classes = tracks_df[color_by].unique()
+#         class_to_int = {cls: i for i, cls in enumerate(unique_classes)}
+#         tracks_df['color_by_numeric'] = tracks_df[color_by].map(class_to_int)  # New numeric column
+#         color_by = 'color_by_numeric'  # Update color_by to use the numeric column
+
+
+#     # Filter by location
+#     if location is None:
+#         location = np.random.choice(tracks_df['Location'].unique())
+#     tracks_df = tracks_df[tracks_df['Location'] == location]
+
+#     # Filter by condition
+#     if condition is None:
+#         condition = np.random.choice(tracks_df['condition'].unique())
+#     tracks_df = tracks_df[tracks_df['condition'] == condition]
+
+#     # Filter by filename or file_id
+#     if filename is None and file_id is None:
+#         filename = np.random.choice(tracks_df['filename'].unique())
+#     elif file_id is not None:
+#         filename = tracks_df[tracks_df['file_id'] == file_id]['filename'].iloc[0]
+#     tracks_df = tracks_df[tracks_df['filename'] == filename]
+
+
+#     ###################################
+#     # Convert time_start and time_end from seconds to frames if provided
+#     min_frame = tracks_df['frame'].min()
+#     max_frame = tracks_df['frame'].max()
+#     print(f"Filename: {filename}")
+#     print(f"Min Frame: {min_frame}, Max Frame: {max_frame}")
+
+#     # Adjust time_start and time_end if out of bounds
+#     if time_start is not None:
+#         time_start_frames = int(time_start / frame_interval)
+#         if time_start_frames < min_frame or time_start_frames > max_frame:
+#             print(f"Warning: time_start={time_start} exceeds bounds. Adjusting to {min_frame * frame_interval:.2f}s.")
+#             time_start_frames = min_frame
+#     else:
+#         time_start_frames = min_frame
+
+#     if time_end is not None:
+#         time_end_frames = int(time_end / frame_interval)
+#         if time_end_frames < min_frame or time_end_frames > max_frame:
+#             print(f"Warning: time_end={time_end} exceeds bounds. Adjusting to {max_frame * frame_interval:.2f}s.")
+#             time_end_frames = max_frame
+#     else:
+#         time_end_frames = max_frame
+
+#     # Filter by adjusted time_start and time_end
+#     tracks_df = tracks_df[(tracks_df['frame'] >= time_start_frames) & (tracks_df['frame'] <= time_end_frames)]
+
+#     # Check if any data is left after filtering
+#     if tracks_df.empty:
+#         print(f"Warning: No data found for filename '{filename}' with the given time range. Trying another filename.")
+#         other_filenames = tracks_df['filename'].unique()
+#         if len(other_filenames) > 1:
+#             filename = np.random.choice([f for f in other_filenames if f != filename])
+#             print(f"Switching to new filename: {filename}")
+#             tracks_df = tracks_df[tracks_df['filename'] == filename]
+#         else:
+#             raise ValueError("No valid data available for plotting.")
+
+#     ##################################
+
+#     # Convert time_start and time_end from seconds to frames if provided
+#     if time_start is not None:
+#         time_start_frames = int(time_start / frame_interval)
+#         tracks_df = tracks_df[tracks_df['frame'] >= time_start_frames]
+#     else:
+#         time_start_frames = tracks_df['frame'].min()
+
+#     if time_end is not None:
+#         time_end_frames = int(time_end / frame_interval)
+#         tracks_df = tracks_df[tracks_df['frame'] <= time_end_frames]
+#     else:
+#         time_end_frames = tracks_df['frame'].max()
+
+#     # Convert frame numbers to seconds
+#     time_start_sec = time_start_frames * frame_interval
+#     time_end_sec = time_end_frames * frame_interval
+
+#     # Set figure and axis background based on transparency setting
+#     figure_background = 'none' if transparent_background else 'white'
+#     axis_background = (0, 0, 0, 0) if transparent_background else 'white'
+
+#     # Create a plot
+#     fig, ax = plt.subplots(figsize=(8, 8))
+#     fig.patch.set_facecolor(figure_background)
+#     ax.set_facecolor(axis_background)
+
+#     # Overlay the image if requested
+#     if overlay_image:
+#         image_filename = filename.replace('_tracked', '') + '.tif'
+#         image_path = os.path.join(master_dir, 'data', condition, image_filename)
+#         overlay_data = imread(image_path)  # Load image as 3D array
+
+#         if max_projection:
+#             # Maximum intensity projection
+#             overlay_data = np.max(overlay_data, axis=0)
+#         elif display_final_frame:
+#             # Display the final frame
+#             overlay_data = overlay_data[-1, :, :]
+
+#         # Normalize the image for contrast limits
+#         overlay_data = img_as_float(overlay_data)  # Convert to float for scaling
+#         if contrast_limits:
+#             lower, upper = contrast_limits
+#             overlay_data = np.clip((overlay_data - lower) / (upper - lower), 0, 1)
+#         else:
+#             overlay_data = (overlay_data - overlay_data.min()) / (overlay_data.max() - overlay_data.min())
+
+#         if invert_image:
+#             overlay_data = 1 - overlay_data  # Invert image intensity
+
+#         # Compute image extent in microns
+#         height, width = overlay_data.shape
+#         extent = [0, width * pixel_size_um, 0, height * pixel_size_um]
+
+#         # Display the image with correct scaling
+#         ax.imshow(overlay_data, cmap='gray', origin='lower', extent=extent)
+
+#     # Plot tracks colored by the specified column and add directionality
+#     unique_ids = tracks_df[color_by].unique()
+
+
+#     # Plot tracks with transparency gradient
+#     for uid in unique_ids:
+#         track = tracks_df[tracks_df[color_by] == uid]
+#         n_points = len(track)
+#         alphas = np.linspace(0.4, 1.0, n_points)  # Transparency gradient: 40% to 100%
+
+#         for i in range(n_points - 1):
+#             line_color = (
+#                 plt.cm.inferno(i / n_points) if gradient else
+#                 plt.cm.get_cmap(colorway)(track[color_by].iloc[0] % 20 / 20)  # Colour by parameter
+#             )
+#             ax.plot(
+#                 track.iloc[i:i+2]['x_um'], track.iloc[i:i+2]['y_um'],
+#                 color=line_color,
+#                 alpha=alphas[i],  # Transparency gradient
+#                 linewidth=0.1 + i * 0.1 if gradient else 1  # Tapered width for gradient
+#             )
+
+
+
+
+#     # Remove axes if no overlay image
+#     if not overlay_image:
+#         ax.axis('off')
+
+
+#     if scale_bar_length:
+#         # Define relative position in the axes space
+#         # bar_x_start = 0.1#0.1  # 10% from the left
+#         # bar_x_end = bar_x_start + (scale_bar_length / (tracks_df['x_um'].max() - tracks_df['x_um'].min()))  # Relative length
+
+#         bar_x_end = 0.95#0.1  # 10% from the left
+#         bar_x_start = bar_x_end - (scale_bar_length / (tracks_df['x_um'].max() - tracks_df['x_um'].min()))  # Relative length
+
+
+#         bar_y = 0.05  # 10% from the bottom
+
+#         # Convert relative coordinates to display coordinates using ax.transAxes
+#         ax.plot(
+#             [bar_x_start, bar_x_end],
+#             [bar_y, bar_y],
+#             transform=ax.transAxes,  # Use axes-relative positioning
+#             color=scale_bar_color,
+#             lw=3
+#         )
+
+#         # Annotate the scale bar length
+#         text_x = (bar_x_start + bar_x_end) / 2
+#         text_y = bar_y - 0.025  # Slightly below the scale bar
+#         ax.text(
+#             text_x,
+#             text_y,
+#             f'{scale_bar_length} µm',
+#             transform=ax.transAxes,  # Use axes-relative positioning
+#             color=scale_bar_color,
+#             ha='center',
+#             va='top',
+#             fontsize=10
+#         )
+
+#         # DEBUG: Print relative positions for verification
+#         print(f"Scale Bar (relative): Start={bar_x_start}, End={bar_x_end}, Length={scale_bar_length}")
+
+#     # Add time range annotation
+#     ax.annotate(
+#         f"Time: {time_start_sec:.2f}s - {time_end_sec:.2f}s",
+#         xy=(0.5, 1.02), xycoords='axes fraction', ha='center', va='bottom', fontsize=12, color=scale_bar_color
+#     )
+
+#     # Set plot limits based on data
+#     ax.set_xlim([tracks_df['x_um'].min(), tracks_df['x_um'].max()])
+#     ax.set_ylim([tracks_df['y_um'].min(), tracks_df['y_um'].max()])
+
+#     # Save or show plot
+#     if save_path:
+#         plt.savefig(save_path, transparent=transparent_background, dpi=300)
+#     else:
+#         plt.show()
+
+### ORIGINAL ABOVE #####
+
+# def plot_tracks_static(
+#     tracks_df,
+#     filename=None,
+#     file_id=None,
+#     location=None,
+#     condition=None,
+#     time_start=None,
+#     time_end=None,
+#     color_by='particle',
+#     overlay_image=False,
+#     master_dir=config.MASTER,
+#     scale_bar_length=5,
+#     scale_bar_position=(0.9, 0.1),
+#     scale_bar_color='white',
+#     transparent_background=True,
+#     save_path=None,
+#     display_final_frame=True,
+#     max_projection=False,
+#     contrast_limits=None,  # Tuple: (lower, upper) or None for auto
+#     invert_image=False,
+#     pixel_size_um=config.PIXELSIZE_MICRONS,  # Conversion factor: microns per pixel
+#     frame_interval=config.TIME_BETWEEN_FRAMES,
+#     gradient = False,  # Frame interval in seconds
+#     colorway = 'tab20'
+# ):
+#     """
+#     Create a static plot of tracks filtered by file and condition within a time range.
+    
+#     Parameters:
+#     (Previous parameters remain the same.)
+#     - frame_interval (float): Time interval between frames in seconds.
+#     """
+#     # remove the '' from colorway
+#     # colorway = colorway.strip("'")
+
+#     # if tracks_df[color_by].dtype == object:  # Check if the column contains strings
+#     #     unique_classes = tracks_df[color_by].unique()
+#     #     class_to_int = {cls: i for i, cls in enumerate(unique_classes)}
+#     #     tracks_df['color_by_numeric'] = tracks_df[color_by].map(class_to_int)  # New numeric column
+#     #     color_by = 'color_by_numeric'  # Update color_by to use the numeric column
+
+#     # Create a new column for segment colors if `color_by` is a string or categorical
+#     if tracks_df[color_by].dtype == object or pd.api.types.is_categorical_dtype(tracks_df[color_by]):
+#         unique_classes = tracks_df[color_by].unique()
+#         class_to_int = {cls: i for i, cls in enumerate(unique_classes)}
+#         tracks_df['segment_color'] = tracks_df[color_by].map(class_to_int)  # Map class to an integer
+#     else:
+#         tracks_df['segment_color'] = tracks_df[color_by]  # Use original column if numeric
+
+
+
+#     # Filter by location
+#     if location is None:
+#         location = np.random.choice(tracks_df['Location'].unique())
+#     tracks_df = tracks_df[tracks_df['Location'] == location]
+
+#     # Filter by condition
+#     if condition is None:
+#         condition = np.random.choice(tracks_df['condition'].unique())
+#     tracks_df = tracks_df[tracks_df['condition'] == condition]
+
+#     # Filter by filename or file_id
+#     if filename is None and file_id is None:
+#         filename = np.random.choice(tracks_df['filename'].unique())
+#     elif file_id is not None:
+#         filename = tracks_df[tracks_df['file_id'] == file_id]['filename'].iloc[0]
+#     tracks_df = tracks_df[tracks_df['filename'] == filename]
+
+
+#     ###################################
+#     # Convert time_start and time_end from seconds to frames if provided
+#     min_frame = tracks_df['frame'].min()
+#     max_frame = tracks_df['frame'].max()
+#     print(f"Filename: {filename}")
+#     print(f"Min Frame: {min_frame}, Max Frame: {max_frame}")
+
+#     # Adjust time_start and time_end if out of bounds
+#     if time_start is not None:
+#         time_start_frames = int(time_start / frame_interval)
+#         if time_start_frames < min_frame or time_start_frames > max_frame:
+#             print(f"Warning: time_start={time_start} exceeds bounds. Adjusting to {min_frame * frame_interval:.2f}s.")
+#             time_start_frames = min_frame
+#     else:
+#         time_start_frames = min_frame
+
+#     if time_end is not None:
+#         time_end_frames = int(time_end / frame_interval)
+#         if time_end_frames < min_frame or time_end_frames > max_frame:
+#             print(f"Warning: time_end={time_end} exceeds bounds. Adjusting to {max_frame * frame_interval:.2f}s.")
+#             time_end_frames = max_frame
+#     else:
+#         time_end_frames = max_frame
+
+#     # Filter by adjusted time_start and time_end
+#     tracks_df = tracks_df[(tracks_df['frame'] >= time_start_frames) & (tracks_df['frame'] <= time_end_frames)]
+
+#     # Check if any data is left after filtering
+#     if tracks_df.empty:
+#         print(f"Warning: No data found for filename '{filename}' with the given time range. Trying another filename.")
+#         other_filenames = tracks_df['filename'].unique()
+#         if len(other_filenames) > 1:
+#             filename = np.random.choice([f for f in other_filenames if f != filename])
+#             print(f"Switching to new filename: {filename}")
+#             tracks_df = tracks_df[tracks_df['filename'] == filename]
+#         else:
+#             raise ValueError("No valid data available for plotting.")
+
+#     ##################################
+
+#     # Convert time_start and time_end from seconds to frames if provided
+#     if time_start is not None:
+#         time_start_frames = int(time_start / frame_interval)
+#         tracks_df = tracks_df[tracks_df['frame'] >= time_start_frames]
+#     else:
+#         time_start_frames = tracks_df['frame'].min()
+
+#     if time_end is not None:
+#         time_end_frames = int(time_end / frame_interval)
+#         tracks_df = tracks_df[tracks_df['frame'] <= time_end_frames]
+#     else:
+#         time_end_frames = tracks_df['frame'].max()
+
+#     # Convert frame numbers to seconds
+#     time_start_sec = time_start_frames * frame_interval
+#     time_end_sec = time_end_frames * frame_interval
+
+#     # Set figure and axis background based on transparency setting
+#     figure_background = 'none' if transparent_background else 'white'
+#     axis_background = (0, 0, 0, 0) if transparent_background else 'white'
+
+#     # Create a plot
+#     fig, ax = plt.subplots(figsize=(8, 8))
+#     fig.patch.set_facecolor(figure_background)
+#     ax.set_facecolor(axis_background)
+
+#     # Overlay the image if requested
+#     if overlay_image:
+#         image_filename = filename.replace('_tracked', '') + '.tif'
+#         image_path = os.path.join(master_dir, 'data', condition, image_filename)
+#         overlay_data = imread(image_path)  # Load image as 3D array
+
+#         if max_projection:
+#             # Maximum intensity projection
+#             overlay_data = np.max(overlay_data, axis=0)
+#         elif display_final_frame:
+#             # Display the final frame
+#             overlay_data = overlay_data[-1, :, :]
+
+#         # Normalize the image for contrast limits
+#         overlay_data = img_as_float(overlay_data)  # Convert to float for scaling
+#         if contrast_limits:
+#             lower, upper = contrast_limits
+#             overlay_data = np.clip((overlay_data - lower) / (upper - lower), 0, 1)
+#         else:
+#             overlay_data = (overlay_data - overlay_data.min()) / (overlay_data.max() - overlay_data.min())
+
+#         if invert_image:
+#             overlay_data = 1 - overlay_data  # Invert image intensity
+
+#         # Compute image extent in microns
+#         height, width = overlay_data.shape
+#         extent = [0, width * pixel_size_um, 0, height * pixel_size_um]
+
+#         # Display the image with correct scaling
+#         ax.imshow(overlay_data, cmap='gray', origin='lower', extent=extent)
+
+#     # Plot tracks colored by the specified column and add directionality
+#     unique_ids = tracks_df[color_by].unique()
+
+
+#     # Plot tracks with transparency gradient
+#     for uid in unique_ids:
+#         track = tracks_df[tracks_df[color_by] == uid]
+#         n_points = len(track)
+#         alphas = np.linspace(0.4, 1.0, n_points)  # Transparency gradient: 40% to 100%
+
+#         for i in range(n_points - 1):
+#             # line_color = (
+#             #     plt.cm.inferno(i / n_points) if gradient else
+#             #     plt.cm.get_cmap(colorway)(track[color_by].iloc[0] % 20 / 20)  # Colour by parameter
+#             # )
+#             line_color = (
+#                 plt.cm.inferno(i / n_points) if gradient else
+#                 plt.cm.get_cmap(colorway)(track['segment_color'].iloc[i] % 20 / 20)
+#             )
+
+#             ax.plot(
+#                 track.iloc[i:i+2]['x_um'], track.iloc[i:i+2]['y_um'],
+#                 color=line_color,
+#                 alpha=alphas[i],  # Transparency gradient
+#                 linewidth=0.1 + i * 0.1 if gradient else 1  # Tapered width for gradient
+#             )
+
+
+
+
+#     # Remove axes if no overlay image
+#     if not overlay_image:
+#         ax.axis('off')
+
+
+#     if scale_bar_length:
+#         # Define relative position in the axes space
+#         # bar_x_start = 0.1#0.1  # 10% from the left
+#         # bar_x_end = bar_x_start + (scale_bar_length / (tracks_df['x_um'].max() - tracks_df['x_um'].min()))  # Relative length
+
+#         bar_x_end = 0.95#0.1  # 10% from the left
+#         bar_x_start = bar_x_end - (scale_bar_length / (tracks_df['x_um'].max() - tracks_df['x_um'].min()))  # Relative length
+
+
+#         bar_y = 0.05  # 10% from the bottom
+
+#         # Convert relative coordinates to display coordinates using ax.transAxes
+#         ax.plot(
+#             [bar_x_start, bar_x_end],
+#             [bar_y, bar_y],
+#             transform=ax.transAxes,  # Use axes-relative positioning
+#             color=scale_bar_color,
+#             lw=3
+#         )
+
+#         # Annotate the scale bar length
+#         text_x = (bar_x_start + bar_x_end) / 2
+#         text_y = bar_y - 0.025  # Slightly below the scale bar
+#         ax.text(
+#             text_x,
+#             text_y,
+#             f'{scale_bar_length} µm',
+#             transform=ax.transAxes,  # Use axes-relative positioning
+#             color=scale_bar_color,
+#             ha='center',
+#             va='top',
+#             fontsize=10
+#         )
+
+#         # DEBUG: Print relative positions for verification
+#         print(f"Scale Bar (relative): Start={bar_x_start}, End={bar_x_end}, Length={scale_bar_length}")
+
+#     # Add time range annotation
+#     ax.annotate(
+#         f"Time: {time_start_sec:.2f}s - {time_end_sec:.2f}s",
+#         xy=(0.5, 1.02), xycoords='axes fraction', ha='center', va='bottom', fontsize=12, color=scale_bar_color
+#     )
+
+#     # Set plot limits based on data
+#     ax.set_xlim([tracks_df['x_um'].min(), tracks_df['x_um'].max()])
+#     ax.set_ylim([tracks_df['y_um'].min(), tracks_df['y_um'].max()])
+
+#     # Save or show plot
+#     if save_path:
+#         plt.savefig(save_path, transparent=transparent_background, dpi=300)
+#     else:
+#         plt.show()
+
+# def plot_tracks_static(
+#     tracks_df,
+#     filename=None,
+#     file_id=None,
+#     location=None,
+#     condition=None,
+#     time_start=None,
+#     time_end=None,
+#     color_by='particle',
+#     overlay_image=False,
+#     master_dir=config.MASTER,
+#     scale_bar_length=5,
+#     scale_bar_position=(0.9, 0.1),
+#     scale_bar_color='white',
+#     transparent_background=True,
+#     save_path=None,
+#     display_final_frame=True,
+#     max_projection=False,
+#     contrast_limits=None,  # Tuple: (lower, upper) or None for auto
+#     invert_image=False,
+#     pixel_size_um=config.PIXELSIZE_MICRONS,  # Conversion factor: microns per pixel
+#     frame_interval=config.TIME_BETWEEN_FRAMES,
+#     gradient=False,  # Frame interval in seconds
+#     colorway='tab20'
+# ):
+#     """
+#     Create a static plot of tracks filtered by file and condition within a time range.
+#     """
+#     # import matplotlib.pyplot as plt
+#     # import numpy as np
+
+#     # Map `color_by` to numeric if it contains strings or is categorical
+#     if tracks_df[color_by].dtype == object or pd.api.types.is_categorical_dtype(tracks_df[color_by]):
+#         unique_classes = tracks_df[color_by].unique()
+#         class_to_int = {cls: i for i, cls in enumerate(unique_classes)}
+#         tracks_df['segment_color'] = tracks_df[color_by].map(class_to_int)  # New numeric column
+#     else:
+#         tracks_df['segment_color'] = tracks_df[color_by]  # Use original column if numeric
+
+#     # Filter by location
+#     if location is None:
+#         location = np.random.choice(tracks_df['Location'].unique())
+#     tracks_df = tracks_df[tracks_df['Location'] == location]
+
+#     # Filter by condition
+#     if condition is None:
+#         condition = np.random.choice(tracks_df['condition'].unique())
+#     tracks_df = tracks_df[tracks_df['condition'] == condition]
+
+#     # Filter by filename or file_id
+#     if filename is None and file_id is None:
+#         filename = np.random.choice(tracks_df['filename'].unique())
+#     elif file_id is not None:
+#         filename = tracks_df[tracks_df['file_id'] == file_id]['filename'].iloc[0]
+#     tracks_df = tracks_df[tracks_df['filename'] == filename]
+
+#     # Convert time_start and time_end from seconds to frames if provided
+#     min_frame = tracks_df['frame'].min()
+#     max_frame = tracks_df['frame'].max()
+
+#     if time_start is not None:
+#         time_start_frames = int(time_start / frame_interval)
+#         time_start_frames = max(min_frame, min(time_start_frames, max_frame))
+#     else:
+#         time_start_frames = min_frame
+
+#     if time_end is not None:
+#         time_end_frames = int(time_end / frame_interval)
+#         time_end_frames = max(min_frame, min(time_end_frames, max_frame))
+#     else:
+#         time_end_frames = max_frame
+
+#     # Filter by adjusted time_start and time_end
+#     tracks_df = tracks_df[(tracks_df['frame'] >= time_start_frames) & (tracks_df['frame'] <= time_end_frames)]
+
+#     # Check if any data is left after filtering
+#     if tracks_df.empty:
+#         raise ValueError(f"No valid data available for plotting after filtering by filename and time range.")
+
+#     # Set figure and axis background based on transparency setting
+#     figure_background = 'none' if transparent_background else 'white'
+#     axis_background = (0, 0, 0, 0) if transparent_background else 'white'
+
+#     # Create a plot
+#     fig, ax = plt.subplots(figsize=(8, 8))
+#     fig.patch.set_facecolor(figure_background)
+#     ax.set_facecolor(axis_background)
+
+#     # Plot tracks colored by the specified column
+#     unique_ids = tracks_df['particle'].unique()
+
+#     for uid in unique_ids:
+#         track = tracks_df[tracks_df['particle'] == uid]
+#         n_points = len(track)
+#         alphas = np.linspace(0.4, 1.0, n_points)  # Transparency gradient: 40% to 100%
+
+#         for i in range(n_points - 1):
+#             line_color = (
+#                 plt.cm.inferno(i / n_points) if gradient else
+#                 plt.cm.get_cmap(colorway)(track['segment_color'].iloc[i] % 20 / 20)
+#             )
+#             ax.plot(
+#                 track.iloc[i:i+2]['x_um'], track.iloc[i:i+2]['y_um'],
+#                 color=line_color,
+#                 alpha=alphas[i],  # Transparency gradient
+#                 linewidth=0.1 + i * 0.1 if gradient else 1  # Tapered width for gradient
+#             )
+
+#     # Add scale bar if required
+#     if scale_bar_length:
+#         bar_x_end = 0.95  # 95% from the left
+#         bar_x_start = bar_x_end - (scale_bar_length / (tracks_df['x_um'].max() - tracks_df['x_um'].min()))
+#         bar_y = 0.05  # 5% from the bottom
+
+#         ax.plot(
+#             [bar_x_start, bar_x_end],
+#             [bar_y, bar_y],
+#             transform=ax.transAxes,
+#             color=scale_bar_color,
+#             lw=3
+#         )
+
+#         text_x = (bar_x_start + bar_x_end) / 2
+#         text_y = bar_y - 0.025
+#         ax.text(
+#             text_x,
+#             text_y,
+#             f'{scale_bar_length} µm',
+#             transform=ax.transAxes,
+#             color=scale_bar_color,
+#             ha='center',
+#             va='top',
+#             fontsize=10
+#         )
+
+#     # Set plot limits based on data
+#     ax.set_xlim([tracks_df['x_um'].min(), tracks_df['x_um'].max()])
+#     ax.set_ylim([tracks_df['y_um'].min(), tracks_df['y_um'].max()])
+
+#     # Save or show plot
+#     if save_path:
+#         plt.savefig(save_path, transparent=transparent_background, dpi=300)
+#     else:
+#         plt.show()
+
+
 def plot_tracks_static(
     tracks_df,
     filename=None,
@@ -3994,18 +4637,33 @@ def plot_tracks_static(
     invert_image=False,
     pixel_size_um=config.PIXELSIZE_MICRONS,  # Conversion factor: microns per pixel
     frame_interval=config.TIME_BETWEEN_FRAMES,
-    gradient = False,  # Frame interval in seconds
-    colorway = 'tab20'
+    gradient=False,  # Frame interval in seconds
+    colorway='tab20',
+    order=None,  # New parameter: Order for categorical coloring
+    plot_size_px = 150
 ):
     """
     Create a static plot of tracks filtered by file and condition within a time range.
-    
-    Parameters:
-    (Previous parameters remain the same.)
-    - frame_interval (float): Time interval between frames in seconds.
+    Adds:
+    - Support for `order` to specify a custom ordering of colors for categorical `color_by`.
     """
-    # remove the '' from colorway
-    colorway = colorway.strip("'")
+    # import matplotlib.pyplot as plt
+    # import numpy as np
+    # from skimage.io import imread
+    # from skimage import img_as_float
+    # import os
+
+    # Map `color_by` to numeric if it contains strings or is categorical
+    if tracks_df[color_by].dtype == object or pd.api.types.is_categorical_dtype(tracks_df[color_by]):
+        # Apply `order` if provided
+        if order is None:
+            unique_classes = tracks_df[color_by].unique()
+        else:
+            unique_classes = order
+        class_to_int = {cls: i for i, cls in enumerate(unique_classes)}
+        tracks_df['segment_color'] = tracks_df[color_by].map(class_to_int)  # New numeric column
+    else:
+        tracks_df['segment_color'] = tracks_df[color_by]  # Use original column if numeric
 
     # Filter by location
     if location is None:
@@ -4024,63 +4682,32 @@ def plot_tracks_static(
         filename = tracks_df[tracks_df['file_id'] == file_id]['filename'].iloc[0]
     tracks_df = tracks_df[tracks_df['filename'] == filename]
 
-
-    ###################################
     # Convert time_start and time_end from seconds to frames if provided
     min_frame = tracks_df['frame'].min()
     max_frame = tracks_df['frame'].max()
-    print(f"Filename: {filename}")
-    print(f"Min Frame: {min_frame}, Max Frame: {max_frame}")
 
-    # Adjust time_start and time_end if out of bounds
     if time_start is not None:
         time_start_frames = int(time_start / frame_interval)
-        if time_start_frames < min_frame or time_start_frames > max_frame:
-            print(f"Warning: time_start={time_start} exceeds bounds. Adjusting to {min_frame * frame_interval:.2f}s.")
-            time_start_frames = min_frame
+        time_start_frames = max(min_frame, min(time_start_frames, max_frame))
     else:
         time_start_frames = min_frame
 
     if time_end is not None:
         time_end_frames = int(time_end / frame_interval)
-        if time_end_frames < min_frame or time_end_frames > max_frame:
-            print(f"Warning: time_end={time_end} exceeds bounds. Adjusting to {max_frame * frame_interval:.2f}s.")
-            time_end_frames = max_frame
+        time_end_frames = max(min_frame, min(time_end_frames, max_frame))
     else:
         time_end_frames = max_frame
+
+    # Add this immediately after
+    time_start_sec = time_start_frames * frame_interval
+    time_end_sec = time_end_frames * frame_interval
 
     # Filter by adjusted time_start and time_end
     tracks_df = tracks_df[(tracks_df['frame'] >= time_start_frames) & (tracks_df['frame'] <= time_end_frames)]
 
     # Check if any data is left after filtering
     if tracks_df.empty:
-        print(f"Warning: No data found for filename '{filename}' with the given time range. Trying another filename.")
-        other_filenames = tracks_df['filename'].unique()
-        if len(other_filenames) > 1:
-            filename = np.random.choice([f for f in other_filenames if f != filename])
-            print(f"Switching to new filename: {filename}")
-            tracks_df = tracks_df[tracks_df['filename'] == filename]
-        else:
-            raise ValueError("No valid data available for plotting.")
-
-    ##################################
-
-    # Convert time_start and time_end from seconds to frames if provided
-    if time_start is not None:
-        time_start_frames = int(time_start / frame_interval)
-        tracks_df = tracks_df[tracks_df['frame'] >= time_start_frames]
-    else:
-        time_start_frames = tracks_df['frame'].min()
-
-    if time_end is not None:
-        time_end_frames = int(time_end / frame_interval)
-        tracks_df = tracks_df[tracks_df['frame'] <= time_end_frames]
-    else:
-        time_end_frames = tracks_df['frame'].max()
-
-    # Convert frame numbers to seconds
-    time_start_sec = time_start_frames * frame_interval
-    time_end_sec = time_end_frames * frame_interval
+        raise ValueError(f"No valid data available for plotting after filtering by filename and time range.")
 
     # Set figure and axis background based on transparency setting
     figure_background = 'none' if transparent_background else 'white'
@@ -4123,20 +4750,34 @@ def plot_tracks_static(
         ax.imshow(overlay_data, cmap='gray', origin='lower', extent=extent)
 
     # Plot tracks colored by the specified column and add directionality
-    unique_ids = tracks_df[color_by].unique()
-
+    unique_ids = tracks_df['particle'].unique()
 
     # Plot tracks with transparency gradient
     for uid in unique_ids:
-        track = tracks_df[tracks_df[color_by] == uid]
+        track = tracks_df[tracks_df['particle'] == uid]
         n_points = len(track)
         alphas = np.linspace(0.4, 1.0, n_points)  # Transparency gradient: 40% to 100%
 
         for i in range(n_points - 1):
+            # line_color = (
+            #     plt.cm.inferno(i / n_points) if gradient else
+            #     plt.cm.get_cmap(colorway)(track['segment_color'].iloc[i] % 20 / 20)
+            # )
+            # line_color = (
+            #     plt.cm.inferno(i / n_points) if gradient else
+            #     plt.cm.get_cmap(colorway)(track['segment_color'].iloc[i] / max(len(unique_classes) - 1, 1))
+            # )
+            if tracks_df[color_by].dtype == object or pd.api.types.is_categorical_dtype(tracks_df[color_by]):
+                num_classes = max(len(unique_classes) - 1, 1)
+            else:
+                num_classes = max(tracks_df['segment_color'].max() - tracks_df['segment_color'].min(), 1)
+
             line_color = (
                 plt.cm.inferno(i / n_points) if gradient else
-                plt.cm.get_cmap(colorway)(track[color_by].iloc[0] % 20 / 20)  # Colour by parameter
+                plt.cm.get_cmap(colorway)(track['segment_color'].iloc[i] / num_classes)
             )
+
+
             ax.plot(
                 track.iloc[i:i+2]['x_um'], track.iloc[i:i+2]['y_um'],
                 color=line_color,
@@ -4144,50 +4785,36 @@ def plot_tracks_static(
                 linewidth=0.1 + i * 0.1 if gradient else 1  # Tapered width for gradient
             )
 
-
-
-
     # Remove axes if no overlay image
     if not overlay_image:
         ax.axis('off')
 
-
     if scale_bar_length:
         # Define relative position in the axes space
-        # bar_x_start = 0.1#0.1  # 10% from the left
-        # bar_x_end = bar_x_start + (scale_bar_length / (tracks_df['x_um'].max() - tracks_df['x_um'].min()))  # Relative length
+        bar_x_end = 0.95  # 95% from the left
+        bar_x_start = bar_x_end - (scale_bar_length / (tracks_df['x_um'].max() - tracks_df['x_um'].min()))
+        bar_y = 0.05  # 5% from the bottom
 
-        bar_x_end = 0.95#0.1  # 10% from the left
-        bar_x_start = bar_x_end - (scale_bar_length / (tracks_df['x_um'].max() - tracks_df['x_um'].min()))  # Relative length
-
-
-        bar_y = 0.05  # 10% from the bottom
-
-        # Convert relative coordinates to display coordinates using ax.transAxes
         ax.plot(
             [bar_x_start, bar_x_end],
             [bar_y, bar_y],
-            transform=ax.transAxes,  # Use axes-relative positioning
+            transform=ax.transAxes,
             color=scale_bar_color,
             lw=3
         )
 
-        # Annotate the scale bar length
         text_x = (bar_x_start + bar_x_end) / 2
-        text_y = bar_y - 0.025  # Slightly below the scale bar
+        text_y = bar_y - 0.025
         ax.text(
             text_x,
             text_y,
             f'{scale_bar_length} µm',
-            transform=ax.transAxes,  # Use axes-relative positioning
+            transform=ax.transAxes,
             color=scale_bar_color,
             ha='center',
             va='top',
             fontsize=10
         )
-
-        # DEBUG: Print relative positions for verification
-        print(f"Scale Bar (relative): Start={bar_x_start}, End={bar_x_end}, Length={scale_bar_length}")
 
     # Add time range annotation
     ax.annotate(
@@ -4199,8 +4826,44 @@ def plot_tracks_static(
     ax.set_xlim([tracks_df['x_um'].min(), tracks_df['x_um'].max()])
     ax.set_ylim([tracks_df['y_um'].min(), tracks_df['y_um'].max()])
 
+        # Standardize plot size to 150x150 pixels (converted to microns)
+    plot_size_microns = plot_size_px * pixel_size_um
+    ax.set_xlim(0, plot_size_microns)
+    ax.set_ylim(0, plot_size_microns)
+
+    # Ensure the aspect ratio is square
+    ax.set_aspect('equal', adjustable='datalim')
+
+
+
+    # Add a legend for the coloring
+    if tracks_df[color_by].dtype == object or pd.api.types.is_categorical_dtype(tracks_df[color_by]):
+        # For categorical or string-based coloring
+        handles = [
+            # plt.Line2D([0], [0], color=plt.cm.get_cmap(colorway)(i % 20 / 20), lw=2, label=cls)
+            plt.Line2D([0], [0], color=plt.cm.get_cmap(colorway)(i / max(len(unique_classes) - 1, 1)), lw=2, label=cls)
+            for i, cls in enumerate(unique_classes)
+        ]
+    else:
+        # For numeric coloring, show a gradient
+        handles = [
+            plt.Line2D([0], [0], color=plt.cm.get_cmap(colorway)(i / 10), lw=2, label=f"Value {i}")
+            for i in range(10)
+        ]
+
+    # Place the legend outside the plot area
+    ax.legend(
+        handles=handles,
+        loc='upper left',
+        bbox_to_anchor=(1.05, 1),
+        borderaxespad=0.,
+        title=f"Legend: {color_by}"
+    )
+
+
     # Save or show plot
     if save_path:
         plt.savefig(save_path, transparent=transparent_background, dpi=300)
     else:
         plt.show()
+
