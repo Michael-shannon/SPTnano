@@ -218,35 +218,45 @@ class ParticleMetrics:
         self.metrics_df['instant_velocity_x_um_s'] = self.metrics_df['instant_velocity_x_um_s'].replace([np.inf, -np.inf], np.nan).fillna(0)
         self.metrics_df['instant_velocity_y_um_s'] = self.metrics_df['instant_velocity_y_um_s'].replace([np.inf, -np.inf], np.nan).fillna(0)
         return self.metrics_df
-
-
-
-    def calculate_msd_for_track(self, track_data, max_lagtime, store_msd=False, time_window=None):
+    
+    def calculate_msd_for_track(self, track_data, store_msd=False, time_window=None):
         n_frames = len(track_data)
-        msd_values = np.zeros(max_lagtime)
-        lag_times = np.zeros(max_lagtime)
+        if n_frames < 3:
+            print(f"Skipping unique_id {track_data['unique_id'].iloc[0]}: insufficient frames ({n_frames})")
+            return np.nan, np.nan, np.nan, 'unlabeled'
 
-        for lag in range(1, max_lagtime + 1):
-            if lag < n_frames:
-                displacements = (track_data[['x_um', 'y_um']].iloc[lag:].values - track_data[['x_um', 'y_um']].iloc[:-lag].values) ** 2
-                squared_displacements = np.sum(displacements, axis=1)
-                msd_values[lag - 1] = np.mean(squared_displacements)
-                lag_times[lag - 1] = lag * self.time_between_frames
-            else:
-                break
+        # Use all possible lag times (frames - 1)
+        lag_times = np.arange(1, n_frames) * self.time_between_frames
+        msd_values = np.zeros(len(lag_times))
 
-        avg_msd = np.mean(msd_values)
+        for lag in range(1, len(lag_times) + 1):
+            displacements = (track_data[['x_um', 'y_um']].iloc[lag:].values -
+                            track_data[['x_um', 'y_um']].iloc[:-lag].values) ** 2
+            squared_displacements = np.sum(displacements, axis=1)
+            msd_values[lag - 1] = np.mean(squared_displacements)
 
-        # Calculate total time in seconds for the track
-        total_time_s = (track_data['time_s'].iloc[-1] - track_data['time_s'].iloc[0])
-        lag_times = np.arange(1, max_lagtime + 1) * (total_time_s / (n_frames - 1))
-        popt, _ = scipy.optimize.curve_fit(self.msd_model, lag_times, msd_values[:max_lagtime])
-        D, alpha = popt[0], popt[1]
+        # print(f"DEBUG: Unique ID {track_data['unique_id'].iloc[0]}") #USEFUL FOR DEBUGGING!
+        # print(f"  - Total frames: {n_frames}")
+        # print(f"  - Total lag times: {len(lag_times)}")
+        # print(f"  - Lag times: {lag_times}")
+        # print(f"  - MSD values: {msd_values}")
 
-        # Print the chosen tolerance for consistency
-        # print(f"Using consistent tolerance: {self.tolerance}") #took this out for now
+        # Check if sufficient lag times are available
+        if len(lag_times) < 3:
+            print(f"Skipping unique_id {track_data['unique_id'].iloc[0]}: insufficient lag times ({len(lag_times)})")
+            return np.nan, np.nan, np.nan, 'unlabeled'
 
-        # Classify the type of motion with consistent tolerance
+        try:
+            popt, _ = scipy.optimize.curve_fit(self.msd_model, lag_times, msd_values)
+            D, alpha = popt[0], popt[1]
+        except RuntimeError:
+            print(f"Curve fitting failed for unique_id {track_data['unique_id'].iloc[0]}")
+            return np.nan, np.nan, np.nan, 'unlabeled'
+
+        # print(f"  - Diffusion coefficient (D): {D:.4f}")
+        # print(f"  - Anomalous exponent (alpha): {alpha:.4f}")
+
+        # Classify motion
         if alpha < 1 - self.tolerance:
             motion_class = 'subdiffusive'
         elif alpha > 1 + self.tolerance:
@@ -254,7 +264,9 @@ class ParticleMetrics:
         else:
             motion_class = 'normal'
 
-        # Store detailed MSD values and lag times if requested
+        # print(f"  - Motion class: {motion_class}")
+
+        # Store MSD values if requested
         if store_msd and time_window is not None:
             msd_records = [
                 {
@@ -267,13 +279,155 @@ class ParticleMetrics:
                 }
                 for lag, msd in zip(lag_times, msd_values)
             ]
-            # self.msd_lagtime_df = pd.concat([self.msd_lagtime_df, pd.DataFrame(msd_records)], ignore_index=True)
-            # Only concatenate if msd_records is not empty
             if msd_records:
                 msd_records_df = pd.DataFrame(msd_records)
                 self.msd_lagtime_df = pd.concat([self.msd_lagtime_df, msd_records_df], ignore_index=True)
 
-        return avg_msd, D, alpha, motion_class
+        return np.mean(msd_values), D, alpha, motion_class
+
+    
+
+
+
+
+    ############################################### Below saved as a v2 (non dynamic, requires 5 lag times) ###############################################
+
+
+    # def calculate_msd_for_track(self, track_data, max_lagtime, store_msd=False, time_window=None):
+    #     n_frames = len(track_data)
+    #     msd_values = np.zeros(max_lagtime)
+    #     lag_times = np.zeros(max_lagtime)
+
+    #     for lag in range(1, max_lagtime + 1):
+    #         if lag < n_frames:
+    #             displacements = (track_data[['x_um', 'y_um']].iloc[lag:].values - track_data[['x_um', 'y_um']].iloc[:-lag].values) ** 2
+    #             squared_displacements = np.sum(displacements, axis=1)
+    #             msd_values[lag - 1] = np.mean(squared_displacements)
+    #             lag_times[lag - 1] = lag * self.time_between_frames
+    #         else:
+    #             break
+
+    #     avg_msd = np.mean(msd_values)
+
+    #     # Calculate total time in seconds for the track
+    #     total_time_s = (track_data['time_s'].iloc[-1] - track_data['time_s'].iloc[0])
+    #     lag_times = np.arange(1, max_lagtime + 1) * (total_time_s / (n_frames - 1))
+    #     print(f"Unique ID: {track_data['unique_id'].iloc[0]}")
+    #     print(f"Number of frames: {n_frames}")
+    #     print(f"Total time (s): {total_time_s}")
+    #     print(f"Lag times: {lag_times}")
+    #     print(f"MSD values: {msd_values}")
+
+    #     # Adding a check here
+    #     if len(lag_times) < 5:
+    #         print(f"Skipping fit for unique_id {track_data['unique_id'].iloc[0]} due to insufficient data.")
+    #         return np.nan, np.nan, np.nan, 'unlabeled'
+            
+
+
+    #     try:
+    #         popt, _ = scipy.optimize.curve_fit(self.msd_model, lag_times, msd_values[:max_lagtime])
+    #         D, alpha = popt[0], popt[1]
+    #     except RuntimeError:
+    #         print(f"Curve fitting failed for unique_id {track_data['unique_id'].iloc[0]}")
+    #         return avg_msd, np.nan, np.nan, 'unlabeled'
+    #     # Print the chosen tolerance for consistency
+    #     # print(f"Using consistent tolerance: {self.tolerance}") #took this out for now
+
+    #     # Classify the type of motion with consistent tolerance
+    #     if alpha < 1 - self.tolerance:
+    #         motion_class = 'subdiffusive'
+    #     elif alpha > 1 + self.tolerance:
+    #         motion_class = 'superdiffusive'
+    #     else:
+    #         motion_class = 'normal'
+
+    #     # Store detailed MSD values and lag times if requested
+    #     if store_msd and time_window is not None:
+    #         msd_records = [
+    #             {
+    #                 'unique_id': track_data['unique_id'].iloc[0],
+    #                 'time_window': time_window,
+    #                 'lag_time': lag,
+    #                 'msd': msd,
+    #                 'diffusion_coefficient': D,
+    #                 'anomalous_exponent': alpha
+    #             }
+    #             for lag, msd in zip(lag_times, msd_values)
+    #         ]
+    #         # self.msd_lagtime_df = pd.concat([self.msd_lagtime_df, pd.DataFrame(msd_records)], ignore_index=True)
+    #         # Only concatenate if msd_records is not empty
+    #         if msd_records:
+    #             msd_records_df = pd.DataFrame(msd_records)
+    #             if not msd_records_df.empty:
+    #                 self.msd_lagtime_df = pd.concat([self.msd_lagtime_df, msd_records_df], ignore_index=True)
+
+    #     return avg_msd, D, alpha, motion_class
+    
+    ############################################### Above saved as a v2 (non dynamic, requires 5 lag times) ###############################################
+    
+    ############################################### SAVED BELOW IN CASE OF DISASTER ###############################################
+
+    # def calculate_msd_for_track(self, track_data, max_lagtime, store_msd=False, time_window=None):
+    #     n_frames = len(track_data)
+    #     msd_values = np.zeros(max_lagtime)
+    #     lag_times = np.zeros(max_lagtime)
+
+    #     for lag in range(1, max_lagtime + 1):
+    #         if lag < n_frames:
+    #             displacements = (track_data[['x_um', 'y_um']].iloc[lag:].values - track_data[['x_um', 'y_um']].iloc[:-lag].values) ** 2
+    #             squared_displacements = np.sum(displacements, axis=1)
+    #             msd_values[lag - 1] = np.mean(squared_displacements)
+    #             lag_times[lag - 1] = lag * self.time_between_frames
+    #         else:
+    #             break
+
+    #     avg_msd = np.mean(msd_values)
+
+    #     # Calculate total time in seconds for the track
+    #     total_time_s = (track_data['time_s'].iloc[-1] - track_data['time_s'].iloc[0])
+    #     lag_times = np.arange(1, max_lagtime + 1) * (total_time_s / (n_frames - 1))
+    #     popt, _ = scipy.optimize.curve_fit(self.msd_model, lag_times, msd_values[:max_lagtime])
+    #     D, alpha = popt[0], popt[1]
+
+    #     # Print the chosen tolerance for consistency
+    #     print(f"Using consistent tolerance: {self.tolerance}")
+
+    #     # Classify the type of motion with consistent tolerance
+    #     if alpha < 1 - self.tolerance:
+    #         motion_class = 'subdiffusive'
+    #     elif alpha > 1 + self.tolerance:
+    #         motion_class = 'superdiffusive'
+    #     else:
+    #         motion_class = 'normal'
+
+    #     # Store detailed MSD values and lag times if requested
+    #     if store_msd and time_window is not None:
+    #         msd_records = [
+    #             {
+    #                 'unique_id': track_data['unique_id'].iloc[0],
+    #                 'time_window': time_window,
+    #                 'lag_time': lag,
+    #                 'msd': msd,
+    #                 'diffusion_coefficient': D,
+    #                 'anomalous_exponent': alpha
+    #             }
+    #             for lag, msd in zip(lag_times, msd_values)
+    #         ]
+    #         # self.msd_lagtime_df = pd.concat([self.msd_lagtime_df, pd.DataFrame(msd_records)], ignore_index=True)
+    #         # Only concatenate if msd_records is not empty
+    #         if msd_records:
+    #             msd_records_df = pd.DataFrame(msd_records)
+    #             self.msd_lagtime_df = pd.concat([self.msd_lagtime_df, msd_records_df], ignore_index=True)
+
+    #     return avg_msd, D, alpha, motion_class
+
+
+
+
+
+
+    ############################################### SAVED ABOVE IN CASE OF DISASTER ###############################################
 
 
 
@@ -335,13 +489,112 @@ class ParticleMetrics:
 
 
 
-    def calculate_time_windowed_metrics(self, window_size=None, overlap=None):
+    # def calculate_time_windowed_metrics(self, window_size=None, overlap=None, filter_metrics_df=True):
+    #     if window_size is None:
+    #         window_size = self.calculate_default_window_size()
+    #     if overlap is None:
+    #         overlap = int(window_size / 2)
+
+    #     print("Note: Partial windows (below the window size) are not included in the time-windowed metrics.")
+
+    #     windowed_list = []
+    #     included_frames = set()  # Track frames included in windows
+
+    #     for unique_id, track_data in tqdm(self.metrics_df.groupby('unique_id'), desc="Calculating Time-Windowed Metrics"):
+    #         n_frames = len(track_data)
+
+    #         for start in range(0, n_frames - window_size + 1, window_size - overlap):
+    #             end = start + window_size
+    #             window_data = track_data.iloc[start:end]
+    #             included_frames.update(window_data['frame'].values)  # Track included frames. ### calamansi
+    #             # if len(window_data) < window_size: # calamansi
+    #             #     continue
+
+    #             # Calculate metrics for the window and store MSD details
+    #             avg_msd, D, alpha, motion_class = self.calculate_msd_for_track(
+    #                 window_data, max_lagtime=min(100, int(window_size / 2)), store_msd=True, time_window=start // (window_size - overlap)
+    #             )
+
+    #             # Calculate total time in seconds for the window
+    #             total_time_s = (window_data['time_s'].iloc[-1] - window_data['time_s'].iloc[0])
+
+    #             # Calculate average instantaneous metrics for the window
+    #             avg_speed = window_data['speed_um_s'].mean()
+    #             avg_acceleration = window_data['acceleration_um_s2'].mean()
+    #             avg_jerk = window_data['jerk_um_s3'].mean()
+    #             avg_norm_curvature = window_data['normalized_curvature'].mean()
+    #             avg_angle_norm_curvature = window_data['angle_normalized_curvature'].mean()
+    #             persistence_length = self.calculate_persistence_length(window_data)
+
+    #             # Add window-level summary information to time_windowed_df
+    #             start_row = window_data.iloc[0]
+    #             end_row = window_data.iloc[-1]
+    #             window_summary = pd.DataFrame({
+    #                 'time_window': [start // (window_size - overlap)],
+    #                 'x_um_start': [start_row['x_um']],
+    #                 'y_um_start': [start_row['y_um']],
+    #                 'x_um_end': [end_row['x_um']],
+    #                 'y_um_end': [end_row['y_um']],
+    #                 'particle': [start_row['particle']],
+    #                 'condition': [start_row['condition']],
+    #                 'filename': [start_row['filename']],
+    #                 'file_id': [start_row['file_id']],
+    #                 'unique_id': [unique_id],
+    #                 'avg_msd': [avg_msd],
+    #                 'n_frames': [window_size],
+    #                 'total_time_s': [total_time_s],
+    #                 'Location': [start_row['Location']],
+    #                 'diffusion_coefficient': [D],
+    #                 'anomalous_exponent': [alpha],
+    #                 'motion_class': [motion_class],
+    #                 'avg_speed_um_s': [avg_speed],
+    #                 'avg_acceleration_um_s2': [avg_acceleration],
+    #                 'avg_jerk_um_s3': [avg_jerk],
+    #                 'avg_normalized_curvature': [avg_norm_curvature],
+    #                 'avg_angle_normalized_curvature': [avg_angle_norm_curvature],
+    #                 'persistence_length': [persistence_length],
+    #             })
+
+    #             windowed_list.append(window_summary)
+
+    #     self.time_windowed_df = pd.concat(windowed_list).reset_index(drop=True)
+
+    #     # Use the instance variable for frame duration
+    #     self.time_windowed_df['time_s'] = self.time_windowed_df['time_window'] * (window_size - overlap) * self.time_between_frames
+    #     #### Added below to filter the metrics_df to only include frames within time windows
+    #     # Debugging: Check if included_frames covers all frames
+    #     all_frames = set(self.metrics_df['frame'].values)
+    #     missing_frames = all_frames - included_frames
+    #     print(f"Total frames in metrics_df: {len(all_frames)}")
+    #     print(f"Frames covered by time windows: {len(included_frames)}")
+    #     print(f"Frames not covered by time windows: {len(missing_frames)}")
+
+
+    #     if filter_metrics_df:
+    #         print("Filtering metrics_df to only include frames within time windows...")
+    #         print(f"Initial number of frames: {len(self.metrics_df)}")
+    #         self.metrics_df = self.metrics_df[self.metrics_df['frame'].isin(included_frames)].copy()
+    #         print(f"Remaining frames after filtering: {len(self.metrics_df)}")
+
+    ######################## SAVED VERSION ABOVE ######################################### (TIME WINDOWED METRICS)
+
+    def calculate_time_windowed_metrics(self, window_size=None, overlap=None, filter_metrics_df=False):
+        """
+        Calculate metrics for time windows across all tracks.
+        Parameters:
+        - window_size: Number of frames in each window
+        - overlap: Number of frames overlapping between consecutive windows
+        - filter_metrics_df: Whether to filter the metrics_df to only include frames within time windows
+        """
         if window_size is None:
             window_size = self.calculate_default_window_size()
         if overlap is None:
             overlap = int(window_size / 2)
 
+        print("Note: Partial windows (below the window size) are not included in the time-windowed metrics.")
+
         windowed_list = []
+        included_frames = set()  # Track frames included in windows
 
         for unique_id, track_data in tqdm(self.metrics_df.groupby('unique_id'), desc="Calculating Time-Windowed Metrics"):
             n_frames = len(track_data)
@@ -349,19 +602,13 @@ class ParticleMetrics:
             for start in range(0, n_frames - window_size + 1, window_size - overlap):
                 end = start + window_size
                 window_data = track_data.iloc[start:end]
+                included_frames.update(window_data['frame'].values)  # Track included frames
 
-                if len(window_data) < window_size:
-                    continue
-
-                # Calculate metrics for the window and store MSD details
                 avg_msd, D, alpha, motion_class = self.calculate_msd_for_track(
-                    window_data, max_lagtime=min(100, int(window_size / 2)), store_msd=True, time_window=start // (window_size - overlap)
+                    window_data, store_msd=True, time_window=start // (window_size - overlap)
                 )
 
-                # Calculate total time in seconds for the window
                 total_time_s = (window_data['time_s'].iloc[-1] - window_data['time_s'].iloc[0])
-
-                # Calculate average instantaneous metrics for the window
                 avg_speed = window_data['speed_um_s'].mean()
                 avg_acceleration = window_data['acceleration_um_s2'].mean()
                 avg_jerk = window_data['jerk_um_s3'].mean()
@@ -369,7 +616,6 @@ class ParticleMetrics:
                 avg_angle_norm_curvature = window_data['angle_normalized_curvature'].mean()
                 persistence_length = self.calculate_persistence_length(window_data)
 
-                # Add window-level summary information to time_windowed_df
                 start_row = window_data.iloc[0]
                 end_row = window_data.iloc[-1]
                 window_summary = pd.DataFrame({
@@ -402,9 +648,13 @@ class ParticleMetrics:
 
         self.time_windowed_df = pd.concat(windowed_list).reset_index(drop=True)
 
-        # Use the instance variable for frame duration
-        self.time_windowed_df['time_s'] = self.time_windowed_df['time_window'] * (window_size - overlap) * self.time_between_frames
-
+        # Add frame filtering logic if requested
+        if filter_metrics_df:
+            print("Filtering metrics_df to only include frames within time windows...")
+            print(f"Initial number of frames: {len(self.metrics_df)}")
+            self.metrics_df = self.metrics_df[self.metrics_df['frame'].isin(included_frames)].copy()
+            print(f"Remaining frames after filtering: {len(self.metrics_df)}")
+    
 
     def calculate_metrics_for_window(self, window_data):
         """
