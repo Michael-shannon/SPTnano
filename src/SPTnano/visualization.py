@@ -1162,8 +1162,8 @@ def napari_visualize_image_with_tracksdev(tracks_df, master_dir=config.MASTER, c
 
 def napari_visualize_image_with_tracksdev2(tracks_df, master_dir=config.MASTER, condition=None, cell=None, location=None, save_movie_flag=False, feature='particle'):
     
-    master_dir = config.MASTER + 'data'
-    movie_dir = config.MASTER + 'movies'
+    master_dir = master_dir + 'data'
+    movie_dir = master_dir + 'movies'
 
     print('The master directory is:', master_dir)
     if save_movie_flag:
@@ -1243,7 +1243,7 @@ def napari_visualize_image_with_tracksdev2(tracks_df, master_dir=config.MASTER, 
 
     # Include 'particle' and all features from config.FEATURES
     features_dict = {'particle': tracks['particle'].values}
-    features_dict.update({feature: tracks[feature].values for feature in config.FEATURES if feature in tracks.columns})
+    features_dict.update({feature: tracks[feature].values for feature in config.FEATURES2 if feature in tracks.columns})
 
     # Start Napari viewer
     viewer = napari.Viewer()
@@ -2168,7 +2168,66 @@ def get_color(motion_class):
 #     plt.show()
 
 
-def plot_classification_pie_charts(df, group_by='Location', colormap_name='Dark2', figsize=(15, 10), font_size=12, label_font_size=8):
+# def plot_classification_pie_charts(df, group_by='Location', colormap_name='Dark2', order = None, figsize=(15, 10), font_size=12, label_font_size=8):
+#     # Get unique categories for grouping
+#     categories = df[group_by].unique()
+    
+#     # Determine the layout for subplots
+#     n_categories = len(categories)
+#     ncols = 3  # Number of columns
+#     nrows = (n_categories + ncols - 1) // ncols  # Calculate the number of rows needed
+
+#     # Create subplots
+#     fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize)
+#     axes = axes.flatten()  # Flatten to iterate easily
+
+#     colormap = cm.get_cmap(colormap_name)
+
+#     # Plot each category as a separate pie chart
+#     for i, category in enumerate(categories):
+#         ax = axes[i]
+#         subset_df = df[df[group_by] == category]
+#         classification_counts = subset_df['motion_class'].value_counts()
+#         total_count = classification_counts.sum()
+#         percentages = classification_counts / total_count * 100
+        
+#         # Define labels for outside the pie
+#         outside_labels = [f'{cls} ({count})' for cls, count in zip(classification_counts.index, classification_counts.values)]
+        
+#         # Colors for pie slices
+#         colors = colormap(np.linspace(0, 1, len(outside_labels)))
+
+#         # Plot pie chart with percentages inside
+#         wedges, texts, autotexts = ax.pie(
+#             classification_counts, 
+#             labels=outside_labels, 
+#             autopct='%1.1f%%', 
+#             startangle=140, 
+#             colors=colors,
+#             textprops={'fontsize': label_font_size}
+#         )
+
+#         # Set the color and size of the percentage text
+#         for autotext in autotexts:
+#             autotext.set_color('white')
+#             autotext.set_fontsize(label_font_size)
+
+#         ax.set_title(f'{category} ({total_count} tracks)', fontsize=font_size)
+#         ax.axis('equal')  # Equal aspect ratio ensures the pie chart is circular.
+
+#     # Turn off unused subplots
+#     for j in range(i + 1, len(axes)):
+#         fig.delaxes(axes[j])
+
+#     plt.suptitle(f'Classification of Time Windowed Tracks by {group_by}', fontsize=font_size + 2)
+#     plt.tight_layout(rect=[0, 0, 1, 0.95])
+#     plt.show()
+
+
+
+
+
+def plot_classification_pie_charts(df, group_by='Location', colormap_name='Dark2', order=None, figsize=(15, 10), font_size=12, label_font_size=8):
     # Get unique categories for grouping
     categories = df[group_by].unique()
     
@@ -2182,7 +2241,16 @@ def plot_classification_pie_charts(df, group_by='Location', colormap_name='Dark2
     axes = axes.flatten()  # Flatten to iterate easily
 
     colormap = cm.get_cmap(colormap_name)
-
+    
+    # If an order is provided, ensure the colormap colors align with the specified order
+    if order is not None:
+        unique_classes = order
+    else:
+        unique_classes = df['motion_class'].unique()
+    
+    # Create a mapping of motion_class to specific colors
+    color_map = {cls: colormap(i / (len(unique_classes) - 1)) for i, cls in enumerate(unique_classes)}
+    
     # Plot each category as a separate pie chart
     for i, category in enumerate(categories):
         ax = axes[i]
@@ -2191,11 +2259,15 @@ def plot_classification_pie_charts(df, group_by='Location', colormap_name='Dark2
         total_count = classification_counts.sum()
         percentages = classification_counts / total_count * 100
         
+        # Reorder classification_counts based on the order
+        if order is not None:
+            classification_counts = classification_counts.reindex(order, fill_value=0)
+        
         # Define labels for outside the pie
         outside_labels = [f'{cls} ({count})' for cls, count in zip(classification_counts.index, classification_counts.values)]
         
         # Colors for pie slices
-        colors = colormap(np.linspace(0, 1, len(outside_labels)))
+        colors = [color_map[cls] for cls in classification_counts.index]
 
         # Plot pie chart with percentages inside
         wedges, texts, autotexts = ax.pie(
@@ -2222,6 +2294,7 @@ def plot_classification_pie_charts(df, group_by='Location', colormap_name='Dark2
     plt.suptitle(f'Classification of Time Windowed Tracks by {group_by}', fontsize=font_size + 2)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     plt.show()
+
 
 
 
@@ -2544,7 +2617,7 @@ def plot_classification_pie_charts(df, group_by='Location', colormap_name='Dark2
 def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palette='colorblind', 
                   background='white', transparent=False, line_color='black', show_plot=True, 
                   master_dir=None, grid=True, bw=False, strip=False, y_max=None, figsize=(10, 8), 
-                  annotate_median=False, rotation = 90):
+                  annotate_median=False, rotation = 90, dotsize = 3):
     """
     Plot boxplots for the specified feature against a categorical x_category with custom order and styling options.
 
@@ -2621,7 +2694,7 @@ def plot_boxplots(data_df, feature, x_category, font_size=12, order=None, palett
             line.set_linewidth(1.5)
 
     if strip:
-        sns.stripplot(x=x_category, y=feature, data=data_df, color=line_color, size=3, 
+        sns.stripplot(x=x_category, y=feature, data=data_df, color=line_color, size=dotsize, 
                       order=order, jitter=True)
 
     plt.xlabel('', fontsize=font_size, color=line_color)
@@ -5263,11 +5336,7 @@ def plot_tracks_static(
         }
         tracks_df['motion_color'] = tracks_df['motion_class'].map(class_to_color)
 
-# Filter by motion type
-    # if motion_type is not None:
-    #     if 'motion_color' not in tracks_df.columns:
-    #         raise ValueError("motion_color column not pre-mapped; ensure color_by='motion_class'.")
-    #     tracks_df = tracks_df[tracks_df['motion_class'] == motion_type]
+
 
         # Pre-map motion types to consistent colors if `motion_type` filtering is enabled
     if motion_type is not None or color_by == 'motion_class':
@@ -5280,6 +5349,12 @@ def plot_tracks_static(
             for i, cls in enumerate(unique_classes)
         }
         tracks_df['motion_color'] = tracks_df['motion_class'].map(class_to_color)
+
+    # Filter by motion type
+    if motion_type is not None:
+        if 'motion_color' not in tracks_df.columns:
+            raise ValueError("motion_color column not pre-mapped; ensure color_by='motion_class'.")
+        tracks_df = tracks_df[tracks_df['motion_class'] == motion_type]
 
 
     # Filter by location
@@ -5519,7 +5594,14 @@ def plot_tracks_static(
 
     # Save or show plot
     if save_path:
-        plt.savefig(save_path, transparent=transparent_background, dpi=300)
+        # make the directory if it doesn't exist
+        save_dir = os.path.dirname(save_path)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        #
+
+        plt.savefig(save_path + filename, transparent=transparent_background, dpi=dpi)
     else:
         plt.show()
 
