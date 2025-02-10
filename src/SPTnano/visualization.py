@@ -5606,3 +5606,188 @@ def plot_tracks_static(
         plt.show()
 
     return tracks_df
+
+
+
+import os
+import matplotlib.pyplot as plt
+import numpy as np
+from skimage.io import imread
+from skimage import img_as_float
+
+def visualize_track_changes_with_filtering(
+    original_df, cleaned_df, removed_ids=set(), 
+    filename=None,  
+    time_start=None, time_end=None, 
+    time_between_frames=0.1, 
+    plot_size_px=150, 
+    dpi=100,
+    pixel_size_um=0.1,
+    figsize=(18, 6),  
+    line_width=1.2,  
+    alpha_range=(0.3, 1.0),  
+    transparent_background=True,
+    overlay_image=False,  
+    master_dir=None,  
+    condition=None,  
+    max_projection=False,  
+    display_final_frame=True,  
+    contrast_limits=None,  
+    invert_image=False  
+):
+    """
+    Visualizes track changes with three side-by-side subplots:
+    1. Original tracks (one color)
+    2. New & Removed tracks (distinct colors)
+    3. Combined view of all tracks
+
+    Tracks are properly **aligned to the raw image**, ensuring correct time filtering.
+
+    Parameters:
+    - overlay_image: bool, toggles display of raw image underneath tracks.
+    - master_dir: str, dataset directory for images.
+    - condition: str, experimental condition (used for file path).
+    - max_projection, display_final_frame: Controls which image frame to show.
+    - contrast_limits: tuple (low, high), scales image contrast.
+    - invert_image: bool, inverts grayscale image.
+    """
+
+    # **Restrict to a single filename** for efficiency
+    if filename is None:
+        filename = original_df['filename'].iloc[0]  
+    original_df = original_df[original_df['filename'] == filename]
+    cleaned_df = cleaned_df[cleaned_df['filename'] == filename]
+
+    # Convert time_start and time_end from seconds to frames
+    min_frame = original_df['frame'].min()
+    max_frame = original_df['frame'].max()
+
+    if time_start is not None:
+        time_start_frame = max(min_frame, min(int(time_start / time_between_frames), max_frame))
+        time_start_str = f"{time_start:.2f}s"
+    else:
+        time_start_frame = min_frame
+        time_start_str = "Start"
+
+    if time_end is not None:
+        time_end_frame = max(min_frame, min(int(time_end / time_between_frames), max_frame))
+        time_end_str = f"{time_end:.2f}s"
+    else:
+        time_end_frame = max_frame
+        time_end_str = "End"
+
+    # **Filter data by time range**
+    original_df = original_df[(original_df['frame'] >= time_start_frame) & (original_df['frame'] <= time_end_frame)]
+    cleaned_df = cleaned_df[(cleaned_df['frame'] >= time_start_frame) & (cleaned_df['frame'] <= time_end_frame)]
+
+    # **Define Colors (Dark2 colormap)**
+    colors = plt.cm.Dark2.colors
+    old_track_color = colors[0]  
+    new_track_color = colors[1]  
+    removed_track_color = colors[2]  
+
+    # **Set figure background transparency**
+    figure_background = 'none' if transparent_background else 'white'
+    axis_background = (0, 0, 0, 0) if transparent_background else 'white'
+
+    # **Set up figure with 3 subplots**
+    fig, axes = plt.subplots(1, 3, figsize=figsize, dpi=dpi)
+    fig.patch.set_facecolor(figure_background)
+
+    titles = ["Original Tracks", "New & Removed Tracks", "Combined View"]
+
+    # **Load and process the image if overlay_image is enabled**
+    if overlay_image:
+        image_filename = filename.replace('_tracked', '') + '.tif'
+        if condition is not None:
+            image_path = os.path.join(master_dir, 'data', condition, image_filename)
+        else:
+            # filter the df by filename first
+            filtered_df = original_df[original_df['filename'] == filename]
+            condition = filtered_df['condition'].iloc[0]
+            image_path = os.path.join(master_dir, 'data', condition, image_filename)
+
+
+        try:
+            overlay_data = imread(image_path)  
+
+            if max_projection:
+                overlay_data = np.max(overlay_data, axis=0)
+            elif display_final_frame:
+                overlay_data = overlay_data[-1, :, :]  
+
+            overlay_data = img_as_float(overlay_data)  
+            if contrast_limits:
+                lower, upper = contrast_limits
+                overlay_data = np.clip((overlay_data - lower) / (upper - lower), 0, 1)
+            else:
+                overlay_data = (overlay_data - overlay_data.min()) / (overlay_data.max() - overlay_data.min())
+
+            if invert_image:
+                overlay_data = 1 - overlay_data  
+
+            height, width = overlay_data.shape
+            extent = [original_df['x_um'].min(), original_df['x_um'].max(),
+                      original_df['y_um'].min(), original_df['y_um'].max()]
+
+        except Exception as e:
+            print(f"Error loading image: {e}")
+            overlay_image = False
+
+    # **Helper function to plot tracks**
+    def plot_tracks(ax, df, color):
+        unique_tracks = df['unique_id'].unique()
+        for unique_id in unique_tracks:
+            track = df[df['unique_id'] == unique_id]
+            n_points = len(track)
+            alphas = np.linspace(alpha_range[0], alpha_range[1], n_points)  
+
+            for i in range(n_points - 1):
+                ax.plot(track.iloc[i:i+2]['x_um'], track.iloc[i:i+2]['y_um'],
+                        color=color, alpha=alphas[i], linewidth=line_width)
+
+    # **Helper function to plot removed tracks (now connected to previous points)**
+    def plot_removed_tracks(ax, df, removed_ids, color):
+        for unique_id in removed_ids:
+            track = df[df['unique_id'] == unique_id].copy()
+            track['x_um_prev'] = track['x_um'].shift(1)
+            track['y_um_prev'] = track['y_um'].shift(1)
+
+            for _, row in track.iterrows():
+                if not np.isnan(row['x_um_prev']):
+                    ax.plot([row['x_um_prev'], row['x_um']], [row['y_um_prev'], row['y_um']],
+                            color=color, alpha=0.8, linewidth=line_width)
+
+    # **Plot 1: Original Tracks Only**
+    axes[0].set_facecolor(axis_background)
+    if overlay_image:
+        axes[0].imshow(overlay_data, cmap='gray', origin='lower', extent=extent)
+    plot_tracks(axes[0], original_df, old_track_color)
+    axes[0].set_title(titles[0], fontsize=14)
+
+    # **Plot 2: New Tracks + Removed Tracks**
+    axes[1].set_facecolor(axis_background)
+    if overlay_image:
+        axes[1].imshow(overlay_data, cmap='gray', origin='lower', extent=extent)
+    plot_tracks(axes[1], cleaned_df, new_track_color)
+    plot_removed_tracks(axes[1], original_df, removed_ids, removed_track_color)
+    axes[1].set_title(titles[1], fontsize=14)
+
+    # **Plot 3: Combined View**
+    axes[2].set_facecolor(axis_background)
+    if overlay_image:
+        axes[2].imshow(overlay_data, cmap='gray', origin='lower', extent=extent)
+    plot_tracks(axes[2], original_df, old_track_color)
+    plot_tracks(axes[2], cleaned_df, new_track_color)
+    plot_removed_tracks(axes[2], original_df, removed_ids, removed_track_color)
+
+    # **Legend for Final Plot**
+    axes[2].set_title(titles[2], fontsize=14)
+    legend_labels = ["Original", "New", "Removed"]
+    legend_colors = [old_track_color, new_track_color, removed_track_color]
+    legend_patches = [plt.Line2D([0], [0], color=color, lw=2, label=label) for color, label in zip(legend_colors, legend_labels)]
+    axes[2].legend(handles=legend_patches, loc="upper right", fontsize=12)
+
+    fig.suptitle(f"Track Changes | File: {filename} | Time: {time_start_str} - {time_end_str}", fontsize=16)
+
+    plt.show()

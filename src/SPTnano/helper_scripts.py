@@ -927,6 +927,111 @@ def clean_and_split_tracks(
 
     return cleaned_df, removed_unique_ids, report
 
+def pathfixer(
+    df, 
+    segment_length_threshold=0.3, 
+    remove_short_tracks=True, 
+    min_track_length_seconds=1.0, 
+    time_between_frames=0.1
+):
+    """
+    Cleans and splits tracks based on segment length thresholds. Tracks with segments exceeding 
+    the threshold are split, erroneous segments are removed, and resulting subtracks are 
+    reassigned unique IDs.
+
+    Parameters:
+    - df: pd.DataFrame, input dataframe containing particle tracking data with `x_um`, `y_um`, `unique_id`, and `time_s`.
+    - segment_length_threshold: float, the maximum allowable segment length (in micrometers).
+    - remove_short_tracks: bool, whether to remove tracks shorter than the minimum track length after splitting.
+    - min_track_length_seconds: float, the minimum track duration in seconds to be retained.
+    - time_between_frames: float, time duration between frames in seconds.
+
+    Returns:
+    - cleaned_df: pd.DataFrame, the cleaned and split dataframe.
+    - removed_unique_ids: list, `unique_id`s that were removed due to short length or other reasons.
+    - report: dict, a summary report detailing the modifications made to the dataset.
+    """
+    if min_track_length_seconds is None:
+        raise ValueError("Please specify `min_track_length_seconds`.")
+
+    min_track_length_frames = int(min_track_length_seconds / time_between_frames)
+
+    original_track_count = df['unique_id'].nunique()
+    original_row_count = len(df)
+
+    # Sort by track ID and frame order
+    df = df.sort_values(by=['unique_id', 'frame']).reset_index(drop=True)
+
+    # Compute segment lengths
+    df[['x_um_prev', 'y_um_prev']] = df.groupby('unique_id')[['x_um', 'y_um']].shift(1)
+    df['segment_len_um'] = np.sqrt(
+        (df['x_um'] - df['x_um_prev'])**2 + 
+        (df['y_um'] - df['y_um_prev'])**2
+    ).fillna(0)
+
+    # Assign `file_id` for consistent unique_id generation
+    df['file_id'] = pd.Categorical(df['filename']).codes
+
+    # Initialize variables
+    new_tracks = []
+    split_track_count = 0
+    deleted_segments_count = 0
+    removed_unique_ids = set()  
+    next_particle_id = 0  # Using an integer instead of float to avoid formatting issues
+
+    # Process each track individually
+    for unique_id, track_data in df.groupby('unique_id'):
+        current_track = []
+        
+        for _, row in track_data.iterrows():
+            if row['segment_len_um'] > segment_length_threshold:
+                deleted_segments_count += 1
+                if current_track:
+                    split_track_count += 1
+                    track_df = pd.DataFrame(current_track)
+                    track_df['particle'] = next_particle_id
+                    track_df['file_id'] = track_data['file_id'].iloc[0]
+                    track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + str(next_particle_id)
+                    new_tracks.append(track_df)
+                    next_particle_id += 1
+                    current_track = []
+            else:
+                current_track.append(row)
+
+        # Save any remaining valid track
+        if current_track:
+            track_df = pd.DataFrame(current_track)
+            track_df['particle'] = next_particle_id
+            track_df['file_id'] = track_data['file_id'].iloc[0]
+            track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + str(next_particle_id)
+            new_tracks.append(track_df)
+            next_particle_id += 1
+
+    # Combine all new tracks
+    cleaned_df = pd.concat(new_tracks, ignore_index=True) if new_tracks else pd.DataFrame(columns=df.columns)
+
+    # Remove short tracks if enabled
+    if remove_short_tracks and not cleaned_df.empty:
+        cleaned_df['track_length'] = cleaned_df.groupby('unique_id')['unique_id'].transform('size')
+        removed_unique_ids = set(cleaned_df.loc[cleaned_df['track_length'] < min_track_length_frames, 'unique_id'])
+        cleaned_df = cleaned_df[cleaned_df['track_length'] >= min_track_length_frames]
+        cleaned_df.drop(columns=['track_length'], inplace=True)
+
+    # Generate report
+    final_track_count = cleaned_df['unique_id'].nunique()
+    final_row_count = len(cleaned_df)
+
+    report = {
+        'original_track_count': original_track_count,
+        'final_track_count': final_track_count,
+        'tracks_split': split_track_count,
+        'deleted_segments': deleted_segments_count,
+        'original_row_count': original_row_count,
+        'final_row_count': final_row_count,
+    }
+
+    return cleaned_df, removed_unique_ids, report
+
 
 # def add_motion_class(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW):
 #     """
