@@ -44,8 +44,16 @@ def display_file_tree(startpath):
 
 def add_unique_id(df):
     df['file_id'] = pd.Categorical(df['filename']).codes
-    df['unique_id'] = df['file_id'].astype(str) + '_' + df['particle'].astype(str)
+    df['particleint'] = df['particle'].astype(int)
+    df['unique_id'] = df['file_id'].astype(str) + '_' + df['particleint'].astype(str)
+
     return df
+
+# def add_unique_id(df):
+#     df['file_id'] = pd.Categorical(df['filename']).codes
+#     df['unique_id'] = df['file_id'].astype(str) + '_' + df['particle'].astype(str)
+    
+#     return df
 
 def add_microns_and_secs(df, pixelsize_microns, time_between_frames):
     '''Adds columns to the DataFrame with positions in microns and time in seconds'''
@@ -992,6 +1000,7 @@ def pathfixer(
                     track_df['particle'] = next_particle_id
                     track_df['file_id'] = track_data['file_id'].iloc[0]
                     track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + str(next_particle_id)
+                    # df['unique_id'] = df['file_id'].astype(str) + '_' + df['particle'].astype(str)
                     new_tracks.append(track_df)
                     next_particle_id += 1
                     current_track = []
