@@ -12,6 +12,7 @@ import tifffile as tiff
 from tifffile import TiffWriter
 from nd2reader import ND2Reader
 import config
+import re
 
 def generate_file_tree(startpath):
     tree = []
@@ -1203,3 +1204,25 @@ def add_motion_class(metrics_df, time_windowed_df, time_window=config.TIME_WINDO
 
     return metrics_df
 
+def extract_metadata(df, filename_col):
+    """
+    Extracts 'power' and 'cellID' from the filename column and adds them as new columns.
+    
+    Args:
+        df (pd.DataFrame): DataFrame containing a column with filenames.
+        filename_col (str): Name of the column containing filenames.
+    
+    Returns:
+        pd.DataFrame: Updated DataFrame with 'power' and 'cellID' columns.
+    """
+    def parse_filename(filename):
+        match = re.search(r'power-(\d+percent)_cell-(\d+)', filename)
+        if match:
+            power = match.group(1)  # Extracts power (e.g., '25percent')
+            cellID = int(match.group(2))  # Extracts cell number as integer
+            return power, cellID
+        return None, None  # If no match, return None values
+
+    df[['power', 'cellID']] = df[filename_col].apply(lambda x: pd.Series(parse_filename(x)))
+
+    return df

@@ -17,7 +17,7 @@ import gc
 class ROISelector:
     def __init__(self, input_directory, output_directory, roi_width, roi_height, split_tiff=False,
                  dark_frame_subtraction=False, dark_frame_directory=None, save_dark_corrected=False,
-                 ROI_from_metadata=False, metadata_path=None, percentile_correction=False, pmin=1, pmax=99.9):# PERSIMMON 
+                 ROI_from_metadata=False, metadata_path=None, percentile_correction=False, pmin=1, pmax=100):# PERSIMMON 
         self.input_directory = input_directory
         self.output_directory = output_directory
         self.roi_width = roi_width
