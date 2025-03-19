@@ -150,27 +150,58 @@ class ParticleMetrics:
         return self.metrics_df
     
 
-    def calculate_persistence_length(self, track_data):
-        """
-        Calculate the persistence length for a given track.
-        Parameters:
-        - track_data: DataFrame containing the track data.
-        Returns:
-        - persistence_length: Calculated persistence length for the track.
-        """
-        directions = track_data['direction_rad']
-        # Calculate directional correlation: <cos(theta_i - theta_j)>
-        direction_diffs = directions.diff().dropna()
-        correlation = np.cos(direction_diffs).mean()
-            # Check if correlation is greater than zero before calculating log
-        if correlation > 0:
-            persistence_length = -1 / np.log(correlation)
-        else:
-            persistence_length = np.nan  # Assign NaN if the correlation is zero or negative
+    # def calculate_persistence_length(self, track_data):
+    #     """
+    #     Calculate the persistence length for a given track.
+    #     Parameters:
+    #     - track_data: DataFrame containing the track data.
+    #     Returns:
+    #     - persistence_length: Calculated persistence length for the track.
+    #     """
+    #     directions = track_data['direction_rad']
+    #     # Calculate directional correlation: <cos(theta_i - theta_j)>
+    #     direction_diffs = directions.diff().dropna()
+    #     correlation = np.cos(direction_diffs).mean()
+    #         # Check if correlation is greater than zero before calculating log
+    #     if correlation > 0:
+    #         persistence_length = -1 / np.log(correlation)
+    #     else:
+    #         persistence_length = np.nan  # Assign NaN if the correlation is zero or negative
     
 
-        # persistence_length = -1 / np.log(correlation) if correlation != 0 else np.nan
+    #     # persistence_length = -1 / np.log(correlation) if correlation != 0 else np.nan
+    #     return persistence_length
+    
+    def calculate_persistence_length(self, track_data): #updated 3-6-2025
+        """
+        Calculate the persistence length for a given track (or time window)
+        in physical units. If the directional correlation is non-positive, returns 0.
+        
+        Parameters:
+        - track_data: DataFrame containing the track data (or time window data).
+        
+        Returns:
+        - persistence_length: Calculated persistence length for the track in physical units.
+        """
+        directions = track_data['direction_rad']
+        # Compute the differences in direction between consecutive frames.
+        direction_diffs = directions.diff().dropna()
+        # Calculate the average cosine of these differences.
+        correlation = np.cos(direction_diffs).mean()
+        
+        if correlation > 0:
+            # Persistence length in "step" units.
+            persistence_length_steps = -1 / np.log(correlation)
+            # Calculate the average segment length (in physical units, e.g., micrometers) over this window.
+            avg_segment_length = track_data['segment_len_um'].mean()
+            # Scale to obtain the persistence length in physical units.
+            persistence_length = persistence_length_steps * avg_segment_length
+        else:
+            # Instead of returning NaN, return 0.
+            persistence_length = 0
+
         return persistence_length
+    
 
 
     def calculate_net_displacement(self):
@@ -183,6 +214,43 @@ class ParticleMetrics:
             (self.metrics_df['y_um'] - self.metrics_df['y_um_start'])**2
         )
         return self.metrics_df
+    
+
+    def calculate_cum_displacement(self): #ADDED 3_19_2025
+        # Ensure that segment lengths are computed
+        self.calculate_distances()
+        # Compute cumulative (total) displacement for each particle
+        self.metrics_df['cum_displacement_um'] = self.metrics_df.groupby('unique_id')['segment_len_um'].cumsum()
+        return self.metrics_df
+    
+    # def calculate_cumulative_displacement(df):
+    #     """
+    #     Calculates the cumulative displacement (total distance traveled) for each particle.
+        
+    #     Parameters:
+    #     - df: DataFrame containing columns 'unique_id', 'frame', 'x_um', and 'y_um'.
+        
+    #     Returns:
+    #     - df: DataFrame with a new column 'cumulative_displacement_um', which is the
+    #         cumulative sum of distances (segment lengths) between consecutive frames.
+    #     """
+    #     # Ensure the data is sorted by unique_id and frame
+    #     df = df.sort_values(by=['unique_id', 'frame']).copy()
+        
+    #     # Compute segment lengths if not already present
+    #     if 'segment_len_um' not in df.columns:
+    #         # Calculate previous positions for each particle
+    #         df[['x_um_prev', 'y_um_prev']] = df.groupby('unique_id')[['x_um', 'y_um']].shift(1)
+    #         # Compute the Euclidean distance between consecutive positions
+    #         df['segment_len_um'] = ((df['x_um'] - df['x_um_prev'])**2 +
+    #                                 (df['y_um'] - df['y_um_prev'])**2)**0.5
+    #         # Replace NaN for the first frame of each particle with 0
+    #         df['segment_len_um'] = df['segment_len_um'].fillna(0)
+        
+    #     # Compute the cumulative sum of segment lengths for each particle
+    #     df['cumulative_displacement_um'] = df.groupby('unique_id')['segment_len_um'].cumsum()
+    #     return df
+
 
     def calculate_instantaneous_diffusion_coefficient(self):
         """
@@ -326,6 +394,8 @@ class ParticleMetrics:
 
         self.time_averaged_df = pd.concat(time_averaged_list).reset_index(drop=True)
 
+        ##### old version 2-19-2025 #### BELOW
+
     def calculate_time_windowed_metrics(self, window_size=None, overlap=None, filter_metrics_df=False):
         """
         Calculate metrics for time windows across all tracks.
@@ -347,9 +417,16 @@ class ParticleMetrics:
         for unique_id, track_data in tqdm(self.metrics_df.groupby('unique_id'), desc="Calculating Time-Windowed Metrics"):
             n_frames = len(track_data)
 
+
+
             for start in range(0, n_frames - window_size + 1, window_size - overlap):
                 end = start + window_size
                 window_data = track_data.iloc[start:end]
+
+
+
+
+
                 included_frames.update(window_data['frame'].values)  # Track included frames
 
                 avg_msd, D, alpha, motion_class = self.calculate_msd_for_track(
@@ -402,6 +479,120 @@ class ParticleMetrics:
             print(f"Initial number of frames: {len(self.metrics_df)}")
             self.metrics_df = self.metrics_df[self.metrics_df['frame'].isin(included_frames)].copy()
             print(f"Remaining frames after filtering: {len(self.metrics_df)}")
+
+            ##### old version 2-19-2025 #### ## ABOVE
+
+    # def calculate_time_windowed_metrics(self, window_size=None, overlap=None, filter_metrics_df=False, include_partial_windows=False):
+    #     """
+    #     Calculate metrics for time windows across all tracks.
+
+    #     Parameters:
+    #     - window_size: Number of frames in each window
+    #     - overlap: Number of frames overlapping between consecutive windows
+    #     - filter_metrics_df: Whether to filter the metrics_df to only include frames within time windows
+    #     - include_partial_windows: Whether to include partial windows at the end of tracks (default: False)
+    #     """
+    #     if window_size is None:
+    #         window_size = self.calculate_default_window_size()
+    #     if overlap is None:
+    #         overlap = int(window_size / 2)
+
+    #     if include_partial_windows:
+    #         print("⚙️ Including partial windows (windows smaller than window_size will be processed).")
+    #     else:
+    #         print("⚙️ Partial windows are excluded (only full windows are processed).")
+
+    #     windowed_list = []
+    #     included_frames = set()  # Track frames included in windows
+
+    #     # Iterate over each unique_id (track)
+    #     for unique_id, track_data in tqdm(self.metrics_df.groupby('unique_id'), desc="Calculating Time-Windowed Metrics"):
+    #         n_frames = len(track_data)
+    #         step_size = window_size - overlap
+
+    #         # ✅ Logic for window range:
+    #         # - If partial windows included: allow windows to start anywhere up to the last frame.
+    #         # - If not: limit to positions where a full window can fit.
+    #         max_start = n_frames - window_size if not include_partial_windows else max(n_frames - 1, 0)
+
+    #         for start in range(0, max_start + 1, step_size):
+    #             end = start + window_size
+
+    #             # ✅ Slice the window (clip end if partial windows are allowed)
+    #             window_data = track_data.iloc[start:min(end, n_frames)] if include_partial_windows else track_data.iloc[start:end]
+
+    #             # 🚫 Skip empty windows to prevent IndexError
+    #             if window_data.empty:
+    #                 continue
+
+    #             # 🚫 Skip partial windows if disabled and window is too short
+    #             if not include_partial_windows and len(window_data) < window_size:
+    #                 continue
+
+    #             included_frames.update(window_data['frame'].values)  # Track included frames
+
+    #             # ✅ Calculate MSD and motion features
+    #             avg_msd, D, alpha, motion_class = self.calculate_msd_for_track(
+    #                 window_data, store_msd=True, time_window=start // step_size
+    #             )
+
+    #             # 🚫 Skip if MSD calculation failed (e.g., not enough frames)
+    #             if pd.isna(avg_msd):
+    #                 continue
+
+    #             total_time_s = window_data['time_s'].iloc[-1] - window_data['time_s'].iloc[0]
+    #             avg_speed = window_data['speed_um_s'].mean()
+    #             avg_acceleration = window_data['acceleration_um_s2'].mean()
+    #             avg_jerk = window_data['jerk_um_s3'].mean()
+    #             avg_norm_curvature = window_data['normalized_curvature'].mean()
+    #             avg_angle_norm_curvature = window_data['angle_normalized_curvature'].mean()
+    #             persistence_length = self.calculate_persistence_length(window_data)
+
+    #             # ✅ Safely access start and end rows
+    #             start_row, end_row = window_data.iloc[0], window_data.iloc[-1]
+
+    #             window_summary = pd.DataFrame({
+    #                 'time_window': [start // step_size],
+    #                 'x_um_start': [start_row['x_um']],
+    #                 'y_um_start': [start_row['y_um']],
+    #                 'x_um_end': [end_row['x_um']],
+    #                 'y_um_end': [end_row['y_um']],
+    #                 'particle': [start_row['particle']],
+    #                 'condition': [start_row['condition']],
+    #                 'filename': [start_row['filename']],
+    #                 'file_id': [start_row['file_id']],
+    #                 'unique_id': [unique_id],
+    #                 'avg_msd': [avg_msd],
+    #                 'n_frames': [len(window_data)],
+    #                 'total_time_s': [total_time_s],
+    #                 'Location': [start_row['Location']],
+    #                 'diffusion_coefficient': [D],
+    #                 'anomalous_exponent': [alpha],
+    #                 'motion_class': [motion_class],
+    #                 'avg_speed_um_s': [avg_speed],
+    #                 'avg_acceleration_um_s2': [avg_acceleration],
+    #                 'avg_jerk_um_s3': [avg_jerk],
+    #                 'avg_normalized_curvature': [avg_norm_curvature],
+    #                 'avg_angle_normalized_curvature': [avg_angle_norm_curvature],
+    #                 'persistence_length': [persistence_length],
+    #             })
+
+    #             windowed_list.append(window_summary)
+
+    #     # ✅ Concatenate all window summaries
+    #     if windowed_list:
+    #         self.time_windowed_df = pd.concat(windowed_list).reset_index(drop=True)
+    #     else:
+    #         print("⚠️ No windows were processed. Check input data or window settings.")
+    #         self.time_windowed_df = pd.DataFrame()  # Create an empty DataFrame
+
+    #     # ✅ Optional filtering of metrics_df to only include frames in windows
+    #     if filter_metrics_df:
+    #         print("🔍 Filtering metrics_df to include only frames within calculated time windows...")
+    #         print(f"📊 Frames before filtering: {len(self.metrics_df)}")
+    #         self.metrics_df = self.metrics_df[self.metrics_df['frame'].isin(included_frames)].copy()
+    #         print(f"✅ Frames after filtering: {len(self.metrics_df)}")
+        
     
 
     def calculate_metrics_for_window(self, window_data):
@@ -483,6 +674,8 @@ class ParticleMetrics:
         
         # Calculate net displacement
         self.calculate_net_displacement()
+
+        self.calculate_cum_displacement() #ADDED 3_19_2025
 
         # Calculate MSD for each track and aggregate
         self.calculate_msd_for_all_tracks(max_lagtime)
