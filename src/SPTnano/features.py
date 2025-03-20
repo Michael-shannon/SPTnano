@@ -272,54 +272,143 @@ class ParticleMetrics:
         self.metrics_df['instant_velocity_y_um_s'] = self.metrics_df['instant_velocity_y_um_s'].replace([np.inf, -np.inf], np.nan).fillna(0)
         return self.metrics_df
     
-    def calculate_msd_for_track(self, track_data, store_msd=False, time_window=None):
-        n_frames = len(track_data)
-        if n_frames < 3:
-            print(f"Skipping unique_id {track_data['unique_id'].iloc[0]}: insufficient frames ({n_frames})")
-            return np.nan, np.nan, np.nan, 'unlabeled'
+    # def calculate_msd_for_track(self, track_data, store_msd=False, time_window=None):
+    #     n_frames = len(track_data)
+    #     if n_frames < 3:
+    #         print(f"Skipping unique_id {track_data['unique_id'].iloc[0]}: insufficient frames ({n_frames})")
+    #         return np.nan, np.nan, np.nan, 'unlabeled'
 
-        # Use all possible lag times (frames - 1)
+    #     # Use all possible lag times (frames - 1)
+    #     lag_times = np.arange(1, n_frames) * self.time_between_frames
+    #     msd_values = np.zeros(len(lag_times))
+
+    #     for lag in range(1, len(lag_times) + 1):
+    #         displacements = (track_data[['x_um', 'y_um']].iloc[lag:].values -
+    #                         track_data[['x_um', 'y_um']].iloc[:-lag].values) ** 2
+    #         squared_displacements = np.sum(displacements, axis=1)
+    #         msd_values[lag - 1] = np.mean(squared_displacements)
+
+    #     # print(f"DEBUG: Unique ID {track_data['unique_id'].iloc[0]}") #USEFUL FOR DEBUGGING!
+    #     # print(f"  - Total frames: {n_frames}")
+    #     # print(f"  - Total lag times: {len(lag_times)}")
+    #     # print(f"  - Lag times: {lag_times}")
+    #     # print(f"  - MSD values: {msd_values}")
+
+    #     # Check if sufficient lag times are available
+    #     if len(lag_times) < 3:
+    #         print(f"Skipping unique_id {track_data['unique_id'].iloc[0]}: insufficient lag times ({len(lag_times)})")
+    #         return np.nan, np.nan, np.nan, 'unlabeled'
+
+    #     try:
+    #         popt, _ = scipy.optimize.curve_fit(self.msd_model, lag_times, msd_values)
+    #         D, alpha = popt[0], popt[1]
+    #     except RuntimeError:
+    #         print(f"Curve fitting failed for unique_id {track_data['unique_id'].iloc[0]}")
+    #         return np.nan, np.nan, np.nan, 'unlabeled'
+
+    #     # print(f"  - Diffusion coefficient (D): {D:.4f}")
+    #     # print(f"  - Anomalous exponent (alpha): {alpha:.4f}")
+
+    #     # Classify motion
+    #     if alpha < 1 - self.tolerance:
+    #         motion_class = 'subdiffusive'
+    #     elif alpha > 1 + self.tolerance:
+    #         motion_class = 'superdiffusive'
+    #     else:
+    #         motion_class = 'normal'
+
+    #     # print(f"  - Motion class: {motion_class}")
+
+    #     # Store MSD values if requested
+    #     if store_msd and time_window is not None:
+    #         msd_records = [
+    #             {
+    #                 'unique_id': track_data['unique_id'].iloc[0],
+    #                 'time_window': time_window,
+    #                 'lag_time': lag,
+    #                 'msd': msd,
+    #                 'diffusion_coefficient': D,
+    #                 'anomalous_exponent': alpha
+    #             }
+    #             for lag, msd in zip(lag_times, msd_values)
+    #         ]
+    #         if msd_records:
+    #             msd_records_df = pd.DataFrame(msd_records)
+    #             self.msd_lagtime_df = pd.concat([self.msd_lagtime_df, msd_records_df], ignore_index=True)
+
+    #     return np.mean(msd_values), D, alpha, motion_class
+
+    def calculate_msd_for_track(self, track_data, store_msd=False, time_window=None, #ADDED 3_19_2025
+                                use_bounds=True, max_D=5, allow_partial_window=False,
+                                min_window_size=60):
+        """
+        Calculate the MSD for a given track (or window of a track) and fit the MSD model.
+        
+        Parameters:
+        - track_data: DataFrame for the track or window.
+        - store_msd: If True, store individual lag time MSD records.
+        - time_window: An identifier for the time window (if applicable).
+        - use_bounds: Whether to apply parameter bounds in curve fitting.
+        - max_D: Upper bound for the diffusion coefficient if using bounds.
+        - allow_partial_window: If False and this is a window (time_window is not None),
+            skip windows with fewer than min_window_size frames.
+        - min_window_size: Minimum number of frames required in a window when not allowing partial windows.
+        
+        Returns:
+        A tuple of (avg_msd, D, alpha, motion_class)
+        """
+        n_frames = len(track_data)
+        
+        # For full tracks, require at least 3 frames.
+        if time_window is None:
+            if n_frames < 3:
+                print(f"Skipping unique_id {track_data['unique_id'].iloc[0]}: insufficient frames ({n_frames})")
+                return np.nan, np.nan, np.nan, 'unlabeled'
+        else:
+            # For time windows, enforce minimum window size unless allowed.
+            if not allow_partial_window and n_frames < min_window_size:
+                print(f"Skipping unique_id {track_data['unique_id'].iloc[0]} for time window {time_window}: "
+                    f"insufficient frames ({n_frames} < required {min_window_size})")
+                return np.nan, np.nan, np.nan, 'unlabeled'
+        
+        # Compute lag times and corresponding MSD values.
         lag_times = np.arange(1, n_frames) * self.time_between_frames
         msd_values = np.zeros(len(lag_times))
-
         for lag in range(1, len(lag_times) + 1):
             displacements = (track_data[['x_um', 'y_um']].iloc[lag:].values -
                             track_data[['x_um', 'y_um']].iloc[:-lag].values) ** 2
             squared_displacements = np.sum(displacements, axis=1)
             msd_values[lag - 1] = np.mean(squared_displacements)
-
-        # print(f"DEBUG: Unique ID {track_data['unique_id'].iloc[0]}") #USEFUL FOR DEBUGGING!
-        # print(f"  - Total frames: {n_frames}")
-        # print(f"  - Total lag times: {len(lag_times)}")
-        # print(f"  - Lag times: {lag_times}")
-        # print(f"  - MSD values: {msd_values}")
-
-        # Check if sufficient lag times are available
+        
         if len(lag_times) < 3:
             print(f"Skipping unique_id {track_data['unique_id'].iloc[0]}: insufficient lag times ({len(lag_times)})")
             return np.nan, np.nan, np.nan, 'unlabeled'
-
+        
+        # Fit the MSD model.
         try:
-            popt, _ = scipy.optimize.curve_fit(self.msd_model, lag_times, msd_values)
+            if use_bounds:
+                popt, _ = scipy.optimize.curve_fit(self.msd_model, lag_times, msd_values,
+                                                bounds=([0, -np.inf], [max_D, np.inf]))
+            else:
+                popt, _ = scipy.optimize.curve_fit(self.msd_model, lag_times, msd_values)
             D, alpha = popt[0], popt[1]
         except RuntimeError:
             print(f"Curve fitting failed for unique_id {track_data['unique_id'].iloc[0]}")
             return np.nan, np.nan, np.nan, 'unlabeled'
-
-        # print(f"  - Diffusion coefficient (D): {D:.4f}")
-        # print(f"  - Anomalous exponent (alpha): {alpha:.4f}")
-
-        # Classify motion
+        
+        # Classify the motion type.
         if alpha < 1 - self.tolerance:
             motion_class = 'subdiffusive'
         elif alpha > 1 + self.tolerance:
             motion_class = 'superdiffusive'
         else:
             motion_class = 'normal'
-
-        # print(f"  - Motion class: {motion_class}")
-
-        # Store MSD values if requested
+        
+        # Post-hoc filtering: if D is hitting the upper bound, mark the classification as "overestimated".
+        if D >= max_D * 0.99:
+            motion_class = f"overestimated_{motion_class}"
+        
+        # Optionally store the per-lag MSD values.
         if store_msd and time_window is not None:
             msd_records = [
                 {
@@ -335,9 +424,8 @@ class ParticleMetrics:
             if msd_records:
                 msd_records_df = pd.DataFrame(msd_records)
                 self.msd_lagtime_df = pd.concat([self.msd_lagtime_df, msd_records_df], ignore_index=True)
-
+        
         return np.mean(msd_values), D, alpha, motion_class
-
 
     def produce_time_averaged_df(self, max_lagtime=None):
         """
