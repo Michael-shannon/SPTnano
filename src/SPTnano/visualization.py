@@ -46,6 +46,9 @@ from io import StringIO
 import matplotlib as mpl
 import seaborn as sns
 
+
+from matplotlib.ticker import FuncFormatter
+
 # Set up fonts and SVG text handling so that text remains editable in Illustrator.
 mpl.rcParams['svg.fonttype'] = 'none'
 mpl.rcParams['font.family'] = 'sans-serif'
@@ -385,61 +388,288 @@ def plot_histograms_seconds(traj_df, bins=100, coltoseparate='tracker', xlimit=N
 #         plt.close()
 
 
+# def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind',
+#                     use_kde=False, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None, 
+#                     grid=False, background='white', transparent=False, line_color='black', font_size=16, showavg = True):
+#     """
+#     Plot histograms or KDEs of a specified feature for each category in `separate`, with consistent binning.
+
+#     Parameters
+#     ----------
+#     data_df : DataFrame
+#         DataFrame containing track data with the specified feature and optionally a separating column.
+#     feature : str
+#         The feature to plot histograms for.
+#     bins : int, optional
+#         Number of bins for the histogram. Default is 100.
+#     separate : str, optional
+#         Column to separate the data by. If None, all data will be plotted together. Default is None.
+#     xlimit : float, optional
+#         Upper limit for the x-axis. Default is None.
+#     small_multiples : bool, optional
+#         Whether to plot each category separately as small multiples. Default is False.
+#     palette : str, optional
+#         Color palette for the plot. Default is 'colorblind'.
+#     use_kde : bool, optional
+#         Whether to use KDE plot instead of histogram. Default is False.
+#     show_plot : bool, optional
+#         Whether to display the plot in the notebook. Default is True.
+#     master_dir : str, optional
+#         The directory where the plots folder will be created and the plot will be saved. Default is None.
+#     tick_interval : int, optional
+#         Interval for x-axis ticks. Default is 5.
+#     average : str, optional
+#         Whether to draw 'mean' or 'median' line on the plot. Default is 'mean'.
+#     order : list, optional
+#         Specific order for the conditions. Default is None.
+#     background : str, tuple, optional
+#         Background color as color name, RGB tuple, or hex code. Default is 'white'.
+#     transparent : bool, optional
+#         If True, makes the plot fully transparent except for histogram bars and lines. Default is False.
+#     line_color : str, optional
+#         Color of all plot lines, including axis lines, grid lines, labels, and average lines. Default is 'black'.
+#     font_size : int, optional
+#         Font size for all text in the plot. Default is 16.
+#     """
+#     if master_dir is None:
+#         master_dir = "plots"  # Use a default directory if not provided
+
+#     # Set up background and transparency
+#     if transparent:
+#         figure_background = 'none'
+#         axis_background = (0, 0, 0, 0)  # Transparent RGBA for axes
+#     else:
+#         figure_background = background if is_color_like(background) else 'white'
+#         axis_background = figure_background
+
+#     # Prepare data for separation by category if specified
+#     if separate is not None:
+#         if not pd.api.types.is_categorical_dtype(data_df[separate]):
+#             data_df[separate] = data_df[separate].astype('category')
+#         if order is not None:
+#             data_df[separate] = pd.Categorical(data_df[separate], categories=order, ordered=True)
+#         unique_categories = data_df[separate].cat.categories
+#     else:
+#         unique_categories = [None]
+
+#     # Create a color palette for the categories
+#     color_palette = sns.color_palette(palette, len(unique_categories))
+
+#     # Set up figure and axes for small multiples or single plot
+#     if small_multiples and separate is not None:
+#         fig, axes = plt.subplots(len(unique_categories), 1, figsize=(20, 6 * len(unique_categories)), 
+#                                  sharex=True, facecolor=figure_background)
+#         if len(unique_categories) == 1:
+#             axes = [axes]  # Handle single subplot case
+#     else:
+#         fig, ax = plt.subplots(figsize=(20, 12), facecolor=figure_background)
+#         axes = [ax]  # Use a single axis in a list for consistency
+
+#     # Initial vertical offset for median text
+#     text_position_y = 0.8
+
+#     for i, category in enumerate(unique_categories):
+#         ax = axes[i] if small_multiples and separate else axes[0]
+#         subsetvalues = data_df[data_df[separate] == category][feature] if category is not None else data_df[feature]
+
+#         # Set axis background color
+#         ax.set_facecolor(axis_background)
+
+#         # Determine bin edges for consistent binning
+#         min_value = data_df[feature].min()
+#         max_value = data_df[feature].max() if xlimit is None else xlimit
+#         bin_edges = np.linspace(min_value, max_value, bins + 1)
+
+#         # Plot histogram or KDE
+#         if use_kde:
+#             sns.kdeplot(subsetvalues, fill=True, ax=ax, color=color_palette[i], linewidth=1.5, label=category)
+#         else:
+#             sns.histplot(subsetvalues, bins=bin_edges, kde=False, ax=ax, color=color_palette[i], alpha=0.5, 
+#                          stat="percent", label=category)
+
+#         # Plot average line
+#         avg_value = subsetvalues.mean() if average == 'mean' else subsetvalues.median()
+#         if showavg:
+#             ax.axvline(avg_value, color=line_color, linestyle='--')
+
+#         # Display category and value below each other, adjusting vertical position for each category
+#         ax.text(0.8, text_position_y - (i * 0.05), f"{category}: {avg_value:.2f}", 
+#                 transform=ax.transAxes, fontsize=font_size, color=line_color, ha='center')
+
+#         # Customize x and y labels, and tick parameters
+#         ax.set_xlabel(feature, fontsize=font_size, color=line_color)
+#         ax.set_ylabel('Percentage', fontsize=font_size, color=line_color)
+#         ax.tick_params(axis='both', which='both', color=line_color, labelcolor=line_color, labelsize=font_size)
+        
+#         # Set grid and axis line colors
+#         if grid:
+#             ax.grid(True, linestyle='--', linewidth=0.5, color=line_color if not transparent else (0, 0, 0, 0.5), alpha=0.7, axis='y')
+        
+#         # Set axis spine colors
+#         for spine in ax.spines.values():
+#             spine.set_edgecolor(line_color)
+#             if transparent:
+#                 spine.set_alpha(0.5)
+        
+#         # Set x-axis limits
+#         ax.set_xlim(0, max_value)
+#         ax.set_xticks(np.arange(0, max_value + 1, tick_interval))
+
+#         # Title for each subplot if small multiples
+#         if small_multiples and separate:
+#             ax.set_title(f'{category}', fontsize=font_size, color=line_color)
+
+#     # Legend and title handling for non-multiples
+#     if separate and not small_multiples:
+#         ax.legend(title=separate, fontsize=font_size, title_fontsize=font_size)
+#     elif separate:
+#         fig.suptitle(f"{feature} distribution by {separate}", fontsize=font_size + 4, color=line_color)
+
+#     # Save and show plot
+#     plot_dir = os.path.join(master_dir, 'plots', 'histograms')
+#     os.makedirs(plot_dir, exist_ok=True)
+#     plt.savefig(f"{plot_dir}/{feature}_histogram.png", bbox_inches='tight', transparent=transparent)
+
+#     if show_plot:
+#         plt.show()
+#     else:
+#         plt.close()
+
+
+
+
 def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind',
                     use_kde=False, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None, 
-                    grid=False, background='white', transparent=False, line_color='black', font_size=16, showavg = True):
+                    grid=False, background='white', transparent=False, line_color='black', font_size=9, showavg=True,
+                    export_format='png', return_svg=False, x_range=None, y_range=None, percentage=True, 
+                    log_scale=False, log_base=10, alpha=1, log_axis_label='log', save_folder=None, figsize=(3,3)):
     """
-    Plot histograms or KDEs of a specified feature for each category in `separate`, with consistent binning.
-
+    Plot histograms or KDEs of a specified feature for each category in `separate` with consistent binning.
+    
+    Additional options:
+      - If log_scale is True, a new column is created with the logarithm (using log_base) of the feature,
+        and that column is plotted. The x-axis label can either show the log-transformed values or the actual values,
+        as controlled by `log_axis_label` ('log' or 'actual').
+      - The data are filtered to the common x-axis range before plotting so that the saved SVG does not show values beyond
+        the set limits.
+      - You may supply x_range and y_range tuples to force common axis limits. When log_scale is enabled and x_range is not provided,
+        x_range defaults to (-4, 2) for log_base 10 or (-3, 1) for log_base 2.
+      - The parameter percentage controls whether the histogram is shown as percentages (if True) or counts (if False).
+      - The base figure size is (3,3) inches and text sizes scale relative to that.
+      - The plot is saved to a folder defined by save_folder (defaulting to "plots/histograms" within master_dir).
+      - The parameter alpha controls the transparency of the KDE fill or histogram bars (default is 1 for solid).
+    
     Parameters
     ----------
     data_df : DataFrame
-        DataFrame containing track data with the specified feature and optionally a separating column.
+        DataFrame containing the data.
     feature : str
-        The feature to plot histograms for.
+        The feature to plot.
     bins : int, optional
-        Number of bins for the histogram. Default is 100.
+        Number of bins. Default is 100.
     separate : str, optional
-        Column to separate the data by. If None, all data will be plotted together. Default is None.
+        Column to separate the data by. Default is None.
     xlimit : float, optional
-        Upper limit for the x-axis. Default is None.
+        Upper limit for the x-axis (applied before log transformation if log_scale is enabled) when x_range is not provided.
     small_multiples : bool, optional
-        Whether to plot each category separately as small multiples. Default is False.
+        Whether to plot each category in a separate subplot. Default is False.
     palette : str, optional
-        Color palette for the plot. Default is 'colorblind'.
+        Color palette. Default is 'colorblind'.
     use_kde : bool, optional
-        Whether to use KDE plot instead of histogram. Default is False.
+        If True, plot a KDE instead of a histogram. Default is False.
     show_plot : bool, optional
-        Whether to display the plot in the notebook. Default is True.
+        Whether to display the plot. Default is True.
     master_dir : str, optional
-        The directory where the plots folder will be created and the plot will be saved. Default is None.
+        Directory for saving plots. Default is None.
     tick_interval : int, optional
         Interval for x-axis ticks. Default is 5.
     average : str, optional
-        Whether to draw 'mean' or 'median' line on the plot. Default is 'mean'.
+        'mean' or 'median' for average line. Default is 'mean'.
     order : list, optional
-        Specific order for the conditions. Default is None.
-    background : str, tuple, optional
-        Background color as color name, RGB tuple, or hex code. Default is 'white'.
+        Custom order for the categories. Default is None.
+    grid : bool, optional
+        Whether to show grid lines. Default is False.
+    background : str or tuple, optional
+        Background color. Default is 'white'.
     transparent : bool, optional
-        If True, makes the plot fully transparent except for histogram bars and lines. Default is False.
+        If True, makes the plot background transparent. Default is False.
     line_color : str, optional
-        Color of all plot lines, including axis lines, grid lines, labels, and average lines. Default is 'black'.
+        Color for lines and labels. Default is 'black'.
     font_size : int, optional
-        Font size for all text in the plot. Default is 16.
+        Base font size for a 3x3 figure. Default is 9.
+    showavg : bool, optional
+        Whether to draw the average line and annotation. Default is True.
+    export_format : str, optional
+        File format for saving ('png' or 'svg'). Default is 'png'.
+    return_svg : bool, optional
+        If True and exporting as SVG, returns the cleaned SVG as a string.
+    x_range : tuple, optional
+        Common x-axis range as (xmin, xmax). If log_scale is True and x_range is not provided,
+        defaults to (-4, 2) for log_base 10 or (-3, 1) for log_base 2.
+    y_range : tuple, optional
+        Common y-axis range as (ymin, ymax). Default is None.
+    percentage : bool, optional
+        If True, histogram is plotted as percentages; otherwise as counts. Default is True.
+    log_scale : bool, optional
+        If True, plot the log-transformed values of the feature. Default is False.
+    log_base : int or float, optional
+        Base for the logarithm if log_scale is True. Default is 10.
+    alpha : float, optional
+        Transparency for the KDE fill or histogram bars. Default is 1 (solid).
+    log_axis_label : str, optional
+        If log_scale is enabled, determines whether the x-axis label shows the log-transformed values ('log') 
+        or the original feature values ('actual'). Default is 'log'.
+    save_folder : str, optional
+        Folder where the plot will be saved. Default is a "plots/histograms" folder within master_dir.
+    figsize : tuple, optional
+        Figure size in inches. Default is (3,3).
     """
+    # Set default master_dir if not provided.
     if master_dir is None:
-        master_dir = "plots"  # Use a default directory if not provided
+        master_dir = "plots"
+    
+    # --- Text Scaling Block ---
+    baseline_width = 3.0  # inches
+    scale_factor = figsize[0] / baseline_width
+    scaled_font = font_size * scale_factor
+    plt.rcParams.update({
+        'font.size': scaled_font,
+        'axes.titlesize': scaled_font,
+        'axes.labelsize': scaled_font,
+        'xtick.labelsize': scaled_font,
+        'ytick.labelsize': scaled_font,
+    })
+    
+    # --- Log Scale Preprocessing ---
+    if log_scale:
+        new_feature = "log_" + feature
+        # Ensure all values are positive.
+        if (data_df[feature] <= 0).any():
+            raise ValueError(f"All values of {feature} must be positive for log scale.")
+        if log_base == 10:
+            data_df[new_feature] = np.log10(data_df[feature])
+        elif log_base == 2:
+            data_df[new_feature] = np.log2(data_df[feature])
+        else:
+            data_df[new_feature] = np.log(data_df[feature]) / np.log(log_base)
+        feature_to_plot = new_feature
+        if log_axis_label == 'actual':
+            x_label = feature
+        else:
+            x_label = f"log{log_base}({feature})"
+    else:
+        feature_to_plot = feature
+        x_label = feature
 
-    # Set up background and transparency
+    # --- Background and Transparency ---
     if transparent:
         figure_background = 'none'
-        axis_background = (0, 0, 0, 0)  # Transparent RGBA for axes
+        axis_background = (0, 0, 0, 0)
     else:
         figure_background = background if is_color_like(background) else 'white'
         axis_background = figure_background
 
-    # Prepare data for separation by category if specified
+    # --- Data Separation ---
     if separate is not None:
         if not pd.api.types.is_categorical_dtype(data_df[separate]):
             data_df[separate] = data_df[separate].astype('category')
@@ -449,88 +679,141 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
     else:
         unique_categories = [None]
 
-    # Create a color palette for the categories
+    # --- Color Palette ---
     color_palette = sns.color_palette(palette, len(unique_categories))
 
-    # Set up figure and axes for small multiples or single plot
+    # --- Global X-axis Bounds ---
+    # If x_range is provided, use that; otherwise, determine lower bound from the entire dataset and use xlimit for the upper bound if provided.
+    if x_range is not None:
+        global_lower_bound, global_upper_bound = x_range
+    else:
+        global_lower_bound = data_df[feature_to_plot].min()
+        global_upper_bound = xlimit if xlimit is not None else data_df[feature_to_plot].max()
+
+    # --- Set Up Figure and Axes ---
     if small_multiples and separate is not None:
-        fig, axes = plt.subplots(len(unique_categories), 1, figsize=(20, 6 * len(unique_categories)), 
+        fig, axes = plt.subplots(len(unique_categories), 1, figsize=(figsize[0], figsize[1] * len(unique_categories)), 
                                  sharex=True, facecolor=figure_background)
         if len(unique_categories) == 1:
-            axes = [axes]  # Handle single subplot case
+            axes = [axes]
     else:
-        fig, ax = plt.subplots(figsize=(20, 12), facecolor=figure_background)
-        axes = [ax]  # Use a single axis in a list for consistency
+        fig, ax = plt.subplots(figsize=figsize, facecolor=figure_background)
+        axes = [ax]
 
-    # Initial vertical offset for median text
+    # Initial vertical offset for annotations.
     text_position_y = 0.8
 
     for i, category in enumerate(unique_categories):
-        ax = axes[i] if small_multiples and separate else axes[0]
-        subsetvalues = data_df[data_df[separate] == category][feature] if category is not None else data_df[feature]
+        ax = axes[i] if (small_multiples and separate) else axes[0]
+        if category is not None:
+            subsetvalues = data_df[data_df[separate] == category][feature_to_plot]
+        else:
+            subsetvalues = data_df[feature_to_plot]
 
-        # Set axis background color
+        # Filter the subset data to within the global x-axis bounds.
+        subsetvalues = subsetvalues[(subsetvalues >= global_lower_bound) & (subsetvalues <= global_upper_bound)]
+        
         ax.set_facecolor(axis_background)
 
-        # Determine bin edges for consistent binning
-        min_value = data_df[feature].min()
-        max_value = data_df[feature].max() if xlimit is None else xlimit
-        bin_edges = np.linspace(min_value, max_value, bins + 1)
+        # Compute bin edges using the global bounds.
+        bin_edges = np.linspace(global_lower_bound, global_upper_bound, bins + 1)
 
-        # Plot histogram or KDE
+        # --- Plotting Histogram or KDE ---
         if use_kde:
-            sns.kdeplot(subsetvalues, fill=True, ax=ax, color=color_palette[i], linewidth=1.5, label=category)
+            sns.kdeplot(subsetvalues, fill=True, ax=ax, color=color_palette[i], linewidth=1.5,
+                        label=category, alpha=alpha)
         else:
-            sns.histplot(subsetvalues, bins=bin_edges, kde=False, ax=ax, color=color_palette[i], alpha=0.5, 
-                         stat="percent", label=category)
-
-        # Plot average line
+            counts, _ = np.histogram(subsetvalues, bins=bin_edges)
+            if percentage:
+                counts = 100 * counts / counts.sum() if counts.sum() > 0 else counts
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            ax.bar(bin_centers, counts, width=np.diff(bin_edges), color=color_palette[i],
+                   alpha=alpha, label=category)
+        
+        # --- Average Line and Annotation ---
+        # Compute average on the filtered subset.
         avg_value = subsetvalues.mean() if average == 'mean' else subsetvalues.median()
+        # If log_scale is enabled and the user wants actual values on the x-axis,
+        # convert the average (which is in log-space) back to the actual scale for annotation.
+        if log_scale and log_axis_label == 'actual':
+            annotation_value = log_base ** avg_value
+        else:
+            annotation_value = avg_value
+        
         if showavg:
             ax.axvline(avg_value, color=line_color, linestyle='--')
-
-        # Display category and value below each other, adjusting vertical position for each category
-        ax.text(0.8, text_position_y - (i * 0.05), f"{category}: {avg_value:.2f}", 
-                transform=ax.transAxes, fontsize=font_size, color=line_color, ha='center')
-
-        # Customize x and y labels, and tick parameters
-        ax.set_xlabel(feature, fontsize=font_size, color=line_color)
-        ax.set_ylabel('Percentage', fontsize=font_size, color=line_color)
-        ax.tick_params(axis='both', which='both', color=line_color, labelcolor=line_color, labelsize=font_size)
         
-        # Set grid and axis line colors
+        ax.text(0.8, text_position_y - (i * 0.05), f"{category}: {annotation_value:.4f}", 
+                transform=ax.transAxes, fontsize=scaled_font, color=line_color, ha='center')
+        
+        # --- Labels and Ticks ---
+        ax.set_xlabel(x_label, fontsize=scaled_font, color=line_color)
+        ax.set_ylabel("Percentage" if percentage else "Count", fontsize=scaled_font, color=line_color)
+        ax.tick_params(axis='both', which='both', color=line_color, labelcolor=line_color, labelsize=scaled_font)
+        
+        # --- Grid and Spines ---
         if grid:
             ax.grid(True, linestyle='--', linewidth=0.5, color=line_color if not transparent else (0, 0, 0, 0.5), alpha=0.7, axis='y')
-        
-        # Set axis spine colors
         for spine in ax.spines.values():
             spine.set_edgecolor(line_color)
             if transparent:
-                spine.set_alpha(0.5)
+                spine.set_alpha(0.9)
         
-        # Set x-axis limits
-        ax.set_xlim(0, max_value)
-        ax.set_xticks(np.arange(0, max_value + 1, tick_interval))
-
-        # Title for each subplot if small multiples
+        # --- Title for Small Multiples ---
         if small_multiples and separate:
-            ax.set_title(f'{category}', fontsize=font_size, color=line_color)
-
-    # Legend and title handling for non-multiples
+            ax.set_title(f'{category}', fontsize=scaled_font, color=line_color)
+    
+    # --- Apply Common Axis Ranges, Tick Formatting, and Log Scale ---
+    for a in axes:
+        a.set_xlim(global_lower_bound, global_upper_bound)
+        xticks = np.arange(global_lower_bound, global_upper_bound + tick_interval, tick_interval)
+        a.set_xticks(xticks)
+        if y_range is not None:
+            a.set_ylim(y_range)
+        if log_scale:
+            a.set_xscale('linear')  # The data are precomputed in log-space.
+            if log_axis_label == 'actual':
+                formatter = FuncFormatter(lambda val, pos: f"{log_base ** val:.2g}")
+                a.xaxis.set_major_formatter(formatter)
+    
+    # --- Legend/Title ---
     if separate and not small_multiples:
-        ax.legend(title=separate, fontsize=font_size, title_fontsize=font_size)
+        axes[0].legend(title=separate, fontsize=scaled_font, title_fontsize=scaled_font)
     elif separate:
-        fig.suptitle(f"{feature} distribution by {separate}", fontsize=font_size + 4, color=line_color)
-
-    # Save and show plot
-    plot_dir = os.path.join(master_dir, 'plots', 'histograms')
-    os.makedirs(plot_dir, exist_ok=True)
-    plt.savefig(f"{plot_dir}/{feature}_histogram.png", bbox_inches='tight', transparent=transparent)
-
+        fig.suptitle(f"{feature} distribution by {separate}", fontsize=scaled_font + 4, color=line_color)
+    
+    # --- Saving/Exporting ---
+    if save_folder is None:
+        save_folder = os.path.join(master_dir, 'plots', 'histograms')
+    os.makedirs(save_folder, exist_ok=True)
+    ext = export_format.lower()
+    if ext not in ['png', 'svg']:
+        print("Invalid export format specified. Defaulting to 'png'.")
+        ext = 'png'
+    out_filename = f"{feature}_histogram.{ext}"
+    full_save_path = os.path.join(save_folder, out_filename)
+    plt.savefig(full_save_path, bbox_inches='tight', transparent=transparent, format=ext)
+    
+    svg_data = None
+    if ext == 'svg':
+        with open(full_save_path, 'r', encoding='utf-8') as f:
+            svg_data = f.read()
+        svg_data = re.sub(r'<clipPath id="[^"]*">.*?</clipPath>', '', svg_data, flags=re.DOTALL)
+        svg_data = re.sub(r'\s*clip-path="url\([^)]*\)"', '', svg_data)
+        svg_data = re.sub(r'<metadata>.*?</metadata>', '', svg_data, flags=re.DOTALL)
+        svg_data = re.sub(r'<\?xml[^>]*\?>', '', svg_data, flags=re.DOTALL)
+        svg_data = re.sub(r'<!DOCTYPE[^>]*>', '', svg_data, flags=re.DOTALL)
+        svg_data = svg_data.strip()
+        with open(full_save_path, 'w', encoding='utf-8') as f:
+            f.write(svg_data)
+    
     if show_plot:
         plt.show()
     else:
         plt.close()
+    
+    if ext == 'svg' and return_svg:
+        return svg_data
 
 
 
