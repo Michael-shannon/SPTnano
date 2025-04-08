@@ -3609,13 +3609,14 @@ def update_timer_text(viewer, timer_df, frame, timer_format):
     viewer.text_overlay.text = timer_format.format(time=current_time)
 
 
-def napari_visualize_image_with_tracks_beautiful(
+def napari_visualizer(
     tracks_df,
     master_dir=config.MASTER,
     condition=None,
     cell=None,
     location=None,
     save_movie_flag=False,
+    save_as_png = False,
     feature='particle',         # feature to use for coloring
     steps=None,
     tail_length=10,
@@ -4106,7 +4107,94 @@ def napari_visualize_image_with_tracks_beautiful(
             
         )
 
+    if save_as_png:
+        # Here you may use a different steps logic if desired
+        if frame_range is not None:
+            start_frame, end_frame = frame_range
+            steps = end_frame - start_frame + 1
+        elif steps is None:
+            steps = int(tracks_new_df['frame'].max()) + 1
+            print(f"Number of steps for PNG capture automatically set to: {steps}")
+        png_dir = os.path.join(master_dir, 'png_frames')
+        print(f"Saving PNG frames to: {png_dir}")
+        save_frames_as_png(
+            viewer,
+            tracks_new_df,
+            feature=color_feature,
+            output_dir=png_dir,
+            steps=steps,
+            timer_overlay=timer_overlay,
+            timer_format=timer_format,
+        )
+        # Optionally bypass the interactive viewer by returning early:
+        return 
+
     napari.run()
 
 
+
+###########################################
+
+# SAVE AS PNG
+###########################################
+
+import os
+import numpy as np
+import pandas as pd
+import imageio
+
+def save_frames_as_png(viewer, tracks, feature='particle', output_dir='frames',
+                       steps=None, timer_overlay=False, timer_format="{time:.2f}s"):
+    """
+    Save a screenshot (PNG) of the napari canvas for every frame (or subset of frames)
+    by updating the viewer dims point.
+
+    Parameters:
+      viewer: The napari viewer instance.
+      tracks: DataFrame or array with track information (must include a 'frame' column).
+      feature: (Unused here; kept for consistency with save_movie if needed later.)
+      output_dir: Directory to save the PNG files.
+      steps: Number of frames to capture. If None, capture every frame.
+      timer_overlay: If True, update the timer overlay.
+      timer_format: Format string for the timer overlay.
+    """
+    # Build a timer dataframe if needed
+    if timer_overlay and 'time_s' in tracks.columns:
+        min_frame = tracks['frame'].min()
+        max_frame = tracks['frame'].max()
+        timer_df = pd.DataFrame({'frame': np.arange(min_frame, max_frame + 1, 1.0)})
+        time_data = tracks[['frame', 'time_s']].drop_duplicates()
+        timer_df = timer_df.merge(time_data, on='frame', how='left')
+        timer_df['time_s'] = timer_df['time_s'].interpolate()
+    else:
+        timer_df = None
+
+    # Ensure the viewer is in 2D mode.
+    viewer.dims.ndisplay = 2
+
+    # Determine unique frames and sample if steps is provided
+    unique_frames = np.sort(tracks['frame'].unique())
+    total_frames = len(unique_frames)
+    if steps is None:
+        steps = total_frames
+    else:
+        if steps < total_frames:
+            indices = np.linspace(0, total_frames - 1, steps, dtype=int)
+            unique_frames = unique_frames[indices]
+        else:
+            steps = total_frames
+
+    # Create output directory if it does not exist.
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Loop through each frame, update the viewer and save a screenshot.
+    for i, frame in enumerate(unique_frames):
+        viewer.dims.set_point(0, frame)
+        if timer_overlay and timer_df is not None:
+            update_timer_text(viewer, timer_df, frame, timer_format)
+        # Capture the screenshot. (canvas_only=True omits UI elements.)
+        frame_img = viewer.screenshot(canvas_only=True)
+        output_path = os.path.join(output_dir, f'frame_{i:03d}.png')
+        imageio.imwrite(output_path, frame_img)
+    print(f"PNG frames saved to {output_dir} with {len(unique_frames)} frames.")
 
