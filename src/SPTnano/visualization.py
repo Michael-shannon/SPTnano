@@ -30,6 +30,10 @@ from io import StringIO
 import matplotlib as mpl
 import seaborn as sns
 from matplotlib.ticker import FuncFormatter
+from napari.utils.colormaps import Colormap
+import matplotlib.colors as mcolors
+from config import FEATURES2  # import additional features from your config
+from napari.utils.colormaps import ensure_colormap, Colormap
 
 # Set up fonts and SVG text handling so that text remains editable in Illustrator.
 mpl.rcParams['svg.fonttype'] = 'none'
@@ -3445,3 +3449,664 @@ def visualize_track_changes_with_filtering(
     fig.suptitle(f"Track Changes | File: {filename} | Time: {time_start_str} - {time_end_str}", fontsize=16)
 
     plt.show()
+
+
+### The following for new movie format with Napari ##
+
+# -------------------------------
+# CSV Reading Function
+# -------------------------------
+def read_csv_file(csv_path):
+    """
+    Read a CSV file into a pandas DataFrame.
+    """
+    df = pd.read_csv(csv_path)
+    return df
+
+def load_image(file_path):
+    return io.imread(file_path)
+
+def load_tracks(df, filename):
+    tracks = df[df['filename'] == filename]
+    return tracks
+
+def get_condition_from_filename(df, filename):
+    try:
+        condition = df[df['filename'] == filename]['condition'].iloc[0]
+    except IndexError:
+        print(f"Error: Filename '{filename}' not found in the dataframe.")
+        raise
+    return condition
+
+
+
+def invert_colormap(cmap):
+    """
+    Inverts a napari Colormap by extracting its RGBA color array,
+    inverting the RGB channels, and returning a new Colormap.
+
+    Parameters:
+        cmap (napari.utils.colormaps.Colormap): The original colormap.
+
+    Returns:
+        napari.utils.colormaps.Colormap: A new colormap with inverted RGB values.
+    """
+    # Ensure the colormap has a 'colors' attribute (an array of shape (N, 4))
+    if not hasattr(cmap, 'colors'):
+        raise ValueError("Provided colormap does not have a 'colors' attribute.")
+    
+    # Copy the original colors array
+    orig_colors = cmap.colors.copy()
+    # Invert the RGB channels (first three columns) but leave the alpha channel unchanged
+    inverted_colors = orig_colors.copy()
+    inverted_colors[:, :3] = 1 - inverted_colors[:, :3]
+    
+    # Create a new name for the inverted colormap
+    new_name = cmap.name + '_inverted'
+    
+    # Create and return a new napari Colormap object with the inverted colors
+    from napari.utils.colormaps import Colormap
+    new_cmap = Colormap(inverted_colors, name=new_name)
+    return new_cmap
+
+
+def save_movie(viewer, tracks, feature='particle', save_path='movie.mov', steps=None,
+               timer_overlay=False, timer_format="{time:.2f}s", fps=100):
+    import numpy as np
+    import pandas as pd
+    import imageio
+
+    # Build a complete timer mapping if timer overlay is enabled and 'time_s' exists.
+    if timer_overlay and 'time_s' in tracks.columns:
+        min_frame = tracks['frame'].min()
+        max_frame = tracks['frame'].max()
+        # Since frames are floats, use np.arange with a 1.0 step.
+        timer_df = pd.DataFrame({'frame': np.arange(min_frame, max_frame + 1, 1.0)})
+        # Merge with available time data (dropping duplicate frames if any)
+        time_data = tracks[['frame', 'time_s']].drop_duplicates()
+        timer_df = timer_df.merge(time_data, on='frame', how='left')
+        # Interpolate missing time_s values
+        timer_df['time_s'] = timer_df['time_s'].interpolate()
+    else:
+        timer_df = None
+
+    # Ensure the viewer is in 2D mode.
+    viewer.dims.ndisplay = 2
+
+    # Get all unique frames from the track data, sorted in order.
+    unique_frames = np.sort(tracks['frame'].unique())
+    total_frames = len(unique_frames)
+
+    # If steps is not specified, capture every frame.
+    if steps is None:
+        steps = total_frames
+    else:
+        # If steps is provided and less than the total number of frames,
+        # sample frames evenly across the entire range.
+        if steps < total_frames:
+            indices = np.linspace(0, total_frames - 1, steps, dtype=int)
+            unique_frames = unique_frames[indices]
+        else:
+            steps = total_frames
+
+    frames_list = []
+
+    # Loop through each frame, update the viewer, and capture a screenshot.
+    for frame in unique_frames:
+        # Set the current frame in the viewer (assuming the time dimension is 0)
+        viewer.dims.set_point(0, frame)
+        # Update timer overlay if enabled.
+        if timer_overlay and timer_df is not None:
+            # update_timer_text should update the viewer overlay based on the current frame.
+            update_timer_text(viewer, timer_df, frame, timer_format)
+        # Take a screenshot of the canvas (set canvas_only=True to exclude UI elements)
+        frame_img = viewer.screenshot(canvas_only=True)
+        frames_list.append(frame_img)
+
+    # Write the frames to a movie file with the specified frames per second.
+    # At 100 fps, each frame displays for 10 ms.
+    imageio.mimwrite(save_path, frames_list, fps=fps)
+    print(f"Movie saved to {save_path} with {len(frames_list)} frames at {fps} fps.")
+
+
+def load_lut_from_file(path):
+    """
+    Load a Fiji LUT file and return a (256, 4) float32 RGBA array for Napari.
+    """
+    with open(path, "rb") as f:
+        raw = np.frombuffer(f.read(), dtype=np.uint8)
+
+    r, g, b = raw[:256], raw[256:512], raw[512:768]
+    rgba_uint8 = np.stack([r, g, b, np.full_like(r, 255)], axis=1)
+    rgba_float = rgba_uint8.astype(np.float32) / 255.0
+    return rgba_float
+
+
+
+
+def special_colormap_for_feature(lut_filepath=None):
+    """
+    Returns a Napari Colormap object from a Fiji-style LUT file.
+    """
+    if lut_filepath is not None:
+        lut = load_lut_from_file(lut_filepath)
+    else:
+        print(f"[LUT] COULD NOT FIND a matching LUT file: {lut_filepath}")
+        lut = np.linspace(0, 1, 256).reshape(-1, 1) * np.array([[1.0, 0.84, 0.0]])  # golden fallback
+        lut = np.hstack([lut, np.ones((256, 1))])  # add alpha
+
+    return Colormap(lut, name='klein_gold')
+
+def update_timer_text(viewer, timer_df, frame, timer_format):
+    # Round the float frame to match the timer_df frame values (or convert as needed)
+    frame_val = round(frame, 0)
+    time_series = timer_df.loc[timer_df['frame'] == frame_val, 'time_s']
+    if not time_series.empty:
+        current_time = time_series.iloc[0]
+    else:
+        current_time = frame  # fallback
+        # print(f"No time found for frame {frame}. Using frame number as fallback.")
+    viewer.text_overlay.text = timer_format.format(time=current_time)
+
+
+def napari_visualize_image_with_tracks_beautiful(
+    tracks_df,
+    master_dir=config.MASTER,
+    condition=None,
+    cell=None,
+    location=None,
+    save_movie_flag=False,
+    feature='particle',         # feature to use for coloring
+    steps=None,
+    tail_length=10,
+    tail_width=2,
+    smoothing=False,
+    smoothing_window=5,
+    colormap='viridis',         # can be a matplotlib colormap name, dict, or Colormap object
+    path_to_alt_lut=None,
+    invert_raw=False,
+    invert_colors=False,
+    time_coloring=False,
+    # time_window=None,
+    frame_range=None,
+    show_raw=True,
+    timer_overlay=False,
+    timer_format="{time:.2f}s",
+    track_symbol='cross',
+    show_track_head=False,
+    head_size=1,
+    head_symbol='o', #available are: 
+    head_color='red',
+    background='dark',
+    scale_bar=True
+):
+    """
+    Visualize an image with overlaid tracks in napari with customizable colormaps.
+    
+    Parameters:
+      - tracks_df: DataFrame containing track information.
+      - master_dir: Directory containing the master folder. Can be encoded in df. 
+      - condition, cell, location: Identifiers for filtering tracks and images.
+      - save_movie_flag: If True, save a movie of the visualization in the movies folder.
+      - feature: Column name to use for track coloring.
+      - steps: Number of steps/frames for the movie.
+      - track_thickness, tail_length, tail_width: Track rendering options.
+      - smoothing, smoothing_window: Options for smoothing track positions.
+      - colormap: A matplotlib colormap name, a dict defining a custom colormap, or a napari Colormap object.
+      - invert_raw: If True, invert the raw image.
+      - invert_colors: If True, invert the colormap.
+      - time_coloring: If True, use time-based coloring (normalized per track).
+      - time_window, frame_range: Options for frame selection.
+      - show_raw: If True, display the raw image.
+      - timer_overlay, timer_format: Timer overlay options.
+      - track_symbol: arrow, clobber cross diamond disc hbar ring square star tailed_arrow triangle_down vbar x SPECIAL ONE IS: shape_arrow
+      - show_track_head: If True, highlight the head of each track.
+      - background: 'dark' (default) or 'light'.
+      - scale_bar_length: Length of a scalebar overlay (in microns).
+    """
+
+    # --- Step 1: Filter by location, condition, and cell ---
+    locationlist = tracks_df['Location'].unique()
+    if isinstance(location, int):
+        location = locationlist[location]
+    elif isinstance(location, str):
+        if location not in locationlist:
+            raise ValueError(f"Location '{location}' not found in available locations: {locationlist}")
+    elif location is None:
+        np.random.shuffle(locationlist)
+        location = locationlist[0]
+    else:
+        raise ValueError("Location must be a string, integer, or None.")
+    
+    filtered_tracks_df = tracks_df[tracks_df['Location'] == location]
+
+    conditionlist = filtered_tracks_df['condition'].unique()
+    if isinstance(condition, int):
+        condition = conditionlist[condition]
+    elif isinstance(condition, str):
+        if condition not in conditionlist:
+            raise ValueError(f"Condition '{condition}' not found for location '{location}': {conditionlist}")
+    elif condition is None:
+        np.random.shuffle(conditionlist)
+        condition = conditionlist[0]
+    else:
+        raise ValueError("Condition must be a string, integer, or None.")
+
+    celllist = filtered_tracks_df[filtered_tracks_df['condition'] == condition]['filename'].unique()
+    if isinstance(cell, int):
+        cell = celllist[cell]
+    elif isinstance(cell, str):
+        if cell not in celllist:
+            raise ValueError(f"Cell '{cell}' not found for condition '{condition}' and location '{location}': {celllist}")
+    elif cell is None:
+        np.random.shuffle(celllist)
+        cell = celllist[0]
+    else:
+        raise ValueError("Cell must be a string, integer, or None.")
+
+    # --- Step 2: Load the image ---
+    master_data_dir = os.path.join(master_dir, 'data')
+    image_filename = cell.replace('_tracked', '') + '.tif'
+    image_path = os.path.join(master_data_dir, condition, image_filename)
+    image = load_image(image_path)
+    if invert_raw:
+        image = image.max() - image
+
+
+    # --- Step 3: Load and prepare track data ---
+    tracks = load_tracks(filtered_tracks_df, cell)
+    tracks = tracks.sort_values('frame').reset_index(drop=True)
+
+    frame_min = int(tracks['frame'].min())
+    frame_max = int(tracks['frame'].max())
+
+    # Crop the raw image to match the track time span
+    image = image[frame_min:frame_max+1]
+
+    # And reassign the frame numbers so they match this new range
+    tracks['frame'] = tracks['frame'] - frame_min
+
+
+    if timer_overlay and 'time_s' in tracks.columns:
+        min_frame = tracks['frame'].min()
+        max_frame = tracks['frame'].max()
+        timer_df = pd.DataFrame({'frame': np.arange(min_frame, max_frame + 1, 1.0)})
+        time_data = tracks[['frame', 'time_s']].drop_duplicates()
+        timer_df = timer_df.merge(time_data, on='frame', how='left')
+        timer_df['time_s'] = timer_df['time_s'].interpolate()
+        print("Timer DataFrame created with time_s values interpolated.")
+
+    if frame_range is not None:
+        start_frame, end_frame = frame_range
+        tracks = tracks[(tracks['frame'] >= start_frame) & (tracks['frame'] <= end_frame)]
+        tracks['frame'] = tracks['frame'] - start_frame
+        image = image[start_frame:end_frame+1]
+    
+    if smoothing:
+        def smooth_series(s):
+            return s.rolling(window=smoothing_window, center=True, min_periods=1).mean()
+        tracks['x'] = tracks.groupby('particle')['x'].transform(smooth_series)
+        tracks['y'] = tracks.groupby('particle')['y'].transform(smooth_series)
+
+    # --- Step 4: Determine the coloring feature ---
+    # If time_coloring is enabled, use the normalized time; else use the specified feature.
+    if time_coloring and feature not in ['frame', 'time_s']:
+        tracks['time_norm'] = tracks.groupby('particle')['frame'].transform(
+            lambda s: (s - s.min()) / (s.max() - s.min())
+        )
+        color_feature = 'time_norm'
+        is_categorical = False  # normalized time is continuous
+
+    else:
+        color_feature = feature
+        if not pd.api.types.is_numeric_dtype(tracks[feature]):
+            is_categorical = True
+            unique_vals = sorted(tracks[feature].unique())
+            mapping = {val: i for i, val in enumerate(unique_vals)}
+            mapped_key = feature + '_numeric'
+            tracks[mapped_key] = tracks[feature].map(mapping)
+            color_feature = mapped_key
+        else:
+            is_categorical = False
+            # 💡 NEW: normalize feature to [0, 1]
+            norm_key = feature + '_norm'
+            tracks[norm_key] = MinMaxScaler().fit_transform(tracks[[feature]])
+            color_feature = norm_key
+
+    # --- Step 5: Build the features dictionary ---
+    features_dict = {'particle': tracks['particle'].values}
+    # IMPORTANT: use the mapped key as the dictionary key.
+    if color_feature in tracks.columns:
+        features_dict[color_feature] = tracks[color_feature].values
+    else:
+        print(f"[warning] Color feature '{color_feature}' not found in tracks columns.")
+    # Also include any additional features from config.FEATURES2.
+    for feat in FEATURES2:
+        if feat in tracks.columns:
+            features_dict[feat] = tracks[feat].values
+
+    custom_colormap = None
+
+    # 1. Handle override by path_to_alt_lut if it's set and valid
+    if path_to_alt_lut is not None and os.path.exists(path_to_alt_lut):
+        try:
+            rgba_lut = load_lut_from_file(path_to_alt_lut)
+            custom_colormap = Colormap(rgba_lut, name=os.path.basename(path_to_alt_lut).replace('.lut', ''))
+            print(f"[LUT] Loaded custom LUT from: {path_to_alt_lut}")
+        except Exception as e:
+            print(f"[LUT ERROR] Failed to load LUT from '{path_to_alt_lut}': {e}")
+
+    # 2. Fallback: special built-in LUTs like 'klein_gold'
+    elif isinstance(colormap, str) and colormap.lower() == "klein_gold":
+        custom_colormap = special_colormap_for_feature(lut_filepath='D:/customLUTs/KTZ_Klein_Gold.lut')
+
+    # 3. Fallback: categorical logic
+    elif is_categorical:
+        num_categories = len(unique_vals)
+        if isinstance(colormap, str):
+            cmap = plt.get_cmap(colormap, num_categories)
+        else:
+            cmap = colormap
+        discrete_colors = np.array([cmap(i) for i in range(num_categories)], dtype=np.float32)
+        custom_colormap = Colormap(discrete_colors, name=str(colormap))
+
+    # 4. Fallback: normal continuous colormap
+    else:
+        custom_colormap = ensure_colormap(colormap)
+
+    # 5. Invert if needed
+    if invert_colors:
+        # custom_colormap = custom_colormap.reversed()
+        custom_colormap = invert_colormap(custom_colormap)
+
+    # 6. Register colormap if not already
+    from napari.utils.colormaps import AVAILABLE_COLORMAPS
+    if custom_colormap.name not in AVAILABLE_COLORMAPS:
+        AVAILABLE_COLORMAPS[custom_colormap.name] = custom_colormap
+
+    colormap_name = custom_colormap.name
+    custom_colormaps_dict = {color_feature: custom_colormap}
+
+
+
+
+    # --- Step 7: Prepare track data for napari ---
+    # Expected columns: [particle, frame, time_s, y, x]
+    # tracks_new_df = tracks[["particle", "frame", "time_s", "y", "x"]]
+    tracks_new_df = tracks[["particle", "frame",  "y", "x"]] # CARDAMOMMMMMMM
+
+    # --- Step 8: Initialize the napari viewer and add layers ---
+    viewer = napari.Viewer()
+    viewer.dims.axis_labels = ('time', 'y', 'x') # ADDED CARDAMOM
+    viewer.theme = 'light' if background == 'light' else 'dark'
+
+    if timer_overlay:
+        from napari.components._viewer_constants import CanvasPosition
+        viewer.text_overlay.visible = True
+        viewer.text_overlay.text = ""
+        viewer.text_overlay.font_size = 16
+        viewer.text_overlay.color = 'white' if background == 'dark' else 'black'
+        viewer.text_overlay.position = CanvasPosition.TOP_RIGHT
+
+        def on_dims_change(event):
+            current_frame = viewer.dims.current_step[0]
+            update_timer_text(viewer, timer_df, current_frame, timer_format)
+
+        viewer.dims.events.current_step.connect(on_dims_change)
+
+    if show_raw:
+        viewer.add_image(image, name=f'Raw {cell}', scale=(1, 0.065,0.065))  # optional
+    
+        print("Image shape:", image.shape)
+    # tracks_new_df["frame"] = tracks_new_df["frame"].astype(int) #new wee bit remove if problem 
+    tracks_new_df.loc[:, "frame"] = tracks_new_df["frame"].astype(int)
+
+
+    tracks_layer = viewer.add_tracks(
+        tracks_new_df.to_numpy(),
+        features=features_dict,
+        name=f'Tracks {cell}',
+        scale=(1, 0.065, 0.065),  # Assuming the image is in (time, y, x) format
+        color_by=color_feature,
+        colormap=colormap_name,
+        colormaps_dict=custom_colormaps_dict,
+        tail_length=tail_length,
+        tail_width=tail_width
+    )
+
+    # 🎬 Sync animation for both raw image and tracks
+    if frame_range is not None:
+        # Make sure the current time is within the filtered range.
+        viewer.dims.current_step = (start_frame, 0, 0)
+    else:
+        viewer.dims.current_step = (0, 0, 0)
+    # viewer.dims.axis_labels = ('time', 'y', 'x')  # just for clarity/debugging # removed cardamom
+
+    if show_track_head:
+        import matplotlib.colors as mcolors
+
+        # --- Special Case: Using Shapes layer if head_symbol is 'shape_arrow' ---
+        if head_symbol == 'shape_arrow':
+            def compute_arrow_polygon_for_particle(particle_df, frame, s):
+                valid = particle_df[particle_df['frame'] <= frame]
+                if valid.empty:
+                    return None, None, None
+                sorted_valid = valid.sort_values('frame')
+                head_row = sorted_valid.iloc[-1]
+                head_coord = head_row[['y', 'x']].to_numpy()
+                head_frame = head_row['frame']
+                feat_val = head_row.get(color_feature, None)
+                if len(sorted_valid) >= 2:
+                    r1 = sorted_valid.iloc[-2]
+                    r2 = sorted_valid.iloc[-1]
+                    angle = np.degrees(np.arctan2(r2['y'] - r1['y'], r2['x'] - r1['x']))
+                else:
+                    angle = 0
+                base_arrow = np.array([
+                    [0, -s],
+                    [s / 2, s / 2],
+                    [0, s / 4],
+                    [-s / 2, s / 2]
+                ])
+                theta = np.radians(angle)
+                R = np.array([
+                    [np.cos(theta), -np.sin(theta)],
+                    [np.sin(theta),  np.cos(theta)]
+                ])
+                rotated_arrow = base_arrow @ R.T
+                arrow_poly = rotated_arrow + head_coord
+                return arrow_poly, feat_val, head_frame
+
+            current_frame = viewer.dims.current_step[0]
+            arrow_polys = []
+            arrow_colors = []
+            fade_duration = tail_length
+            for particle, df in tracks.groupby('particle'):
+                poly, feat_val, head_frame = compute_arrow_polygon_for_particle(df, current_frame, head_size)
+                if poly is not None:
+                    arrow_polys.append(poly)
+                    if head_color is None:
+                        if feat_val is not None:
+                            base_color = np.ravel(custom_colormap.map(feat_val))
+                        else:
+                            base_color = np.ravel(mcolors.to_rgba('white'))
+                    else:
+                        base_color = np.ravel(mcolors.to_rgba(head_color))
+                    alpha = 1 - (current_frame - head_frame) / fade_duration
+                    alpha = np.clip(alpha, 0, 1)
+                    base_rgb = list(base_color[:3])
+                    arrow_colors.append(base_rgb + [float(alpha)])
+            if len(arrow_polys) == 0:
+                arrow_polys = np.empty((0, 0, 2))
+                arrow_colors = 'white'
+            else:
+                arrow_polys = np.array(arrow_polys)
+                arrow_colors = np.array(arrow_colors, dtype=np.float32)
+            shapes_layer = viewer.add_shapes(
+                arrow_polys,
+                name='Track Heads',
+                face_color=arrow_colors,
+                edge_color='transparent',
+                opacity=1,
+                shape_type='polygon'
+            )
+            def update_arrow_heads(event):
+                frame = viewer.dims.current_step[0]
+                new_polys = []
+                new_colors = []
+                for particle, df in tracks.groupby('particle'):
+                    poly, feat_val, head_frame = compute_arrow_polygon_for_particle(df, frame, head_size)
+                    if poly is not None:
+                        new_polys.append(poly)
+                        if head_color is None:
+                            if feat_val is not None:
+                                base_color = np.ravel(custom_colormap.map(feat_val))
+                            else:
+                                base_color = np.ravel(mcolors.to_rgba('white'))
+                        else:
+                            base_color = np.ravel(mcolors.to_rgba(head_color))
+                        alpha = 1 - (frame - head_frame) / fade_duration
+                        alpha = np.clip(alpha, 0, 1)
+                        base_rgb = list(base_color[:3])
+                        new_colors.append(base_rgb + [float(alpha)])
+                if len(new_polys) == 0:
+                    new_polys = np.empty((0, 0, 2))
+                    new_colors = 'white'
+                else:
+                    new_polys = np.array(new_polys)
+                    new_colors = np.array(new_colors, dtype=np.float32)
+                shapes_layer.data = new_polys
+                shapes_layer.face_color = new_colors
+            viewer.dims.events.current_step.connect(update_arrow_heads)
+
+        # --- Else: Use Points layer for track heads ---
+        else:
+            fixed_head_color = mcolors.to_rgba(head_color) if head_color is not None else None
+            fade_duration = tail_length
+            def compute_track_heads_with_feature(frame):
+                heads = []
+                for particle, df in tracks.groupby('particle'):
+                    valid = df[df['frame'] <= frame]
+                    if not valid.empty:
+                        row = valid.loc[valid['frame'].idxmax()]
+                        y, x = row[['y', 'x']].to_numpy()
+                        head_frame = row['frame']
+                        feat_val = row.get(color_feature, None)
+                        heads.append([y, x, head_frame, feat_val])
+                if heads:
+                    return np.array(heads)
+                else:
+                    return np.empty((0, 4))
+            def safe_rgb(c):
+                c_arr = np.ravel(c)
+                if c_arr.size < 3:
+                    return list(c_arr) + [0]*(3-c_arr.size)
+                else:
+                    return list(c_arr[:3])
+            current_frame = viewer.dims.current_step[0]
+            initial_heads = compute_track_heads_with_feature(current_frame)
+            if initial_heads.shape[0] > 0:
+                coords = initial_heads[:, :2]
+                if fixed_head_color is None and all(feat is not None for feat in initial_heads[:, 3]):
+                    dyn_colors = np.array([np.ravel(custom_colormap.map(feat)) for feat in initial_heads[:, 3]], dtype=np.float32)
+                else:
+                    if fixed_head_color is not None:
+                        dyn_colors = np.tile(fixed_head_color, (initial_heads.shape[0], 1))
+                    else:
+                        dyn_colors = np.array([mcolors.to_rgba('white') for _ in range(initial_heads.shape[0])], dtype=np.float32)
+                alphas = 1 - (current_frame - initial_heads[:, 2]) / fade_duration
+                alphas = np.clip(alphas, 0, 1)
+                face_colors = np.array([safe_rgb(c) + [float(a)] for c, a in zip(dyn_colors, alphas)], dtype=np.float32)
+            else:
+                coords = np.empty((0, 2))
+                face_colors = np.empty((0, 4), dtype=np.float32)
+            head_points_layer = viewer.add_points(
+                coords,
+                name='Track Heads',
+                face_color=face_colors,
+                edge_width=0,
+                size=head_size,
+                symbol=head_symbol
+            )
+            def update_track_heads(event):
+                frame = viewer.dims.current_step[0]
+                new_heads = compute_track_heads_with_feature(frame)
+                if new_heads.shape[0] > 0:
+                    new_coords = new_heads[:, :2]
+                    if fixed_head_color is None and all(feat is not None for feat in new_heads[:, 3]):
+                        new_dyn_colors = np.array([np.ravel(custom_colormap.map(feat)) for feat in new_heads[:, 3]], dtype=np.float32)
+                    else:
+                        if fixed_head_color is not None:
+                            new_dyn_colors = np.tile(fixed_head_color, (new_heads.shape[0], 1))
+                        else:
+                            new_dyn_colors = np.array([mcolors.to_rgba('white') for _ in range(new_heads.shape[0])], dtype=np.float32)
+                    new_alphas = 1 - (frame - new_heads[:, 2]) / fade_duration
+                    new_alphas = np.clip(new_alphas, 0, 1)
+                    new_face_colors = np.array([safe_rgb(c) + [float(a)] for c, a in zip(new_dyn_colors, new_alphas)], dtype=np.float32)
+                else:
+                    new_coords = np.empty((0, 2))
+                    new_face_colors = np.empty((0, 4), dtype=np.float32)
+                head_points_layer.data = new_coords
+                head_points_layer.face_color = new_face_colors
+            viewer.dims.events.current_step.connect(update_track_heads)
+
+
+
+    # --- Step 9: Add scalebar overlay if requested ---
+    if scale_bar:
+        # from napari._vispy.overlays.scale_bar import VispyScaleBarOverlay
+        viewer.scale_bar.visible = True
+        viewer.scale_bar.unit = 'micron'
+        # viewer.scale_bar.length = scale_bar_length
+
+        class DummyEvent:
+            def connect(self, callback):
+                pass
+
+        class DummyEvents:
+            def __init__(self):
+                self.visible = DummyEvent()
+                self.opacity = DummyEvent()
+                self.blending = DummyEvent()
+                self.box = DummyEvent()
+                self.box_color = DummyEvent()
+                self.color = DummyEvent()
+                self.colored = DummyEvent()
+                self.font_size = DummyEvent()
+                self.ticks = DummyEvent()
+                self.unit = DummyEvent()
+                self.length = DummyEvent()
+                self.position = DummyEvent()
+
+
+
+    # --- Step 10: Save the movie if requested ---
+    if save_movie_flag:
+        if frame_range is not None:
+            start_frame, end_frame = frame_range
+            steps = end_frame - start_frame + 1
+        elif steps is None:
+            steps = int(tracks_new_df['frame'].max()) + 1
+            print(f"Number of steps for the movie automatically set to: {steps}")
+        movie_dir = os.path.join(master_dir, 'movies')
+        print(f"Saving movie to: {movie_dir}")
+        if not os.path.exists(movie_dir):
+            os.makedirs(movie_dir, exist_ok=True)
+            
+        os.makedirs(movie_dir, exist_ok=True)
+        movie_path = os.path.join(movie_dir, f'{condition}_{cell}.mov')
+        save_movie(
+            viewer,
+            tracks_new_df,
+            feature=color_feature,
+            save_path=movie_path,
+            steps=steps,
+            timer_overlay=timer_overlay,
+            timer_format=timer_format,
+            
+        )
+
+    napari.run()
+
+
+
