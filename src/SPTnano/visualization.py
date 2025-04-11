@@ -4511,3 +4511,305 @@ def plot_contour_timelapse_datashader(
             n_frames += 1
             current_t += step
         print(f"Generated {n_frames} PNG files saved in folder {folder_path}")
+
+
+###################################
+# BACKUP HEXBIN FUNCTIONS
+###################################
+
+# def plot_heatmap_timeseries(
+#     df,
+#     time_col='frame',
+#     value_col='diffusion_coefficient',
+#     time_bin=60,
+#     spatial_unit='microns',
+#     spatial_gridsize=80,
+#     output_format='gif',
+#     export_path=None,
+#     hexbin_color='plasma',
+#     box_size_pixels=DEFAULT_BOX_SIZE_PIXELS,
+#     microns_per_pixel=DEFAULT_MICRONS_PER_PIXEL,
+#     plot_method="hexbin",         # Options: "hexbin" or "contour"
+#     gif_frame_duration=0.01,      # Seconds per frame (e.g., 0.01 = 10 ms)
+#     edge_angle_bins=180,
+#     edge_padding=0.05,
+#     edge_smoothing=0.1,
+#     overlay_contour_lines=True,   # For contour plots: whether to overlay white contour lines.
+#     show_colorbar=True            # If False, do not display a colorbar.
+# ):
+#     """
+#     Generates a fixed-size, square heatmap time series from single-particle tracking data.
+    
+#     The x- and y-axes are fixed to span from 0 to box_size, where:
+#        - For pixel data: box_size = box_size_pixels (default 150).
+#        - For micron data: box_size = box_size_pixels * microns_per_pixel.
+    
+#     The cell edge is computed via angle–binning (using edge_angle_bins, edge_padding,
+#     and edge_smoothing).
+    
+#     Two plot methods are available:
+#       - "hexbin": Uses hexbin with a fixed gridsize.
+#       - "contour": Interpolates the scattered data onto a fixed grid (via np.mgrid) over the full
+#          plot extent and displays a filled contour heatmap with an option to overlay white contour lines.
+         
+#     The global color scale is fixed from 0 (vmin=0) to the global maximum (vmax) computed from the
+#     entire dataset. A Normalize object is created to enforce this scale.
+    
+#     The function uses a fixed position for the colorbar—if enabled—so that its size and tick range remain constant.
+    
+#     Parameters:
+#       df (pd.DataFrame): Contains at least the time, spatial, and value columns.
+#       time_col (str): Name of the time column.
+#       value_col (str): Name of the value column.
+#       time_bin (int/float or None): Duration of each time window; if None, a single plot is produced.
+#       spatial_unit (str): "pixels" (using "x", "y") or "microns" (using "x_um", "y_um").
+#       spatial_gridsize (int): Gridsize for hexbin plots.
+#       output_format (str): "gif" for an animated GIF; "png" for separate image files.
+#       export_path (str): Directory for output (defaults to "saved_data" if defined).
+#       hexbin_color (str): Colormap name.
+#       box_size_pixels (int): Fixed side length (in pixels).
+#       microns_per_pixel (float): Conversion factor (if spatial_unit=="microns").
+#       plot_method (str): "hexbin" (default) or "contour".
+#       gif_frame_duration (float): Time per frame (seconds) for the GIF.
+#       edge_angle_bins (int): Number of angle bins for cell edge computation.
+#       edge_padding (float): Padding fraction for the cell edge.
+#       edge_smoothing (float): Spline smoothing parameter for the cell edge.
+#       overlay_contour_lines (bool): Whether to overlay white contour lines (only used in "contour" mode).
+#       show_colorbar (bool): If True, display a colorbar at a fixed position; if False, omit it.
+#     """
+#     # Determine spatial coordinate columns and fixed box size.
+#     if spatial_unit == 'pixels':
+#         x_col, y_col = 'x', 'y'
+#         box_size = box_size_pixels
+#     elif spatial_unit == 'microns':
+#         x_col, y_col = 'x_um', 'y_um'
+#         box_size = box_size_pixels * microns_per_pixel
+#     else:
+#         raise ValueError("spatial_unit must be either 'pixels' or 'microns'")
+    
+#     # Fixed coordinate system.
+#     global_x_min, global_y_min = 0, 0
+#     global_x_max, global_y_max = box_size, box_size
+    
+#     # Set export folder.
+#     if export_path is None:
+#         try:
+#             saved_data
+#         except NameError:
+#             export_path = "./saved_data"
+#         else:
+#             export_path = saved_data
+#     if not os.path.isdir(export_path):
+#         os.makedirs(export_path)
+    
+#     # Fixed global color scale: vmin = 0 and vmax = global maximum from the entire dataset.
+#     global_vmin = 0
+#     global_vmax = df[value_col].max()
+#     norm = Normalize(vmin=global_vmin, vmax=global_vmax)
+#     # Fixed tick locations.
+#     fixed_ticks = np.linspace(global_vmin, global_vmax, 5)
+    
+#     # Compute the cell edge.
+#     all_points = df[[x_col, y_col]].dropna().values
+#     cell_edge_points = None
+#     if len(all_points) >= 3:
+#         centroid = np.mean(all_points, axis=0)
+#         cell_edge_points = compute_cell_edge_angle_binning(
+#             all_points,
+#             centroid,
+#             edge_angle_bins=edge_angle_bins,
+#             edge_padding=edge_padding,
+#             edge_smoothing=edge_smoothing
+#         )
+    
+#     # def create_plot(data, title):
+#     #     """
+#     #     Creates a fixed, square plot with x and y from 0 to box_size.
+#     #     Depending on plot_method, produces a hexbin or contour plot using the constant global norm.
+#     #     A fixed-position colorbar is added if show_colorbar is True.
+#     #     The cell edge is overlaid.
+#     #     """
+#     #     fig, ax = plt.subplots(figsize=(6, 6))
+        
+#     #     if plot_method == "hexbin":
+#     #         coll = ax.hexbin(
+#     #             data[x_col], data[y_col],
+#     #             C=data[value_col],
+#     #             reduce_C_function=np.nanmean,
+#     #             gridsize=spatial_gridsize,
+#     #             cmap=hexbin_color,
+#     #             mincnt=1,
+#     #             norm=norm,
+#     #             extent=[global_x_min, global_x_max, global_y_min, global_y_max]
+#     #         )
+#     #         if show_colorbar:
+#     #             # Use fixed position for colorbar.
+#     #             fig.subplots_adjust(right=0.85)
+#     #             cbar_ax = fig.add_axes([0.88, 0.15, 0.03, 0.7])
+#     #             fig.colorbar(coll, cax=cbar_ax, norm=norm, ticks=fixed_ticks, label=value_col)
+#     #     elif plot_method == "contour":
+#     #         grid_x, grid_y = np.mgrid[global_x_min:global_x_max:200j, global_y_min:global_y_max:200j]
+#     #         if len(data) < 3:
+#     #             grid_z = np.full(grid_x.shape, global_vmin)
+#     #         else:
+#     #             grid_z = griddata(
+#     #                 (data[x_col].values, data[y_col].values),
+#     #                 data[value_col].values,
+#     #                 (grid_x, grid_y),
+#     #                 method='cubic'
+#     #             )
+#     #             if grid_z is None or np.all(np.isnan(grid_z)):
+#     #                 grid_z = np.full(grid_x.shape, global_vmin)
+#     #             else:
+#     #                 grid_z = np.nan_to_num(grid_z, nan=global_vmin)
+#     #         levels = np.linspace(global_vmin, global_vmax, 10)
+#     #         contf = ax.contourf(
+#     #             grid_x, grid_y, grid_z, levels=100, cmap=hexbin_color,
+#     #             norm=norm, alpha=0.8
+#     #         )
+#     #         if overlay_contour_lines:
+#     #             ax.contour(
+#     #                 grid_x, grid_y, grid_z, levels=levels, colors='white', linewidths=1
+#     #             )
+#     #         if show_colorbar:
+#     #             fig.subplots_adjust(right=0.85)
+#     #             cbar_ax = fig.add_axes([0.88, 0.15, 0.03, 0.7])
+#     #             fig.colorbar(contf, cax=cbar_ax, norm=norm, ticks=fixed_ticks, label=value_col)
+#     #     else:
+#     #         raise ValueError("plot_method must be either 'hexbin' or 'contour'")
+    
+#     #     ax.set_xlim(global_x_min, global_x_max)
+#     #     ax.set_ylim(global_y_min, global_y_max)
+#     #     ax.set_aspect('equal')
+#     #     ax.set_title(title)
+#     #     ax.set_xlabel(x_col)
+#     #     ax.set_ylabel(y_col)
+#     #     if cell_edge_points is not None:
+#     #         ax.plot(cell_edge_points[:, 0], cell_edge_points[:, 1], color='black', lw=2)
+#     #     return fig, ax
+
+#     def create_plot(data, title):
+#         """
+#         Creates a fixed, square plot with x and y from 0 to box_size.
+#         Depending on plot_method, produces a hexbin or contour plot using the constant global norm.
+#         A fixed-position colorbar is added if show_colorbar is True.
+#         The cell edge is overlaid.
+#         """
+#         fig, ax = plt.subplots(figsize=(6, 6))
+        
+#         if plot_method == "hexbin":
+#             coll = ax.hexbin(
+#                 data[x_col], data[y_col],
+#                 C=data[value_col],
+#                 reduce_C_function=np.nanmean,
+#                 gridsize=spatial_gridsize,
+#                 cmap=hexbin_color,
+#                 mincnt=1,
+#                 norm=norm,
+#                 extent=[global_x_min, global_x_max, global_y_min, global_y_max]
+#             )
+#             if show_colorbar:
+#                 # Use fixed position for colorbar.
+#                 fig.subplots_adjust(right=0.85)
+#                 cbar_ax = fig.add_axes([0.88, 0.15, 0.03, 0.7])
+#                 fig.colorbar(coll, cax=cbar_ax, norm=norm, ticks=fixed_ticks, label=value_col)
+        
+#         elif plot_method == "contour":
+#             grid_x, grid_y = np.mgrid[global_x_min:global_x_max:200j, global_y_min:global_y_max:200j]
+#             if len(data) < 3:
+#                 grid_z = np.full(grid_x.shape, global_vmin)
+#             else:
+#                 grid_z = griddata(
+#                     (data[x_col].values, data[y_col].values),
+#                     data[value_col].values,
+#                     (grid_x, grid_y),
+#                     method='cubic'
+#                 )
+#                 if grid_z is None or np.all(np.isnan(grid_z)):
+#                     grid_z = np.full(grid_x.shape, global_vmin)
+#                 else:
+#                     grid_z = np.nan_to_num(grid_z, nan=global_vmin)
+#             # Explicitly define levels so that the global color range is used in every frame.
+#             levels = np.linspace(global_vmin, global_vmax, 100)
+#             contf = ax.contourf(
+#                 grid_x, grid_y, grid_z, levels=levels, cmap=hexbin_color,
+#                 norm=norm, alpha=0.8
+#             )
+#             if overlay_contour_lines:
+#                 ax.contour(
+#                     grid_x, grid_y, grid_z, levels=levels, colors='white', linewidths=1
+#                 )
+#             if show_colorbar:
+#                 fig.subplots_adjust(right=0.85)
+#                 cbar_ax = fig.add_axes([0.88, 0.15, 0.03, 0.7])
+#                 fig.colorbar(contf, cax=cbar_ax, norm=norm, ticks=fixed_ticks, label=value_col)
+        
+#         else:
+#             raise ValueError("plot_method must be either 'hexbin' or 'contour'")
+        
+#         ax.set_xlim(global_x_min, global_x_max)
+#         ax.set_ylim(global_y_min, global_y_max)
+#         ax.set_aspect('equal')
+#         ax.set_title(title)
+#         ax.set_xlabel(x_col)
+#         ax.set_ylabel(y_col)
+#         if cell_edge_points is not None:
+#             ax.plot(cell_edge_points[:, 0], cell_edge_points[:, 1], color='black', lw=2)
+#         return fig, ax
+
+    
+#     # Either a single plot (if time_bin is None) or multiple frames.
+#     if time_bin is None:
+#         title = "Heatmap: All times"
+#         fig, ax = create_plot(df, title)
+#         file_name = os.path.join(export_path, "heatmap_whole.png")
+#         fig.savefig(file_name, dpi=150)
+#         plt.close(fig)
+#         n_frames = 1
+#     else:
+#         t_min = df[time_col].min()
+#         t_max = df[time_col].max()
+#         n_frames = 0
+#         image_files = []
+#         current_t = t_min
+#         while current_t <= t_max:
+#             t_end = current_t + time_bin
+#             window_df = df[(df[time_col] >= current_t) & (df[time_col] < t_end)]
+#             title = f"Time window: {current_t:.2f} to {t_end:.2f}"
+#             fig, ax = create_plot(window_df, title)
+#             file_name = os.path.join(export_path, f"heatmap_{n_frames:03d}.png")
+#             fig.savefig(file_name, dpi=150)
+#             plt.close(fig)
+#             image_files.append(file_name)
+#             n_frames += 1
+#             current_t = t_end
+        
+#         if output_format.lower() == 'gif':
+#             gif_file = os.path.join(export_path, "heatmap_animation.gif")
+#             images = [imageio.imread(fn) for fn in image_files]
+#             try:
+#                 imageio.mimsave(gif_file, images, duration=gif_frame_duration)
+#             except ValueError as ve:
+#                 print("Error while creating GIF:", ve)
+#             summary_message = (
+#                 f"Generated {n_frames} frames (GIF frame duration = {gif_frame_duration} s) using "
+#                 f"time_bin = {time_bin}, spatial_unit = {spatial_unit}, plot_method = {plot_method}, "
+#                 f"hexbin_color = {hexbin_color}, gridsize = {spatial_gridsize}, box_size = {box_size}."
+#             )
+#             print(summary_message)
+#             print(f"Animated GIF saved to {gif_file}")
+#         else:
+#             summary_message = (
+#                 f"Generated {n_frames} frames using time_bin = {time_bin}, spatial_unit = {spatial_unit}, "
+#                 f"plot_method = {plot_method}, hexbin_color = {hexbin_color}, gridsize = {spatial_gridsize}, "
+#                 f"box_size = {box_size}."
+#             )
+#             print(summary_message)
+#             print(f"Frames saved as individual PNG files in {export_path}")
+    
+#     if time_bin is None:
+#         summary_message = (
+#             f"Generated a single plot using spatial_unit = {spatial_unit}, plot_method = {plot_method}, "
+#             f"hexbin_color = {hexbin_color}, gridsize = {spatial_gridsize}, box_size = {box_size}."
+#         )
+#         print(summary_message)
