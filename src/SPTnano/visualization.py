@@ -34,6 +34,16 @@ from napari.utils.colormaps import Colormap
 import matplotlib.colors as mcolors
 from config import FEATURES2  # import additional features from your config
 from napari.utils.colormaps import ensure_colormap, Colormap
+import imageio
+import datashader as ds
+from datashader.reductions import mean
+from matplotlib.colors import Normalize, LogNorm, LinearSegmentedColormap
+from scipy.ndimage import gaussian_filter
+from scipy.interpolate import splprep, splev, griddata
+import matplotlib.path as mpltPath
+import colorcet
+import xarray as xr  # for converting arrays to DataArray
+# import io
 
 # Set up fonts and SVG text handling so that text remains editable in Illustrator.
 mpl.rcParams['svg.fonttype'] = 'none'
@@ -4138,11 +4148,6 @@ def napari_visualizer(
 # SAVE AS PNG
 ###########################################
 
-import os
-import numpy as np
-import pandas as pd
-import imageio
-
 def save_frames_as_png(viewer, tracks, feature='particle', output_dir='frames',
                        steps=None, timer_overlay=False, timer_format="{time:.2f}s"):
     """
@@ -4198,3 +4203,311 @@ def save_frames_as_png(viewer, tracks, feature='particle', output_dir='frames',
         imageio.imwrite(output_path, frame_img)
     print(f"PNG frames saved to {output_dir} with {len(unique_frames)} frames.")
 
+
+
+### Alright, here's the datashader stuff, for visualizing as heatmaps on cells ###
+
+def compute_cell_edge_angle_binning(points, centroid, edge_angle_bins=180, edge_padding=0.05, edge_smoothing=0.1):
+    """
+    Compute the cell edge using an angle–binning approach.
+    
+    The circle (0 to 2π) is divided into edge_angle_bins; for each bin, the maximum
+    radial distance from the centroid is computed. Missing bins are filled by circular
+    linear interpolation. The radii are then inflated by edge_padding and optionally
+    smoothed using a periodic spline (controlled by edge_smoothing).
+    
+    Parameters:
+      points (np.ndarray): Array of shape (N,2) of [x, y] coordinates.
+      centroid (np.ndarray): [x, y] coordinates of the centroid.
+      edge_angle_bins (int): Number of angular bins.
+      edge_padding (float): Fractional padding (e.g., 0.05 increases each radius by 5%).
+      edge_smoothing (float): Spline smoothing parameter (0 means no smoothing).
+      
+    Returns:
+      np.ndarray: An (M,2) array with the [x, y] coordinates outlining the cell edge.
+    """
+    diffs = points - centroid
+    angles = np.arctan2(diffs[:, 1], diffs[:, 0])
+    angles = np.mod(angles, 2 * np.pi)
+    radii = np.sqrt(np.sum(diffs**2, axis=1))
+    
+    bin_edges = np.linspace(0, 2 * np.pi, edge_angle_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    max_radii = np.full_like(bin_centers, np.nan)
+    
+    for i in range(edge_angle_bins):
+        mask = (angles >= bin_edges[i]) & (angles < bin_edges[i+1])
+        if np.any(mask):
+            max_radii[i] = np.max(radii[mask])
+            
+    if np.any(np.isnan(max_radii)):
+        valid = ~np.isnan(max_radii)
+        if np.sum(valid) < 2:
+            max_radii = np.zeros_like(bin_centers)
+        else:
+            angles_ext = np.concatenate((bin_centers[valid], np.array([bin_centers[valid][0] + 2*np.pi])))
+            radii_ext = np.concatenate((max_radii[valid], np.array([max_radii[valid][0]])))
+            max_radii = np.interp(bin_centers, angles_ext, radii_ext)
+    
+    padded_radii = max_radii * (1 + edge_padding)
+    x_edge = centroid[0] + padded_radii * np.cos(bin_centers)
+    y_edge = centroid[1] + padded_radii * np.sin(bin_centers)
+    edge_points = np.vstack((x_edge, y_edge)).T
+
+    if edge_smoothing > 0:
+        try:
+            tck, u = splprep([edge_points[:, 0], edge_points[:, 1]], s=edge_smoothing, per=True)
+            u_fine = np.linspace(0, 1, 200)
+            smooth_edge = np.array(splev(u_fine, tck)).T
+            return smooth_edge
+        except Exception as e:
+            print("Smoothing failed:", e)
+            return edge_points
+    else:
+        return edge_points
+    
+
+
+
+
+
+# Default constants; adjust as needed.
+DEFAULT_BOX_SIZE_PIXELS = 150
+# DEFAULT_MICRONS_PER_PIXEL = 0.065
+
+def plot_contour_timelapse_datashader(
+    df,
+    time_col='time_s',
+    value_col='diffusion_coefficient',
+    time_bin=0.6,                 # Duration of each time window
+    smooth_time_bins=0.3,         # Overlap between windows
+    spatial_unit='microns',      # 'pixels' or 'microns'
+    canvas_resolution=600,       # Resolution (in pixels) for Datashader Canvas
+    output_format='gif',         # 'gif' or 'png'
+    export_path=config.SAVED_DATA,
+    cmap=colorcet.fire,          # Default colormap (from colorcet)
+    box_size_pixels=DEFAULT_BOX_SIZE_PIXELS,
+    microns_per_pixel=config.PIXELSIZE_MICRONS,
+    gif_playback=None,           # Frame duration override (in seconds)
+    time_between_frames=config.TIME_BETWEEN_FRAMES,    # Default frame duration if gif_playback is None
+    overlay_contour_lines=False,  # Only used in the matplotlib branch
+    show_colorbar=True,          # Only used with matplotlib's contouring branch
+    contour_levels=200,          # Number of contour levels (for matplotlib branch)
+    spatial_smoothing_sigma=1.0, # Gaussian sigma for spatial smoothing (0 disables)
+    edge_angle_bins=180,         # For computing the cell edge
+    edge_padding=0.05,           # Padding for cell edge computation
+    edge_smoothing=0.1,          # Smoothing factor for cell edge computation
+    remove_axes=False,           # If True, remove axes from the figure
+    use_log_scale=False,         # If True, use logarithmic scaling
+    use_datashader=True          # If True, use datashader native shading; otherwise, use Matplotlib contourf
+):
+    """
+    Generates a time-lapse map by aggregating data via Datashader and then rendering the
+    result either using datashader’s native shading or Matplotlib’s contouring.
+    
+    - When `use_datashader` is True:  
+      The function converts the aggregated array into an xarray DataArray and calls  
+      ds.tf.shade with:
+          how='log'    if use_log_scale is True,
+          how='linear' otherwise.
+    
+    - When `use_datashader` is False:  
+      The function renders the image with Matplotlib’s contourf. If use_log_scale is True,
+      it uses LogNorm (after ensuring vmin is positive); otherwise, it uses a linear norm.
+    
+    In both cases, a cell-edge contour (computed via your helper function) is overlaid.
+    """
+    # Use the first unique filename from the dataframe.
+    filename = df.filename.unique()[0]
+    import colorcet
+    
+    # Set coordinate columns.
+    if spatial_unit == 'pixels':
+        x_col, y_col = 'x', 'y'
+        box_size = box_size_pixels
+    elif spatial_unit == 'microns':
+        x_col, y_col = 'x_um', 'y_um'
+        box_size = box_size_pixels * microns_per_pixel
+    else:
+        raise ValueError("spatial_unit must be either 'pixels' or 'microns'")
+    
+    # Define the fixed coordinate system.
+    global_x_min, global_y_min = 0, 0
+    global_x_max, global_y_max = box_size, box_size
+    
+    # Create export folder if needed.
+    if export_path is None:
+        export_path = "./saved_data"
+    if not os.path.isdir(export_path):
+        os.makedirs(export_path)
+    
+    # Determine global color scale.
+    if use_log_scale:
+        # For log scaling, vmin must be > 0.
+        positive_vals = df[df[value_col] > 0][value_col]
+        if positive_vals.empty:
+            raise ValueError("No positive values found for log scale!")
+        global_vmin = positive_vals.min()
+    else:
+        global_vmin = 0
+    global_vmax = df[value_col].max()
+    
+    # Only needed for the matplotlib contouring branch.
+    if not use_datashader:
+        norm = LogNorm(vmin=global_vmin, vmax=global_vmax) if use_log_scale else Normalize(vmin=global_vmin, vmax=global_vmax)
+        fixed_ticks = np.linspace(global_vmin, global_vmax, 5)
+    
+    # Convert cmap to a Matplotlib colormap if provided as a list.
+    if isinstance(cmap, list):
+        cmap = LinearSegmentedColormap.from_list('custom_cmap', cmap)
+    
+    # Compute the cell edge from all data (assumes helper function defined elsewhere).
+    all_points = df[[x_col, y_col]].dropna().values
+    cell_edge_points = None
+    if len(all_points) >= 3:
+        centroid = np.mean(all_points, axis=0)
+        cell_edge_points = compute_cell_edge_angle_binning(
+            all_points,
+            centroid,
+            edge_angle_bins=edge_angle_bins,
+            edge_padding=edge_padding,
+            edge_smoothing=edge_smoothing
+        )
+        
+    def create_frame(window_df, title):
+        """
+        Creates one frame.
+            - Aggregates the data with Datashader.
+            - Optionally smoothes and masks the data using the cell edge.
+            - Renders using either datashader’s native shading or Matplotlib’s contourf.
+            - Overlays the cell-edge contour.
+        """
+        # Create Datashader Canvas.
+        cvs = ds.Canvas(
+            plot_width=canvas_resolution,
+            plot_height=canvas_resolution,
+            x_range=(global_x_min, global_x_max),
+            y_range=(global_y_min, global_y_max)
+        )
+        agg = cvs.points(window_df, x=x_col, y=y_col, agg=mean(value_col))
+        agg_array = agg.values
+        agg_array = np.where(np.isnan(agg_array), global_vmin, agg_array)
+        
+        if spatial_smoothing_sigma > 0:
+            agg_array = gaussian_filter(agg_array, sigma=spatial_smoothing_sigma)
+        
+        # Generate grid coordinates.
+        x_lin = np.linspace(global_x_min, global_x_max, num=canvas_resolution)
+        y_lin = np.linspace(global_y_min, global_y_max, num=canvas_resolution)
+        X, Y = np.meshgrid(x_lin, y_lin)
+        
+        # Apply cell edge mask.
+        if cell_edge_points is not None:
+            poly_path = mpltPath.Path(cell_edge_points)
+            grid_points = np.vstack((X.ravel(), Y.ravel())).T
+            mask = poly_path.contains_points(grid_points).reshape(X.shape)
+            agg_array[~mask] = global_vmin
+        
+        # Create the figure.
+        fig, ax = plt.subplots(figsize=(6, 6))
+        if use_datashader:
+            # Convert aggregated array into an xarray DataArray.
+            data = xr.DataArray(agg_array, dims=("y", "x"), coords={"y": y_lin, "x": x_lin})
+            how_setting = 'log' if use_log_scale else 'linear'
+            shaded = ds.tf.shade(data, cmap=cmap, how=how_setting)
+            ax.imshow(shaded.to_pil(), extent=(global_x_min, global_x_max, global_y_min, global_y_max))
+        else:
+            # Matplotlib contourf branch.
+            levels_global = np.linspace(global_vmin, global_vmax, contour_levels)
+            cf = ax.contourf(X, Y, agg_array, levels=levels_global, cmap=cmap, norm=norm, alpha=0.8)
+            if overlay_contour_lines:
+                ax.contour(X, Y, agg_array, levels=levels_global, colors='white', linewidths=0.1)
+            if show_colorbar:
+                fig.subplots_adjust(right=0.85)
+                cbar_ax = fig.add_axes([0.88, 0.15, 0.03, 0.7])
+                fig.colorbar(cf, cax=cbar_ax, norm=norm, ticks=fixed_ticks, label=value_col)
+        
+        ax.set_xlim(global_x_min, global_x_max)
+        ax.set_ylim(global_y_min, global_y_max)
+        ax.set_aspect('equal')
+        ax.set_title(title)
+        ax.set_xlabel(x_col)
+        ax.set_ylabel(y_col)
+        if remove_axes:
+            ax.axis('off')
+        
+        # Determine edge color: white if using datashader (for better contrast), else black.
+        edge_color = 'white' if use_datashader else 'black'
+        if cell_edge_points is not None:
+            cell_edge_points_arr = np.array(cell_edge_points)
+            ax.plot(cell_edge_points_arr[:, 0], cell_edge_points_arr[:, 1], color=edge_color, lw=0.5, linestyle=':', alpha = 0.95)
+        return fig, ax
+
+    # Single-frame case.
+    if time_bin is None:
+        title = "Contour Map: All Time"
+        fig, ax = create_frame(df, title)
+        if output_format.lower() == 'gif':
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', transparent=True)
+            buf.seek(0)
+            img = imageio.v2.imread(buf)
+            gif_file = os.path.join(export_path, f"{filename}.gif")
+            duration = time_between_frames if gif_playback is None else gif_playback
+            imageio.mimsave(gif_file, [img], duration=duration)
+            plt.close(fig)
+            print(f"Animated GIF saved to {gif_file}")
+        else:
+            folder_path = os.path.join(export_path, filename)
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path)
+            png_file = os.path.join(folder_path, f"{filename}_T000.png")
+            fig.savefig(png_file, dpi=150, bbox_inches='tight', transparent=True)
+            plt.close(fig)
+            print(f"PNG saved to {png_file}")
+        return
+
+    # Multi-frame case.
+    t_min = df[time_col].min()
+    t_max = df[time_col].max()
+    step = smooth_time_bins if smooth_time_bins is not None else time_bin
+
+    if output_format.lower() == 'gif':
+        frames = []
+        n_frames = 0
+        current_t = t_min
+        while current_t <= t_max:
+            t_end = current_t + time_bin
+            window_df = df[(df[time_col] >= current_t) & (df[time_col] < t_end)]
+            title = f"Time: {current_t:.2f}"
+            fig, ax = create_frame(window_df, title)
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', transparent=True)
+            plt.close(fig)
+            buf.seek(0)
+            img = imageio.v2.imread(buf)
+            frames.append(img)
+            n_frames += 1
+            current_t += step
+        gif_file = os.path.join(export_path, f"{filename}.gif")
+        duration = time_between_frames if gif_playback is None else gif_playback
+        imageio.mimsave(gif_file, frames, duration=duration)
+        print(f"Generated {n_frames} frames with frame duration = {duration} sec.")
+        print(f"Animated GIF saved to {gif_file}")
+    else:
+        folder_path = os.path.join(export_path, filename)
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+        n_frames = 0
+        current_t = t_min
+        while current_t <= t_max:
+            t_end = current_t + time_bin
+            window_df = df[(df[time_col] >= current_t) & (df[time_col] < t_end)]
+            title = f"Time: {current_t:.2f}"
+            fig, ax = create_frame(window_df, title)
+            png_file = os.path.join(folder_path, f"{filename}_T{n_frames:03d}.png")
+            fig.savefig(png_file, dpi=150, bbox_inches='tight', transparent=True)
+            plt.close(fig)
+            n_frames += 1
+            current_t += step
+        print(f"Generated {n_frames} PNG files saved in folder {folder_path}")
