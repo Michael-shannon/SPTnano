@@ -1226,3 +1226,113 @@ def extract_metadata(df, filename_col):
     df[['power', 'cellID']] = df[filename_col].apply(lambda x: pd.Series(parse_filename(x)))
 
     return df
+
+
+def map_D_to_instant(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW, 
+                     overlap_method='average', tolerance=1e-5):
+    """
+    Map time-windowed diffusion coefficients back to the instantaneous tracking DataFrame.
+    
+    For each unique track (using 'unique_id'), the function finds the frame in metrics_df
+    corresponding to the starting point (x_um_start, y_um_start) provided in time_windowed_df.
+    It then assigns the diffusion coefficient (from 'diffusion_coefficient') over a block of frames 
+    defined by 'time_window'. If frames belong to overlapping time windows (e.g. overlap of 30 frames),
+    the final diffusion coefficient is computed according to the chosen 'overlap_method'.
+
+    Parameters:
+      metrics_df (pd.DataFrame): Instantaneous tracking data. Must include ['unique_id', 'x_um', 'y_um'].
+      time_windowed_df (pd.DataFrame): Time-windowed tracking data with columns 
+                                       ['unique_id', 'x_um_start', 'y_um_start', 'diffusion_coefficient'].
+      time_window (int): Number of frames that each time window covers (default is 60).
+      overlap_method (str): Method to resolve overlapping diffusion coefficient assignments:
+                            - 'average' (default): arithmetic mean of overlapping D values.
+                            - 'first': use the first assigned D value.
+                            - 'last': use the last assigned D value.
+                            - 'min': use the minimum D value.
+                            - 'max': use the maximum D value.
+                            - 'median': use the median D value.
+      tolerance (float): Tolerance for matching start coordinates (default is 1e-5).
+
+    Returns:
+      tuple: (updated metrics_df, report)
+             - metrics_df: The input DataFrame with a new 'diffusion_coefficient' column populated.
+             - report: A list of strings containing warnings and summary debug messages.
+    """
+    report = []  # This list will hold warnings and summary messages.
+    
+    # Initialize the diffusion_coefficient column with NaN values.
+    metrics_df['diffusion_coefficient'] = np.nan
+    
+    # Dictionary to hold lists of D values for each frame index.
+    frame_D = {}
+    
+    # Debug counters.
+    total_windows = 0
+    matched_windows = 0
+    unmatched_rows = set(metrics_df.index)
+    
+    # Wrap the outer loop with tqdm to show progress across unique tracks.
+    for unique_id in tqdm(time_windowed_df['unique_id'].unique(), desc="Processing tracks"):
+        # Extract data for the current unique_id.
+        tw_df = time_windowed_df[time_windowed_df['unique_id'] == unique_id]
+        inst_df = metrics_df[metrics_df['unique_id'] == unique_id]
+        
+        if inst_df.empty:
+            report.append(f"Warning: No matching data in metrics_df for unique_id '{unique_id}'.")
+            continue
+        
+        # Optionally, if you have many time windows, you can wrap the inner loop as well:
+        for _, tw_row in tqdm(tw_df.iterrows(), total=tw_df.shape[0],
+                                desc=f"Processing windows for track {unique_id}", leave=False):
+            total_windows += 1
+            start_x = tw_row['x_um_start']
+            start_y = tw_row['y_um_start']
+            D_value = tw_row['diffusion_coefficient']
+            
+            # Locate the starting frame in inst_df using tolerance for x and y.
+            start_idx_series = inst_df[
+                (abs(inst_df['x_um'] - start_x) < tolerance) &
+                (abs(inst_df['y_um'] - start_y) < tolerance)
+            ].index
+            
+            if not start_idx_series.empty:
+                matched_windows += 1
+                start_idx = start_idx_series[0]
+                # For the defined time window, assign the D_value.
+                for frame_idx in range(start_idx, start_idx + time_window):
+                    if frame_idx < len(metrics_df):
+                        if frame_idx in unmatched_rows:
+                            unmatched_rows.remove(frame_idx)
+                        # Append this D_value; overlapping frames will have multiple values.
+                        frame_D.setdefault(frame_idx, []).append(D_value)
+            else:
+                report.append(
+                    f"Warning: No matching start point found for unique_id '{unique_id}' at x={start_x}, y={start_y}."
+                )
+    
+    # Resolve diffusion coefficient for each frame, especially those with overlapping window assignments.
+    for frame_idx, D_values in frame_D.items():
+        if overlap_method == 'average':
+            combined_D = sum(D_values) / len(D_values)
+        elif overlap_method == 'first':
+            combined_D = D_values[0]
+        elif overlap_method == 'last':
+            combined_D = D_values[-1]
+        elif overlap_method == 'min':
+            combined_D = min(D_values)
+        elif overlap_method == 'max':
+            combined_D = max(D_values)
+        elif overlap_method == 'median':
+            combined_D = np.median(D_values)
+        else:
+            report.append(f"Warning: Unknown overlap_method '{overlap_method}'. Defaulting to average.")
+            combined_D = sum(D_values) / len(D_values)
+            
+        metrics_df.at[frame_idx, 'diffusion_coefficient'] = combined_D
+    
+    # Append summary debug information to the report.
+    report.append(f"Total time windows processed: {total_windows}")
+    report.append(f"Matched time windows: {matched_windows}")
+    report.append(f"Frames left unmatched (remain as NaN): {len(unmatched_rows)}")
+    
+    return metrics_df, report
