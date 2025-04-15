@@ -5,6 +5,7 @@
 
 import numpy as np
 import pandas as pd
+from scipy.stats import vonmises
 from tqdm.notebook import tqdm
 import scipy.optimize
 import re
@@ -148,6 +149,47 @@ class ParticleMetrics:
 
         # self.metrics_df['angle_normalized_curvature_deg'] = np.degrees(self.metrics_df['angle_normalized_curvature'])
         return self.metrics_df
+    
+    def calculate_vonmises_kappa(self, window_data):
+        """
+        Fit von Mises distributions to the turning angles and absolute directions
+        in the given window data.
+        
+        Parameters:
+        - window_data: DataFrame containing tracking data for the window.
+        
+        Returns:
+        - kappa_turning: Estimated concentration parameter for turning angles.
+        - kappa_absolute: Estimated concentration parameter for absolute directions.
+        """
+        
+ 
+
+        # Use the pre-computed columns:
+        # For turning angles, we are using "angle_normalized_curvature"
+        turning_angles = window_data['angle_normalized_curvature'].values
+        # For absolute directions, use "direction_rad"
+        absolute_angles = window_data['direction_rad'].values
+
+        # Fit the von Mises distribution for turning angles.
+        try:
+            # Optionally you can set fscale=1 to fix the scale parameter.
+            params_turning = vonmises.fit(turning_angles, fscale=1)
+            kappa_turning = params_turning[1]
+        except Exception as e:
+            print(f"Von Mises fit for turning angles failed: {e}")
+            kappa_turning = np.nan
+
+        # Fit the von Mises distribution for absolute directions.
+        try:
+            params_absolute = vonmises.fit(absolute_angles, fscale=1)
+            kappa_absolute = params_absolute[1]
+        except Exception as e:
+            print(f"Von Mises fit for absolute angles failed: {e}")
+            kappa_absolute = np.nan
+
+        return kappa_turning, kappa_absolute
+
     
 
     # def calculate_persistence_length(self, track_data):
@@ -1300,6 +1342,16 @@ class ParticleMetrics:
                     'cum_displacement_um': [cum_disp],
                     'bad_fit_flag': [motion_class.startswith("bad_fit_flagged")]
                 })
+
+                # --- NEW: Compute von Mises kappa values for this window ---
+                kappa_turning, kappa_absolute = self.calculate_vonmises_kappa(window_data)
+                
+                # Append the kappa values to the window summary DataFrame
+                window_summary['kappa_turning'] = kappa_turning
+                window_summary['kappa_absolute'] = kappa_absolute
+
+
+
                 windowed_list.append(window_summary)
             
             if track_removed:
