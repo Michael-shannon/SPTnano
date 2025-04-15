@@ -1395,6 +1395,9 @@ class ParticleMetrics:
             avg_jerk = track_data['jerk_um_s3'].mean()
             avg_norm_curvature = track_data['normalized_curvature'].mean()
             avg_angle_norm_curvature = track_data['angle_normalized_curvature'].mean()
+                        # NEW: Compute von Mises kappa values for the entire track.
+            kappa_turning, kappa_absolute = self.calculate_vonmises_kappa(track_data)
+
 
             # Add track-level summary information to time_averaged_df
             start_row = track_data.iloc[0]
@@ -1421,6 +1424,8 @@ class ParticleMetrics:
                 'avg_jerk_um_s3': [avg_jerk],  # Add average jerk
                 'avg_normalized_curvature': [avg_norm_curvature],  # Add average normalized curvature
                 'avg_angle_normalized_curvature': [avg_angle_norm_curvature],  # Add average angle normalized curvature
+                'kappa_turning': [kappa_turning],     # NEW: von Mises concentration for turning angles
+                'kappa_absolute': [kappa_absolute]    # NEW: von Mises concentration for absolute directions
             })
 
             time_averaged_list.append(track_summary)
