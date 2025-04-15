@@ -1398,6 +1398,11 @@ class ParticleMetrics:
                         # NEW: Compute von Mises kappa values for the entire track.
             kappa_turning, kappa_absolute = self.calculate_vonmises_kappa(track_data)
 
+            # NEW: Retrieve net displacement and cumulative displacement.
+            # Assumes these columns were computed earlier via calculate_net_displacement() and calculate_cum_displacement()
+            net_disp = track_data['net_displacement_um'].iloc[-1]
+            cum_disp = track_data['cum_displacement_um'].iloc[-1]
+
 
             # Add track-level summary information to time_averaged_df
             start_row = track_data.iloc[0]
@@ -1425,7 +1430,9 @@ class ParticleMetrics:
                 'avg_normalized_curvature': [avg_norm_curvature],  # Add average normalized curvature
                 'avg_angle_normalized_curvature': [avg_angle_norm_curvature],  # Add average angle normalized curvature
                 'kappa_turning': [kappa_turning],     # NEW: von Mises concentration for turning angles
-                'kappa_absolute': [kappa_absolute]    # NEW: von Mises concentration for absolute directions
+                'kappa_absolute': [kappa_absolute],    # NEW: von Mises concentration for absolute directions
+                'net_displacement_um': [net_disp],      # NEW: Net displacement over the track (straight-line distance from start to end)
+                'cum_displacement_um': [cum_disp]         # NEW: Cumulative displacement over the track (total path length)
             })
 
             time_averaged_list.append(track_summary)
