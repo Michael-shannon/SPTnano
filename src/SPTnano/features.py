@@ -5,7 +5,8 @@
 
 import numpy as np
 import pandas as pd
-from scipy.stats import vonmises
+# from scipy.stats import vonmises
+from scipy.stats import vonmises, skew, kurtosis
 from tqdm.notebook import tqdm
 import scipy.optimize
 import re
@@ -20,21 +21,59 @@ class ParticleMetrics:
         # Retrieve time_between_frames from config if not provided
         self.time_between_frames = time_between_frames if time_between_frames is not None else config.TIME_BETWEEN_FRAMES
         
+        # self.time_averaged_df = pd.DataFrame(columns=[
+        #     'x_um_start', 'y_um_start', 'x_um_end', 'y_um_end', 
+        #     'particle', 'condition', 'filename', 'file_id', 'unique_id',
+        #     'avg_msd', 'n_frames', 'total_time_s', 'Location', 
+        #     'diffusion_coefficient', 'anomalous_exponent', 'motion_class',
+        #     'avg_speed_um_s', 'avg_acceleration_um_s2', 'avg_jerk_um_s3',
+        #     'avg_normalized_curvature', 'avg_angle_normalized_curvature'  # Add average normalized curvature and angle normalized curvature
+        # ])
+        # self.time_windowed_df = pd.DataFrame(columns=[
+        #     'time_window', 'x_um_start', 'y_um_start', 'x_um_end', 'y_um_end',
+        #     'particle', 'condition', 'filename', 'file_id', 'unique_id',
+        #     'avg_msd', 'n_frames', 'total_time_s', 'Location',
+        #     'diffusion_coefficient', 'anomalous_exponent', 'motion_class',
+        #     'avg_speed_um_s', 'avg_acceleration_um_s2', 'avg_jerk_um_s3',
+        #     'avg_normalized_curvature', 'avg_angle_normalized_curvature'  # Add average normalized curvature and angle normalized curvature
+        # ])
+
         self.time_averaged_df = pd.DataFrame(columns=[
             'x_um_start', 'y_um_start', 'x_um_end', 'y_um_end', 
             'particle', 'condition', 'filename', 'file_id', 'unique_id',
             'avg_msd', 'n_frames', 'total_time_s', 'Location', 
             'diffusion_coefficient', 'anomalous_exponent', 'motion_class',
             'avg_speed_um_s', 'avg_acceleration_um_s2', 'avg_jerk_um_s3',
-            'avg_normalized_curvature', 'avg_angle_normalized_curvature'  # Add average normalized curvature and angle normalized curvature
+            'avg_normalized_curvature', 'avg_angle_normalized_curvature',
+            'kappa_turning', 'kappa_absolute',
+            'net_displacement_um', 'cum_displacement_um',
+            # NEW features in time-averaged summary
+            'straightness_index', 'radius_of_gyration', 'convex_hull_area',
+            'directional_entropy', 'speed_variability', 'direction_autocorrelation',
+            'eccentricity', 'turning_angle_variance', 'turning_angle_skew',
+            'turning_angle_kurtosis', 'steplength_mean', 'steplength_std',
+            'steplength_skew', 'steplength_kurtosis', 'diffusivity_cv',
+            'fractal_dimension', 'psd_slope_speed', 'self_intersections',
+            'pausing_fraction'
         ])
+        
         self.time_windowed_df = pd.DataFrame(columns=[
             'time_window', 'x_um_start', 'y_um_start', 'x_um_end', 'y_um_end',
             'particle', 'condition', 'filename', 'file_id', 'unique_id',
             'avg_msd', 'n_frames', 'total_time_s', 'Location',
             'diffusion_coefficient', 'anomalous_exponent', 'motion_class',
             'avg_speed_um_s', 'avg_acceleration_um_s2', 'avg_jerk_um_s3',
-            'avg_normalized_curvature', 'avg_angle_normalized_curvature'  # Add average normalized curvature and angle normalized curvature
+            'avg_normalized_curvature', 'avg_angle_normalized_curvature',
+            'persistence_length', 'net_displacement_um', 'cum_displacement_um',
+            'kappa_turning', 'kappa_absolute',
+            # NEW features in time-windowed summary:
+            'straightness_index', 'radius_of_gyration', 'convex_hull_area',
+            'directional_entropy', 'speed_variability', 'direction_autocorrelation',
+            'eccentricity', 'turning_angle_variance', 'turning_angle_skew',
+            'turning_angle_kurtosis', 'steplength_mean', 'steplength_std',
+            'steplength_skew', 'steplength_kurtosis', 'diffusivity_cv',
+            'fractal_dimension', 'psd_slope_speed', 'self_intersections',
+            'pausing_fraction'
         ])
 
         self.msd_lagtime_df = pd.DataFrame(columns=[
@@ -313,6 +352,260 @@ class ParticleMetrics:
         self.metrics_df['instant_velocity_x_um_s'] = self.metrics_df['instant_velocity_x_um_s'].replace([np.inf, -np.inf], np.nan).fillna(0)
         self.metrics_df['instant_velocity_y_um_s'] = self.metrics_df['instant_velocity_y_um_s'].replace([np.inf, -np.inf], np.nan).fillna(0)
         return self.metrics_df
+    
+
+    ############# ADDITIONAL METRICS FUNCTIONS APRIL 2025 ################################
+    def calculate_straightness_index(self, data):
+        """
+        Compute straightness as the ratio of net displacement to cumulative displacement.
+        """
+        net_disp = data['net_displacement_um'].iloc[-1]
+        cum_disp = data['cum_displacement_um'].iloc[-1]
+        return net_disp / cum_disp if cum_disp > 0 else np.nan
+
+    def calculate_radius_of_gyration(self, data):
+        """
+        Compute the radius of gyration as the root mean square distance from the centroid.
+        """
+        x = data['x_um'].values
+        y = data['y_um'].values
+        centroid_x = np.mean(x)
+        centroid_y = np.mean(y)
+        rg = np.sqrt(np.mean((x - centroid_x)**2 + (y - centroid_y)**2))
+        return rg
+
+    def calculate_convex_hull_area(self, data):
+        """
+        Compute the convex hull area of the points.
+        """
+        from scipy.spatial import ConvexHull
+        points = data[['x_um', 'y_um']].values
+        if len(points) < 3:
+            return 0.0  # Not enough points for a hull
+        hull = ConvexHull(points)
+        # For 2D, hull.volume gives the area
+        return hull.volume
+
+    def calculate_directional_entropy(self, data, n_bins=18):
+        """
+        Compute Shannon entropy from the distribution of turning angles.
+        n_bins controls the resolution: default 18 bins (approx. 20° per bin over [-π, π]).
+        """
+        angles = data['angle_normalized_curvature'].dropna().values
+        # Compute a histogram with the specified number of bins over the range [-pi, pi]
+        hist, _ = np.histogram(angles, bins=n_bins, range=(-np.pi, np.pi), density=True)
+        # Remove zero bins to avoid log(0)
+        hist = hist[hist > 0]
+        entropy = -np.sum(hist * np.log(hist))
+        return entropy
+
+    def calculate_speed_variability(self, data):
+        """
+        Compute the coefficient of variation of the instantaneous speeds.
+        """
+        speeds = data['speed_um_s'].values
+        if np.mean(speeds) > 0:
+            return np.std(speeds) / np.mean(speeds)
+        return np.nan
+
+    def calculate_directional_autocorrelation(self, data):
+        """
+        Compute the lag-1 directional autocorrelation using cosine similarity of differences.
+        """
+        directions = data['direction_rad'].values
+        if len(directions) < 2:
+            return np.nan
+        autocorr = np.mean(np.cos(np.diff(directions)))
+        return autocorr
+
+
+    # 1. Trajectory Eccentricity and Orientation (we compute eccentricity here)
+    def calculate_trajectory_eccentricity(self, data):
+        """
+        Calculate eccentricity as a measure of elongation of the distribution of points.
+        Uses the covariance matrix of x and y coordinates.
+        Returns a single scalar value.
+        """
+        x = data['x_um'].values
+        y = data['y_um'].values
+        if len(x) < 2:
+            return np.nan
+        cov_mat = np.cov(x, y)
+        eig_vals, _ = np.linalg.eig(cov_mat)
+        eig_vals = np.sort(eig_vals)[::-1]  # Ensure first eigenvalue is largest
+        if eig_vals[0] > 0:
+            eccentricity = np.sqrt(1 - eig_vals[1] / eig_vals[0])
+        else:
+            eccentricity = np.nan
+        return eccentricity
+
+    # 2. Turning Angle Distribution Moments (variance, skewness, kurtosis)
+    def calculate_turning_angle_moments(self, data):
+        """
+        Compute the variance, skewness, and kurtosis of the turning angles.
+        Uses the 'angle_normalized_curvature' column.
+        """
+        angles = data['angle_normalized_curvature'].dropna().values
+        if len(angles) < 2:
+            return np.nan, np.nan, np.nan
+        variance = np.var(angles)
+        skewness = skew(angles)
+        kurt = kurtosis(angles)
+        return variance, skewness, kurt
+
+    # 3. Step-Length Distribution Statistics
+    def calculate_steplength_distribution_stats(self, data):
+        """
+        Compute mean, standard deviation, skewness, and kurtosis of step lengths.
+        Uses the 'segment_len_um' column.
+        """
+        if 'segment_len_um' not in data.columns:
+            # Ensure distances are computed
+            data = self.calculate_distances()
+        steps = data['segment_len_um'].values
+        if len(steps) < 2:
+            return np.nan, np.nan, np.nan, np.nan
+        step_mean = np.mean(steps)
+        step_std = np.std(steps)
+        step_skew = skew(steps)
+        step_kurt = kurtosis(steps)
+        return step_mean, step_std, step_skew, step_kurt
+
+    # 4. Instantaneous Diffusivity Fluctuations
+    def calculate_instantaneous_diffusivity_variability(self, data):
+        """
+        Compute the coefficient of variation (CV) of instantaneous diffusivity.
+        Instantaneous diffusivity D_inst = (segment_len_um)^2 / (4 * delta_time_s).
+        Assumes 'delta_time_s' and 'segment_len_um' are computed.
+        """
+        if 'delta_time_s' not in data.columns:
+            data = self.calculate_speeds()
+        # Avoid division by zero:
+        valid = data['delta_time_s'] > 0
+        if not valid.any():
+            return np.nan
+        D_inst = (data.loc[valid, 'segment_len_um']**2) / (4 * data.loc[valid, 'delta_time_s'])
+        if np.mean(D_inst) > 0:
+            return np.std(D_inst) / np.mean(D_inst)
+        else:
+            return np.nan
+
+    # 5. Fractal Dimension (Box-Counting Method)
+    def calculate_fractal_dimension(self, data):
+        """
+        Estimate the fractal dimension using a simple box-counting algorithm.
+        """
+        x = data['x_um'].values
+        y = data['y_um'].values
+        points = np.vstack((x, y)).T
+        if len(points) < 2:
+            return np.nan
+        
+        # Define box sizes as a range from the minimum to maximum distance
+        min_box = np.min(np.ptp(points, axis=0)) / 10  # small fraction of the spread
+        max_box = np.max(np.ptp(points, axis=0))
+        if min_box <= 0:
+            return np.nan
+        n_boxes = np.logspace(np.log10(min_box), np.log10(max_box), num=10)
+        counts = []
+        for box_size in n_boxes:
+            # Shift points to positive quadrant
+            shifted = points - points.min(axis=0)
+            # Divide the plane into boxes of size box_size and count non-empty boxes.
+            bins_x = np.ceil((shifted[:, 0] / box_size)).astype(int)
+            bins_y = np.ceil((shifted[:, 1] / box_size)).astype(int)
+            boxes = set(zip(bins_x, bins_y))
+            counts.append(len(boxes))
+        
+        # Perform a linear fit on log-log data; the slope estimates the fractal dimension.
+        try:
+            coeffs = np.polyfit(np.log(n_boxes), np.log(counts), 1)
+            fractal_dim = -coeffs[0]
+        except Exception:
+            fractal_dim = np.nan
+        return fractal_dim
+
+    # 6. Power Spectral Density (PSD) Slope of Speed
+    def calculate_psd_slope(self, data, signal='speed'):
+        """
+        Compute the slope of the power spectral density (PSD) in log–log space.
+        For example, if signal == 'speed', use the instantaneous speed values.
+        """
+        if signal == 'speed':
+            if 'speed_um_s' not in data.columns:
+                data = self.calculate_speeds()
+            s = data['speed_um_s'].dropna().values
+        elif signal == 'acceleration':
+            if 'acceleration_um_s2' not in data.columns:
+                data = self.calculate_accelerations()
+            s = data['acceleration_um_s2'].dropna().values
+        else:
+            return np.nan
+        
+        if len(s) < 4:
+            return np.nan
+        
+        # Compute Fourier transform and PSD.
+        fft_vals = np.fft.fft(s)
+        psd = np.abs(fft_vals)**2
+        freqs = np.fft.fftfreq(len(s))
+        # Consider only positive frequencies.
+        positive = freqs > 0
+        if positive.sum() < 2:
+            return np.nan
+        log_freqs = np.log10(freqs[positive])
+        log_psd = np.log10(psd[positive])
+        # Linear fit to get the slope.
+        try:
+            slope, _ = np.polyfit(log_freqs, log_psd, 1)
+        except Exception:
+            slope = np.nan
+        return slope
+
+    # 7. Self-Intersection Count (Path Crossing Frequency)
+    def calculate_self_intersections(self, data):
+        """
+        Count the number of self-intersections in a trajectory.
+        A simple (but potentially inefficient) algorithm that checks if line segments
+        intersect. This is usually feasible for small windows.
+        """
+        # Extract positions.
+        points = data[['x_um', 'y_um']].values
+        n_points = len(points)
+        if n_points < 4:
+            return 0
+        intersections = 0
+        # Check every pair of segments (i, i+1) and (j, j+1) with j > i+1.
+        for i in range(n_points - 1):
+            p1 = points[i]
+            p2 = points[i + 1]
+            for j in range(i + 2, n_points - 1):
+                p3 = points[j]
+                p4 = points[j + 1]
+                if self.segments_intersect(p1, p2, p3, p4):
+                    intersections += 1
+        return intersections
+
+    def segments_intersect(self, p1, p2, p3, p4):
+        """Determine if line segments (p1, p2) and (p3, p4) intersect."""
+        def ccw(a, b, c):
+            return (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0])
+        return (ccw(p1, p3, p4) != ccw(p2, p3, p4)) and (ccw(p1, p2, p3) != ccw(p1, p2, p4))
+
+    # 8. Pausing/Intermittency Metrics
+    def calculate_pausing_metric(self, data, speed_threshold=0.1):
+        """
+        Compute the fraction of frames in which the instantaneous speed is below the threshold.
+        """
+        if 'speed_um_s' not in data.columns:
+            data = self.calculate_speeds()
+        speeds = data['speed_um_s'].dropna().values
+        if len(speeds) == 0:
+            return np.nan
+        pauses = speeds < speed_threshold
+        return np.sum(pauses) / len(speeds)
+
+
     
     # def calculate_msd_for_track(self, track_data, store_msd=False, time_window=None):
     #     n_frames = len(track_data)
@@ -1189,13 +1482,13 @@ class ParticleMetrics:
             
             if chosen_r2 < threshold:
                 if bad_fit_strategy == "remove_track":
-                    print(f"Bad fit for unique_id {track_data['unique_id'].iloc[0]} (R² = {chosen_r2:.3f}). Removing track.")
+                    # print(f"Bad fit for unique_id {track_data['unique_id'].iloc[0]} (R² = {chosen_r2:.3f}). Removing track.")
                     return np.nan, np.nan, np.nan, 'bad_fit_removed_track'
                 elif bad_fit_strategy == "excise_window":
-                    print(f"Bad fit for unique_id {track_data['unique_id'].iloc[0]} time window {time_window} (R² = {chosen_r2:.3f}). Excising window.")
+                    # print(f"Bad fit for unique_id {track_data['unique_id'].iloc[0]} time window {time_window} (R² = {chosen_r2:.3f}). Excising window.")
                     return np.nan, np.nan, np.nan, 'excised_bad_fit'
                 elif bad_fit_strategy == "flag":
-                    print(f"Bad fit for unique_id {track_data['unique_id'].iloc[0]} time window {time_window} (R² = {chosen_r2:.3f}). Flagging window.")
+                    # print(f"Bad fit for unique_id {track_data['unique_id'].iloc[0]} time window {time_window} (R² = {chosen_r2:.3f}). Flagging window.")
                     if alpha < 1 - self.tolerance:
                         motion_class = 'bad_fit_flagged_subdiffusive'
                     elif alpha > 1 + self.tolerance:
@@ -1250,10 +1543,7 @@ class ParticleMetrics:
         - filter_metrics_df: If True, update self.metrics_df to only include frames in windows.
         - **kwargs: Additional options to pass to calculate_msd_for_track.
         """
-        from tqdm import tqdm
-        import numpy as np
-        import pandas as pd
-        
+
         if window_size is None:
             window_size = self.calculate_default_window_size()
         if overlap is None:
@@ -1313,6 +1603,31 @@ class ParticleMetrics:
                 avg_norm_curvature = window_data['normalized_curvature'].mean()
                 avg_angle_norm_curvature = window_data['angle_normalized_curvature'].mean()
                 persistence_length = self.calculate_persistence_length(window_data)
+
+                # --- New: Compute additional (window-specific) features --- April 2025
+                straightness = self.calculate_straightness_index(window_data)
+                rg = self.calculate_radius_of_gyration(window_data)
+                hull_area = self.calculate_convex_hull_area(window_data)
+                dir_entropy = self.calculate_directional_entropy(window_data)
+                speed_cv = self.calculate_speed_variability(window_data)
+                direction_autocorr = self.calculate_directional_autocorrelation(window_data)
+                eccentricity = self.calculate_trajectory_eccentricity(window_data)
+                tvar, tskew, tkurt = self.calculate_turning_angle_moments(window_data)
+                step_stats = self.calculate_steplength_distribution_stats(window_data)
+                if step_stats is not None:
+                    steplength_mean, steplength_std, steplength_skew, steplength_kurt = step_stats
+                else:
+                    steplength_mean, steplength_std, steplength_skew, steplength_kurt = (np.nan, np.nan, np.nan, np.nan)
+                diffusivity_cv = self.calculate_instantaneous_diffusivity_variability(window_data)
+                fractal_dim = self.calculate_fractal_dimension(window_data)
+                psd_slope_speed = self.calculate_psd_slope(window_data, signal='speed')
+                intersections = self.calculate_self_intersections(window_data)
+                pausing_fraction = self.calculate_pausing_metric(window_data, speed_threshold=0.1)
+                
+
+                # --- NEW: Compute von Mises kappa values for this window ---
+                kappa_turning, kappa_absolute = self.calculate_vonmises_kappa(window_data)
+                
                 
                 window_summary = pd.DataFrame({
                     'time_window': [start // (window_size - overlap)],
@@ -1340,17 +1655,34 @@ class ParticleMetrics:
                     'persistence_length': [persistence_length],
                     'net_displacement_um': [net_disp],
                     'cum_displacement_um': [cum_disp],
+                    # New metrics:
+                    'straightness_index': [straightness],
+                    'radius_of_gyration': [rg],
+                    'convex_hull_area': [hull_area],
+                    'directional_entropy': [dir_entropy],
+                    'speed_variability': [speed_cv],
+                    'direction_autocorrelation': [direction_autocorr],
+                    'kappa_turning': [kappa_turning],
+                    'kappa_absolute': [kappa_absolute],
+                    'eccentricity': [eccentricity],
+                    'turning_angle_variance': [tvar],
+                    'turning_angle_skew': [tskew],
+                    'turning_angle_kurtosis': [tkurt],
+                    'steplength_mean': [steplength_mean],
+                    'steplength_std': [steplength_std],
+                    'steplength_skew': [steplength_skew],
+                    'steplength_kurtosis': [steplength_kurt],
+                    'diffusivity_cv': [diffusivity_cv],
+                    'fractal_dimension': [fractal_dim],
+                    'psd_slope_speed': [psd_slope_speed],
+                    'self_intersections': [intersections],
+                    'pausing_fraction': [pausing_fraction],
                     'bad_fit_flag': [motion_class.startswith("bad_fit_flagged")]
                 })
-
-                # --- NEW: Compute von Mises kappa values for this window ---
-                kappa_turning, kappa_absolute = self.calculate_vonmises_kappa(window_data)
                 
-                # Append the kappa values to the window summary DataFrame
-                window_summary['kappa_turning'] = kappa_turning
-                window_summary['kappa_absolute'] = kappa_absolute
-
-
+                # # Append the kappa values to the window summary DataFrame
+                # window_summary['kappa_turning'] = kappa_turning
+                # window_summary['kappa_absolute'] = kappa_absolute
 
                 windowed_list.append(window_summary)
             
@@ -1403,6 +1735,25 @@ class ParticleMetrics:
             net_disp = track_data['net_displacement_um'].iloc[-1]
             cum_disp = track_data['cum_displacement_um'].iloc[-1]
 
+            # NEW: Compute additional descriptors
+            straightness = self.calculate_straightness_index(track_data)
+            rg = self.calculate_radius_of_gyration(track_data)
+            hull_area = self.calculate_convex_hull_area(track_data)
+            dir_entropy = self.calculate_directional_entropy(track_data)
+            speed_cv = self.calculate_speed_variability(track_data)
+            direction_autocorr = self.calculate_directional_autocorrelation(track_data)
+            eccentricity = self.calculate_trajectory_eccentricity(track_data)
+            tvar, tskew, tkurt = self.calculate_turning_angle_moments(track_data)
+            steplength_mean, steplength_std, steplength_skew, steplength_kurt = self.calculate_steplength_distribution_stats(track_data)
+            diffusivity_cv = self.calculate_instantaneous_diffusivity_variability(track_data)
+            fractal_dim = self.calculate_fractal_dimension(track_data)
+            psd_slope_speed = self.calculate_psd_slope(track_data, signal='speed')
+            intersections = self.calculate_self_intersections(track_data)
+            pausing_fraction = self.calculate_pausing_metric(track_data, speed_threshold=0.1)
+            # kappa_turning, kappa_absolute = self.calculate_vonmises_kappa(track_data)
+            
+
+
 
             # Add track-level summary information to time_averaged_df
             start_row = track_data.iloc[0]
@@ -1432,7 +1783,27 @@ class ParticleMetrics:
                 'kappa_turning': [kappa_turning],     # NEW: von Mises concentration for turning angles
                 'kappa_absolute': [kappa_absolute],    # NEW: von Mises concentration for absolute directions
                 'net_displacement_um': [net_disp],      # NEW: Net displacement over the track (straight-line distance from start to end)
-                'cum_displacement_um': [cum_disp]         # NEW: Cumulative displacement over the track (total path length)
+                'cum_displacement_um': [cum_disp],         # NEW: Cumulative displacement over the track (total path length)
+                ### below new april 2025
+                'straightness_index': [straightness],
+                'radius_of_gyration': [rg],
+                'convex_hull_area': [hull_area],
+                'directional_entropy': [dir_entropy],
+                'speed_variability': [speed_cv],
+                'direction_autocorrelation': [direction_autocorr],
+                'eccentricity': [eccentricity],
+                'turning_angle_variance': [tvar],
+                'turning_angle_skew': [tskew],
+                'turning_angle_kurtosis': [tkurt],
+                'steplength_mean': [steplength_mean],
+                'steplength_std': [steplength_std],
+                'steplength_skew': [steplength_skew],
+                'steplength_kurtosis': [steplength_kurt],
+                'diffusivity_cv': [diffusivity_cv],
+                'fractal_dimension': [fractal_dim],
+                'psd_slope_speed': [psd_slope_speed],
+                'self_intersections': [intersections],
+                'pausing_fraction': [pausing_fraction]
             })
 
             time_averaged_list.append(track_summary)
