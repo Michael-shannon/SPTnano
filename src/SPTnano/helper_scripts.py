@@ -1203,104 +1203,177 @@ def pathfixer(
 #     print(f"Unmatched rows assigned 'unlabeled': {len(unmatched_rows)}")
 
 #     return metrics_df
+# ########################### backup version #############################
+# def add_motion_class(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW): #updated to cope with the new functions on making sure there are no crazy Ds.
+#     """
+#     Add a 'motion_class' column to metrics_df based on time_windowed_df with debugging.
+    
+#     This updated function takes into account that some time_windowed_df unique_ids may have 
+#     been modified by the excision process (e.g. appended with "_s"). If a unique_id from time_windowed_df 
+#     is not found in metrics_df, the function uses the base unique_id (obtained by removing the '_s' suffix)
+#     for matching. For each time window, the motion_class is assigned over the corresponding block of frames,
+#     with overlapping assignments resolved by majority rule.
+    
+#     Finally, to facilitate visualization, any gaps (i.e. rows that remain empty) are filled
+#     via a forward fill and backward fill so that every row receives a motion_class.
+    
+#     Parameters:
+#       - metrics_df: DataFrame containing the instantaneous particle tracking data.
+#                     Must include columns ['unique_id', 'x_um', 'y_um'].
+#       - time_windowed_df: DataFrame containing time-windowed motion class information.
+#                           Must include columns ['unique_id', 'x_um_start', 'y_um_start', 'motion_class'].
+#       - time_window: Number of frames per time window (default: config.TIME_WINDOW).
+    
+#     Returns:
+#       Updated metrics_df with a new 'motion_class' column.
+#     """
 
-def add_motion_class(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW): #updated to cope with the new functions on making sure there are no crazy Ds.
+
+#     # Initialize the 'motion_class' column to empty strings.
+#     metrics_df['motion_class'] = ''
+    
+#     # Dictionary to hold lists of motion_class assignments for each frame index.
+#     frame_classes = {}
+    
+#     # Debugging counters.
+#     total_windows = 0
+#     matched_windows = 0
+#     # Keep track of rows which did not get assigned any value.
+#     unmatched_rows = set(metrics_df.index)
+    
+#     # Tolerance for matching the coordinates (as in the D mapping function).
+#     tolerance = 1e-5
+    
+#     # Loop over each unique_id in time_windowed_df.
+#     for uid in tqdm(time_windowed_df['unique_id'].unique(), desc="Processing tracks"):
+#         # First, try to see if the uid is present in metrics_df.
+#         if uid in metrics_df['unique_id'].unique():
+#             m_df = metrics_df[metrics_df['unique_id'] == uid]
+#         else:
+#             # If not, assume it may have an excision suffix and try the base unique_id.
+#             base_uid = uid.split('_s')[0]
+#             m_df = metrics_df[metrics_df['unique_id'] == base_uid]
+        
+#         tw_df = time_windowed_df[time_windowed_df['unique_id'] == uid]
+        
+#         if m_df.empty:
+#             print(f"Warning: No matching data found in metrics_df for unique_id '{uid}' (or its base).")
+#             continue
+        
+#         for _, tw_row in tw_df.iterrows():
+#             total_windows += 1
+#             x_start, y_start = tw_row['x_um_start'], tw_row['y_um_start']
+#             time_win_class = tw_row['motion_class']
+            
+#             # Locate the starting frame in m_df using the coordinate tolerance.
+#             start_idx_series = m_df[
+#                 (abs(m_df['x_um'] - x_start) < tolerance) &
+#                 (abs(m_df['y_um'] - y_start) < tolerance)
+#             ].index
+            
+#             if not start_idx_series.empty:
+#                 matched_windows += 1
+#                 start_idx = start_idx_series[0]
+#                 # Define the frame range for the time window.
+#                 frame_range = range(start_idx, start_idx + time_window)
+#                 for frame_idx in frame_range:
+#                     if frame_idx < len(metrics_df):
+#                         unmatched_rows.discard(frame_idx)
+#                         frame_classes.setdefault(frame_idx, []).append(time_win_class)
+#             else:
+#                 print(f"Warning: No matching start point found for uid '{uid}' at x={x_start}, y={y_start}.")
+    
+#     # Resolve any overlapping assignments via majority rule.
+#     for frame_idx, classes in frame_classes.items():
+#         metrics_df.at[frame_idx, 'motion_class'] = max(set(classes), key=classes.count)
+    
+#     # Assign 'unlabeled' to any rows that remain unmatched.
+#     for idx in unmatched_rows:
+#         metrics_df.at[idx, 'motion_class'] = 'unlabeled'
+    
+#     print(f"Total time windows processed: {total_windows}")
+#     print(f"Matched time windows: {matched_windows}")
+#     print(f"Unmatched rows assigned 'unlabeled': {len(unmatched_rows)}")
+    
+#     # For visualization, fill any remaining gaps (empty strings) by forward fill then backward fill.
+#     # metrics_df['motion_class'] = metrics_df['motion_class'].replace('', np.nan)
+#     metrics_df['motion_class'] = metrics_df['motion_class'].replace(['', 'unlabeled'], np.nan)
+#     metrics_df['motion_class'] = metrics_df['motion_class'].ffill().bfill()
+    
+#     return metrics_df
+
+############### BACKUP VERSION #######################
+
+
+def add_motion_class(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW):
     """
-    Add a 'motion_class' column to metrics_df based on time_windowed_df with debugging.
+    Add a 'motion_class' column to metrics_df based on time_windowed_df.
     
-    This updated function takes into account that some time_windowed_df unique_ids may have 
-    been modified by the excision process (e.g. appended with "_s"). If a unique_id from time_windowed_df 
-    is not found in metrics_df, the function uses the base unique_id (obtained by removing the '_s' suffix)
-    for matching. For each time window, the motion_class is assigned over the corresponding block of frames,
-    with overlapping assignments resolved by majority rule.
-    
-    Finally, to facilitate visualization, any gaps (i.e. rows that remain empty) are filled
-    via a forward fill and backward fill so that every row receives a motion_class.
-    
-    Parameters:
-      - metrics_df: DataFrame containing the instantaneous particle tracking data.
-                    Must include columns ['unique_id', 'x_um', 'y_um'].
-      - time_windowed_df: DataFrame containing time-windowed motion class information.
-                          Must include columns ['unique_id', 'x_um_start', 'y_um_start', 'motion_class'].
-      - time_window: Number of frames per time window (default: config.TIME_WINDOW).
-    
-    Returns:
-      Updated metrics_df with a new 'motion_class' column.
+    - Handles split track IDs with '_s#' suffix by matching base IDs.
+    - Uses each track’s index list so windows never map into the wrong track.
+    - Resolves overlapping windows by majority vote.
+    - Marks any truly unassigned frames 'unlabeled', then forward/backward fills.
     """
+    # Work on a copy and reset index so it’s a clean RangeIndex
+    df = metrics_df.copy().reset_index(drop=True)
+    df['motion_class'] = np.nan
 
-
-    # Initialize the 'motion_class' column to empty strings.
-    metrics_df['motion_class'] = ''
-    
-    # Dictionary to hold lists of motion_class assignments for each frame index.
+    # Accumulate assignments per row
     frame_classes = {}
-    
-    # Debugging counters.
     total_windows = 0
     matched_windows = 0
-    # Keep track of rows which did not get assigned any value.
-    unmatched_rows = set(metrics_df.index)
-    
-    # Tolerance for matching the coordinates (as in the D mapping function).
-    tolerance = 1e-5
-    
-    # Loop over each unique_id in time_windowed_df.
-    for uid in tqdm(time_windowed_df['unique_id'].unique(), desc="Processing tracks"):
-        # First, try to see if the uid is present in metrics_df.
-        if uid in metrics_df['unique_id'].unique():
-            m_df = metrics_df[metrics_df['unique_id'] == uid]
-        else:
-            # If not, assume it may have an excision suffix and try the base unique_id.
-            base_uid = uid.split('_s')[0]
-            m_df = metrics_df[metrics_df['unique_id'] == base_uid]
-        
-        tw_df = time_windowed_df[time_windowed_df['unique_id'] == uid]
-        
-        if m_df.empty:
-            print(f"Warning: No matching data found in metrics_df for unique_id '{uid}' (or its base).")
+
+    # Which IDs actually exist in the instant data?
+    base_ids = set(df['unique_id'].unique())
+    tol = 1e-5
+
+    # 1) Assign each window
+    for uid in tqdm(time_windowed_df['unique_id'].unique(), desc="Processing motion windows"):
+        track_id = uid if uid in base_ids else uid.split('_s')[0]
+        tw = time_windowed_df[time_windowed_df['unique_id'] == uid]
+        inst = df[df['unique_id'] == track_id]
+        inst_idx = inst.index.to_list()
+        if not inst_idx:
             continue
-        
-        for _, tw_row in tw_df.iterrows():
+
+        for _, row in tw.iterrows():
             total_windows += 1
-            x_start, y_start = tw_row['x_um_start'], tw_row['y_um_start']
-            time_win_class = tw_row['motion_class']
-            
-            # Locate the starting frame in m_df using the coordinate tolerance.
-            start_idx_series = m_df[
-                (abs(m_df['x_um'] - x_start) < tolerance) &
-                (abs(m_df['y_um'] - y_start) < tolerance)
-            ].index
-            
-            if not start_idx_series.empty:
-                matched_windows += 1
-                start_idx = start_idx_series[0]
-                # Define the frame range for the time window.
-                frame_range = range(start_idx, start_idx + time_window)
-                for frame_idx in frame_range:
-                    if frame_idx < len(metrics_df):
-                        unmatched_rows.discard(frame_idx)
-                        frame_classes.setdefault(frame_idx, []).append(time_win_class)
-            else:
-                print(f"Warning: No matching start point found for uid '{uid}' at x={x_start}, y={y_start}.")
-    
-    # Resolve any overlapping assignments via majority rule.
-    for frame_idx, classes in frame_classes.items():
-        metrics_df.at[frame_idx, 'motion_class'] = max(set(classes), key=classes.count)
-    
-    # Assign 'unlabeled' to any rows that remain unmatched.
-    for idx in unmatched_rows:
-        metrics_df.at[idx, 'motion_class'] = 'unlabeled'
-    
-    print(f"Total time windows processed: {total_windows}")
-    print(f"Matched time windows: {matched_windows}")
-    print(f"Unmatched rows assigned 'unlabeled': {len(unmatched_rows)}")
-    
-    # For visualization, fill any remaining gaps (empty strings) by forward fill then backward fill.
-    # metrics_df['motion_class'] = metrics_df['motion_class'].replace('', np.nan)
-    metrics_df['motion_class'] = metrics_df['motion_class'].replace(['', 'unlabeled'], np.nan)
-    metrics_df['motion_class'] = metrics_df['motion_class'].ffill().bfill()
-    
-    return metrics_df
+            sx, sy = row['x_um_start'], row['y_um_start']
+            cls     = row['motion_class']
+
+            # find the exact start frame in this track
+            hits = inst[
+                (inst['x_um'].sub(sx).abs() < tol) &
+                (inst['y_um'].sub(sy).abs() < tol)
+            ].index.tolist()
+            if not hits:
+                continue
+
+            matched_windows += 1
+            start_idx = hits[0]
+            pos       = inst_idx.index(start_idx)
+            # only assign within this track’s slice
+            for ridx in inst_idx[pos : pos + time_window]:
+                frame_classes.setdefault(ridx, []).append(cls)
+
+    # 2) Resolve overlaps by majority vote
+    for ridx, clist in frame_classes.items():
+        vote = max(set(clist), key=clist.count)
+        df.at[ridx, 'motion_class'] = vote
+
+    # 3) Any rows still NaN get “unlabeled”
+    unlabeled = df['motion_class'].isna()
+    df.loc[unlabeled, 'motion_class'] = 'unlabeled'
+
+    # 4) For visualization ease, treat 'unlabeled' as missing, then ffill/bfill
+    df['motion_class'] = df['motion_class'].replace('unlabeled', np.nan)
+    df['motion_class'] = df['motion_class'].ffill().bfill()
+
+    print(f"Total windows:           {total_windows}")
+    print(f"Matched windows:         {matched_windows}")
+    print(f"Final 'unlabeled' frames: {df['motion_class'].isna().sum()} (should be 0)")
+
+    return df
 
 
 def extract_metadata(df, filename_col):
@@ -1567,192 +1640,331 @@ def extract_metadata(df, filename_col):
     
 #     return metrics_df, report
 
-def map_D_to_instant(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW, 
-                     overlap_method='average', tolerance=1e-5):
+# def map_D_to_instant(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW, 
+#                      overlap_method='average', tolerance=1e-5):
+#     """
+#     Map time-windowed diffusion coefficients back to the instantaneous tracking DataFrame.
+    
+#     For each unique track (using 'unique_id'), the function finds the frame in metrics_df
+#     corresponding to the starting point (x_um_start, y_um_start) provided in time_windowed_df.
+#     It then assigns the diffusion coefficient (from 'diffusion_coefficient') over a block of frames 
+#     defined by 'time_window'. If frames belong to overlapping time windows, the final diffusion coefficient 
+#     is computed according to the chosen 'overlap_method'.
+    
+#     This version handles cases where excision has been used to split a track (e.g. unique_id '1' becomes '1_s')
+#     by matching the base unique_id. After mapping, a new column 'D_fit_quality' is added:
+#       - Rows with an assigned D are flagged "good"
+#       - Rows with no assigned D (i.e. NaN) are flagged "bad"
+    
+#     Finally, instead of linear interpolation, any remaining NaN gaps in 'diffusion_coefficient'
+#     are filled by repeating the neighbor values as follows:
+#       - For each contiguous block of NaNs, determine the "previous" good value (just before the block)
+#         and the "next" good value (just after the block).
+#       - Split the gap (if more than one frame) at the midpoint: assign the first half of the gap
+#         the previous good value, and the second half the next good value.
+#       - For a gap of one frame, assign the previous good value if available; otherwise, assign the next.
+    
+#     Parameters:
+#       metrics_df (pd.DataFrame): Instantaneous tracking data. Must include ['unique_id', 'x_um', 'y_um'].
+#       time_windowed_df (pd.DataFrame): Time-windowed tracking data with columns 
+#                                        ['unique_id', 'x_um_start', 'y_um_start', 'diffusion_coefficient'].
+#       time_window (int): Number of frames that each time window covers (default is 60).
+#       overlap_method (str): Method to resolve overlapping diffusion coefficient assignments:
+#                             - 'average' (default): arithmetic mean of overlapping D values.
+#                             - 'first': use the first assigned D value.
+#                             - 'last': use the last assigned D value.
+#                             - 'min': use the minimum D value.
+#                             - 'max': use the maximum D value.
+#                             - 'median': use the median D value.
+#       tolerance (float): Tolerance for matching start coordinates (default is 1e-5).
+    
+#     Returns:
+#       tuple: (updated metrics_df, report)
+#              - metrics_df: The input DataFrame with new columns 'diffusion_coefficient' (with gaps filled)
+#                            and 'D_fit_quality' (indicating the original mapping quality).
+#              - report: A list of strings containing warnings and summary messages.
+#     """
+#     import numpy as np
+#     from tqdm import tqdm
+#     import pandas as pd
+
+#     report = []  # Will hold warnings and summary messages.
+    
+#     # Initialize diffusion_coefficient column as NaN.
+#     metrics_df['diffusion_coefficient'] = np.nan
+    
+#     # Dictionary to hold lists of D values for each frame index.
+#     frame_D = {}
+    
+#     # Debug counters.
+#     total_windows = 0
+#     matched_windows = 0
+#     unmatched_rows = set(metrics_df.index)
+    
+#     # Get the set of base unique_ids present in metrics_df.
+#     base_ids = set(metrics_df['unique_id'].unique())
+    
+#     # Loop over unique_ids in time_windowed_df.
+#     for uid in tqdm(time_windowed_df['unique_id'].unique(), desc="Processing tracks"):
+#         # If uid has an excision suffix (e.g. '1_s'), remove it and use the base unique_id.
+#         if uid not in base_ids:
+#             base_uid = uid.split('_s')[0]
+#             uid_to_use = base_uid if base_uid in base_ids else uid
+#         else:
+#             uid_to_use = uid
+        
+#         # Select corresponding data from time_windowed_df and metrics_df.
+#         tw_df = time_windowed_df[time_windowed_df['unique_id'] == uid]
+#         inst_df = metrics_df[metrics_df['unique_id'] == uid_to_use]
+        
+#         if inst_df.empty:
+#             report.append(f"Warning: No matching data in metrics_df for unique_id '{uid_to_use}' (from time_windowed_df uid '{uid}').")
+#             continue
+        
+#         for _, tw_row in tqdm(tw_df.iterrows(), total=tw_df.shape[0],
+#                                 desc=f"Processing windows for track {uid}", leave=False):
+#             total_windows += 1
+#             start_x = tw_row['x_um_start']
+#             start_y = tw_row['y_um_start']
+#             D_value = tw_row['diffusion_coefficient']
+            
+#             # Locate the starting frame in inst_df using x and y tolerances.
+#             start_idx_series = inst_df[
+#                 (abs(inst_df['x_um'] - start_x) < tolerance) &
+#                 (abs(inst_df['y_um'] - start_y) < tolerance)
+#             ].index
+            
+#             if not start_idx_series.empty:
+#                 matched_windows += 1
+#                 start_idx = start_idx_series[0]
+#                 # For frames from start_idx to start_idx+time_window, assign D_value.
+#                 for frame_idx in range(start_idx, start_idx + time_window):
+#                     if frame_idx < len(metrics_df):
+#                         unmatched_rows.discard(frame_idx)
+#                         frame_D.setdefault(frame_idx, []).append(D_value)
+#             else:
+#                 report.append(
+#                     f"Warning: No matching start point found for unique_id '{uid_to_use}' at x={start_x}, y={start_y}."
+#                 )
+    
+#     # For each frame index that has at least one D value assigned,
+#     # resolve the diffusion coefficient using the chosen overlap_method.
+#     for frame_idx, D_values in frame_D.items():
+#         if overlap_method == 'average':
+#             combined_D = sum(D_values) / len(D_values)
+#         elif overlap_method == 'first':
+#             combined_D = D_values[0]
+#         elif overlap_method == 'last':
+#             combined_D = D_values[-1]
+#         elif overlap_method == 'min':
+#             combined_D = min(D_values)
+#         elif overlap_method == 'max':
+#             combined_D = max(D_values)
+#         elif overlap_method == 'median':
+#             combined_D = np.median(D_values)
+#         else:
+#             report.append(f"Warning: Unknown overlap_method '{overlap_method}'. Defaulting to average.")
+#             combined_D = sum(D_values) / len(D_values)
+            
+#         metrics_df.at[frame_idx, 'diffusion_coefficient'] = combined_D
+    
+#     # Create the D_fit_quality flag: "good" if D is assigned, "bad" if NaN.
+#     metrics_df['D_fit_quality'] = np.where(metrics_df['diffusion_coefficient'].isna(), 'bad', 'good')
+    
+#     # --- Custom "repetition" fill for missing diffusion_coefficient values ---
+#     # Rather than interpolate linearly, we fill contiguous NaN blocks by repeating the last
+#     # good value for the first half of the gap and the next good value for the second half.
+#     D_series = metrics_df['diffusion_coefficient']
+#     nan_mask = D_series.isna()
+#     nan_indices = np.where(nan_mask)[0]
+    
+#     if len(nan_indices) > 0:
+#         groups = []
+#         group_start = nan_indices[0]
+#         prev_idx = nan_indices[0]
+#         for ix in nan_indices[1:]:
+#             if ix == prev_idx + 1:
+#                 prev_idx = ix
+#             else:
+#                 groups.append((group_start, prev_idx))
+#                 group_start = ix
+#                 prev_idx = ix
+#         groups.append((group_start, prev_idx))
+    
+#         for (start, end) in groups:
+#             gap_length = end - start + 1
+#             # Get previous good value (if exists).
+#             if start > 0:
+#                 prev_good = metrics_df.iloc[start - 1]['diffusion_coefficient']
+#             else:
+#                 prev_good = None
+#             # Get next good value (if exists).
+#             if end < len(metrics_df) - 1:
+#                 next_good = metrics_df.iloc[end + 1]['diffusion_coefficient']
+#             else:
+#                 next_good = None
+                
+#             # Decide on fill values.
+#             if gap_length == 1:
+#                 # For a single missing frame, use previous good if available; else next good.
+#                 fill_val = prev_good if prev_good is not None else next_good
+#                 metrics_df.iat[start, metrics_df.columns.get_loc('diffusion_coefficient')] = fill_val
+#             else:
+#                 half = gap_length // 2
+#                 # First half of gap.
+#                 if prev_good is not None:
+#                     metrics_df.loc[start:(start+half-1), 'diffusion_coefficient'] = prev_good
+#                 else:
+#                     # If no previous good, use next good.
+#                     metrics_df.loc[start:(start+half-1), 'diffusion_coefficient'] = next_good
+#                 # Second half of gap.
+#                 if next_good is not None:
+#                     metrics_df.loc[(start+half):end, 'diffusion_coefficient'] = next_good
+#                 else:
+#                     # If no next good, use previous good.
+#                     metrics_df.loc[(start+half):end, 'diffusion_coefficient'] = prev_good
+    
+#     report.append(f"Total time windows processed: {total_windows}")
+#     report.append(f"Matched time windows: {matched_windows}")
+#     report.append(f"Frames left unmatched before gap filling: {len(unmatched_rows)}")
+    
+#     return metrics_df, report
+
+
+def map_D_to_instant(metrics_df, time_windowed_df,
+                     time_window=config.TIME_WINDOW,
+                     overlap_method='average',
+                     tolerance=1e-5):
     """
     Map time-windowed diffusion coefficients back to the instantaneous tracking DataFrame.
-    
-    For each unique track (using 'unique_id'), the function finds the frame in metrics_df
-    corresponding to the starting point (x_um_start, y_um_start) provided in time_windowed_df.
-    It then assigns the diffusion coefficient (from 'diffusion_coefficient') over a block of frames 
-    defined by 'time_window'. If frames belong to overlapping time windows, the final diffusion coefficient 
-    is computed according to the chosen 'overlap_method'.
-    
-    This version handles cases where excision has been used to split a track (e.g. unique_id '1' becomes '1_s')
-    by matching the base unique_id. After mapping, a new column 'D_fit_quality' is added:
-      - Rows with an assigned D are flagged "good"
-      - Rows with no assigned D (i.e. NaN) are flagged "bad"
-    
-    Finally, instead of linear interpolation, any remaining NaN gaps in 'diffusion_coefficient'
-    are filled by repeating the neighbor values as follows:
-      - For each contiguous block of NaNs, determine the "previous" good value (just before the block)
-        and the "next" good value (just after the block).
-      - Split the gap (if more than one frame) at the midpoint: assign the first half of the gap
-        the previous good value, and the second half the next good value.
-      - For a gap of one frame, assign the previous good value if available; otherwise, assign the next.
-    
-    Parameters:
-      metrics_df (pd.DataFrame): Instantaneous tracking data. Must include ['unique_id', 'x_um', 'y_um'].
-      time_windowed_df (pd.DataFrame): Time-windowed tracking data with columns 
-                                       ['unique_id', 'x_um_start', 'y_um_start', 'diffusion_coefficient'].
-      time_window (int): Number of frames that each time window covers (default is 60).
-      overlap_method (str): Method to resolve overlapping diffusion coefficient assignments:
-                            - 'average' (default): arithmetic mean of overlapping D values.
-                            - 'first': use the first assigned D value.
-                            - 'last': use the last assigned D value.
-                            - 'min': use the minimum D value.
-                            - 'max': use the maximum D value.
-                            - 'median': use the median D value.
-      tolerance (float): Tolerance for matching start coordinates (default is 1e-5).
-    
-    Returns:
-      tuple: (updated metrics_df, report)
-             - metrics_df: The input DataFrame with new columns 'diffusion_coefficient' (with gaps filled)
-                           and 'D_fit_quality' (indicating the original mapping quality).
-             - report: A list of strings containing warnings and summary messages.
+    1) Reset index to ensure no NaN labels.
+    2) Assign each window’s D strictly within its track’s own indices.
+    3) Resolve overlaps by the chosen method.
+    4) Extend the first/last window’s D to the track ends.
+    5) Half‑gap fill any remaining NaNs.
     """
     import numpy as np
-    from tqdm import tqdm
     import pandas as pd
+    from tqdm import tqdm
 
-    report = []  # Will hold warnings and summary messages.
-    
-    # Initialize diffusion_coefficient column as NaN.
+    # 1) Reset the index so we have a clean RangeIndex
+    metrics_df = metrics_df.copy().reset_index(drop=True)
     metrics_df['diffusion_coefficient'] = np.nan
-    
-    # Dictionary to hold lists of D values for each frame index.
-    frame_D = {}
-    
-    # Debug counters.
+
+    frame_D = {}         # row → list of D values
     total_windows = 0
     matched_windows = 0
-    unmatched_rows = set(metrics_df.index)
-    
-    # Get the set of base unique_ids present in metrics_df.
+
+    # All track IDs present
     base_ids = set(metrics_df['unique_id'].unique())
-    
-    # Loop over unique_ids in time_windowed_df.
-    for uid in tqdm(time_windowed_df['unique_id'].unique(), desc="Processing tracks"):
-        # If uid has an excision suffix (e.g. '1_s'), remove it and use the base unique_id.
-        if uid not in base_ids:
-            base_uid = uid.split('_s')[0]
-            uid_to_use = base_uid if base_uid in base_ids else uid
-        else:
-            uid_to_use = uid
-        
-        # Select corresponding data from time_windowed_df and metrics_df.
-        tw_df = time_windowed_df[time_windowed_df['unique_id'] == uid]
-        inst_df = metrics_df[metrics_df['unique_id'] == uid_to_use]
-        
-        if inst_df.empty:
-            report.append(f"Warning: No matching data in metrics_df for unique_id '{uid_to_use}' (from time_windowed_df uid '{uid}').")
+
+    # 2) Assign
+    for uid in tqdm(time_windowed_df['unique_id'].unique(), desc="Mapping windows"):
+        tid = uid if uid in base_ids else uid.split('_s')[0]
+        tw = time_windowed_df[time_windowed_df['unique_id'] == uid]
+        inst = metrics_df[metrics_df['unique_id'] == tid]
+        inst_idx = inst.index.to_list()
+        if not inst_idx:
             continue
-        
-        for _, tw_row in tqdm(tw_df.iterrows(), total=tw_df.shape[0],
-                                desc=f"Processing windows for track {uid}", leave=False):
+
+        for _, w in tw.iterrows():
             total_windows += 1
-            start_x = tw_row['x_um_start']
-            start_y = tw_row['y_um_start']
-            D_value = tw_row['diffusion_coefficient']
-            
-            # Locate the starting frame in inst_df using x and y tolerances.
-            start_idx_series = inst_df[
-                (abs(inst_df['x_um'] - start_x) < tolerance) &
-                (abs(inst_df['y_um'] - start_y) < tolerance)
-            ].index
-            
-            if not start_idx_series.empty:
-                matched_windows += 1
-                start_idx = start_idx_series[0]
-                # For frames from start_idx to start_idx+time_window, assign D_value.
-                for frame_idx in range(start_idx, start_idx + time_window):
-                    if frame_idx < len(metrics_df):
-                        unmatched_rows.discard(frame_idx)
-                        frame_D.setdefault(frame_idx, []).append(D_value)
-            else:
-                report.append(
-                    f"Warning: No matching start point found for unique_id '{uid_to_use}' at x={start_x}, y={start_y}."
-                )
-    
-    # For each frame index that has at least one D value assigned,
-    # resolve the diffusion coefficient using the chosen overlap_method.
-    for frame_idx, D_values in frame_D.items():
-        if overlap_method == 'average':
-            combined_D = sum(D_values) / len(D_values)
-        elif overlap_method == 'first':
-            combined_D = D_values[0]
+            sx, sy = w['x_um_start'], w['y_um_start']
+            Dval    = w['diffusion_coefficient']
+
+            # locate the exact start row
+            hits = inst[
+                (inst['x_um'].sub(sx).abs() < tolerance) &
+                (inst['y_um'].sub(sy).abs() < tolerance)
+            ].index.tolist()
+            if not hits:
+                continue
+
+            matched_windows += 1
+            pos = inst_idx.index(hits[0])
+            for ridx in inst_idx[pos:pos + time_window]:
+                frame_D.setdefault(ridx, []).append(Dval)
+
+    # 3) Resolve overlaps
+    for ridx, Dlist in frame_D.items():
+        if overlap_method == 'first':
+            val = Dlist[0]
         elif overlap_method == 'last':
-            combined_D = D_values[-1]
+            val = Dlist[-1]
         elif overlap_method == 'min':
-            combined_D = min(D_values)
+            val = min(Dlist)
         elif overlap_method == 'max':
-            combined_D = max(D_values)
+            val = max(Dlist)
         elif overlap_method == 'median':
-            combined_D = np.median(D_values)
+            val = np.median(Dlist)
         else:
-            report.append(f"Warning: Unknown overlap_method '{overlap_method}'. Defaulting to average.")
-            combined_D = sum(D_values) / len(D_values)
-            
-        metrics_df.at[frame_idx, 'diffusion_coefficient'] = combined_D
-    
-    # Create the D_fit_quality flag: "good" if D is assigned, "bad" if NaN.
-    metrics_df['D_fit_quality'] = np.where(metrics_df['diffusion_coefficient'].isna(), 'bad', 'good')
-    
-    # --- Custom "repetition" fill for missing diffusion_coefficient values ---
-    # Rather than interpolate linearly, we fill contiguous NaN blocks by repeating the last
-    # good value for the first half of the gap and the next good value for the second half.
-    D_series = metrics_df['diffusion_coefficient']
-    nan_mask = D_series.isna()
-    nan_indices = np.where(nan_mask)[0]
-    
-    if len(nan_indices) > 0:
+            val = sum(Dlist) / len(Dlist)
+        metrics_df.at[ridx, 'diffusion_coefficient'] = val
+
+    # 4) Extend first/last window D to track ends
+    for tid in base_ids:
+        idxs = metrics_df.index[metrics_df['unique_id'] == tid].tolist()
+        sub  = metrics_df.loc[idxs, 'diffusion_coefficient']
+        non  = sub.dropna()
+        if non.empty:
+            continue
+        first_i, last_i = non.index.min(), non.index.max()
+        first_val = metrics_df.at[first_i, 'diffusion_coefficient']
+        last_val  = metrics_df.at[last_i, 'diffusion_coefficient']
+        for i in idxs:
+            if pd.isna(metrics_df.at[i, 'diffusion_coefficient']):
+                metrics_df.at[i, 'diffusion_coefficient'] = (
+                    first_val if i < first_i else last_val
+                )
+
+    # 5) Half‑gap fill any remaining NaNs
+    Dcol = metrics_df['diffusion_coefficient']
+    mask = Dcol.isna().to_numpy()
+    if mask.any():
+        nan_idx = np.where(mask)[0]
         groups = []
-        group_start = nan_indices[0]
-        prev_idx = nan_indices[0]
-        for ix in nan_indices[1:]:
-            if ix == prev_idx + 1:
-                prev_idx = ix
+        s = nan_idx[0]; p = s
+        for i in nan_idx[1:]:
+            if i == p + 1:
+                p = i
             else:
-                groups.append((group_start, prev_idx))
-                group_start = ix
-                prev_idx = ix
-        groups.append((group_start, prev_idx))
-    
+                groups.append((s, p)); s = i; p = i
+        groups.append((s, p))
+
         for (start, end) in groups:
-            gap_length = end - start + 1
-            # Get previous good value (if exists).
-            if start > 0:
-                prev_good = metrics_df.iloc[start - 1]['diffusion_coefficient']
+            length = end - start + 1
+            prev_val = metrics_df.iloc[start-1]['diffusion_coefficient'] if start>0 else None
+            next_val = metrics_df.iloc[end+1]['diffusion_coefficient'] if end<len(Dcol)-1 else None
+
+            if length == 1:
+                fill = prev_val if prev_val is not None else next_val
+                metrics_df.iat[start, metrics_df.columns.get_loc('diffusion_coefficient')] = fill
             else:
-                prev_good = None
-            # Get next good value (if exists).
-            if end < len(metrics_df) - 1:
-                next_good = metrics_df.iloc[end + 1]['diffusion_coefficient']
-            else:
-                next_good = None
-                
-            # Decide on fill values.
-            if gap_length == 1:
-                # For a single missing frame, use previous good if available; else next good.
-                fill_val = prev_good if prev_good is not None else next_good
-                metrics_df.iat[start, metrics_df.columns.get_loc('diffusion_coefficient')] = fill_val
-            else:
-                half = gap_length // 2
-                # First half of gap.
-                if prev_good is not None:
-                    metrics_df.loc[start:(start+half-1), 'diffusion_coefficient'] = prev_good
+                half = length // 2
+                # first half
+                if prev_val is not None:
+                    metrics_df.loc[start:start+half-1, 'diffusion_coefficient'] = prev_val
                 else:
-                    # If no previous good, use next good.
-                    metrics_df.loc[start:(start+half-1), 'diffusion_coefficient'] = next_good
-                # Second half of gap.
-                if next_good is not None:
-                    metrics_df.loc[(start+half):end, 'diffusion_coefficient'] = next_good
+                    metrics_df.loc[start:start+half-1, 'diffusion_coefficient'] = next_val
+                # second half
+                if next_val is not None:
+                    metrics_df.loc[start+half:end, 'diffusion_coefficient'] = next_val
                 else:
-                    # If no next good, use previous good.
-                    metrics_df.loc[(start+half):end, 'diffusion_coefficient'] = prev_good
-    
-    report.append(f"Total time windows processed: {total_windows}")
-    report.append(f"Matched time windows: {matched_windows}")
-    report.append(f"Frames left unmatched before gap filling: {len(unmatched_rows)}")
-    
+                    metrics_df.loc[start+half:end, 'diffusion_coefficient'] = prev_val
+
+    # quality flag & report
+    metrics_df['D_fit_quality'] = np.where(
+        metrics_df['diffusion_coefficient'].isna(), 'bad', 'good'
+    )
+    unmatched = int(metrics_df['diffusion_coefficient'].isna().sum())
+    report = [
+        f"Total windows:           {total_windows}",
+        f"Matched windows:         {matched_windows}",
+        f"Frames still unmatched:  {unmatched}",
+    ]
     return metrics_df, report
+
+
+
+
+
