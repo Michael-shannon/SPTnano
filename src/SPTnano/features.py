@@ -1558,6 +1558,10 @@ class ParticleMetrics:
             n_frames = len(track_data)
             track_removed = False
             current_unique_id = unique_id  # May change if a bad window is excised.
+
+            # ─── Initialize split counter ───
+            split_count = 0
+            current_unique_id = unique_id
             
             for start in range(0, n_frames - window_size + 1, window_size - overlap):
                 end = start + window_size
@@ -1591,9 +1595,12 @@ class ParticleMetrics:
                     track_removed = True
                     break
                 elif motion_class == 'excised_bad_fit':
-                    if current_unique_id == unique_id:
-                        current_unique_id = f"{unique_id}_s"
-                        print(f"Track {unique_id}: first bad window excised; subsequent windows will have unique_id '{current_unique_id}'.")
+                    split_count += 1
+                    current_unique_id = f"{unique_id}_s{split_count}"
+                    print(f"Track {unique_id}: bad window #{split_count} excised; subsequent windows will have unique_id '{current_unique_id}'.")
+                    # if current_unique_id == unique_id:
+                    #     current_unique_id = f"{unique_id}_s"
+                    #     print(f"Track {unique_id}: first bad window excised; subsequent windows will have unique_id '{current_unique_id}'.")
                     continue  # Skip this window.
                 
                 total_time_s = window_data['time_s'].iloc[-1] - window_data['time_s'].iloc[0]
