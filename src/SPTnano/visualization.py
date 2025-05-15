@@ -7,7 +7,7 @@ import seaborn as sns
 import numpy as np
 import re
 import pandas as pd
-import skimage.io as io
+import skimage.io as skio 
 import napari
 import numpy as np
 from scipy.stats import sem
@@ -43,7 +43,9 @@ from scipy.interpolate import splprep, splev, griddata
 import matplotlib.path as mpltPath
 import colorcet
 import xarray as xr  # for converting arrays to DataArray
-# import io
+# import minmaxscaler
+from sklearn.preprocessing import MinMaxScaler
+import io
 
 # Set up fonts and SVG text handling so that text remains editable in Illustrator.
 mpl.rcParams['svg.fonttype'] = 'none'
@@ -350,6 +352,285 @@ def plot_histograms(data_df, feature, bins=100, separate=None, xlimit=None, smal
 
 
 
+def annotate_threshold_simple(data_df, feature, threshold, separate=None, sigfigs=3):
+    """
+    Adds an 'above_threshold' flag and computes per-category (or overall) % above/below.
+    Returns (df_with_flag, percentages_dict).
+    """
+    df = data_df.copy()
+    df['above_threshold'] = df[feature] > threshold
+    if separate and separate in df.columns:
+        percentages = {}
+        for name, group in df.groupby(separate):
+            total = len(group)
+            above = int(group['above_threshold'].sum())
+            below = total - above
+            percentages[name] = {
+                'above': round(100 * above / total, sigfigs) if total else 0,
+                'below': round(100 * below / total, sigfigs) if total else 0
+            }
+    else:
+        total = len(df)
+        above = int(df['above_threshold'].sum())
+        below = total - above
+        percentages = {
+            'above': round(100 * above / total, sigfigs) if total else 0,
+            'below': round(100 * below / total, sigfigs) if total else 0
+        }
+    return df, percentages
+
+
+def plot_histograms_threshold(data_df, feature, bins=100, separate=None, xlimit=None, small_multiples=False, palette='colorblind',
+                    use_kde=False, kde_fill=True, show_plot=True, master_dir=None, tick_interval=5, average='mean', order=None, 
+                    grid=False, background='white', transparent=False, condition_colors=None, line_color='black', font_size=9, showavg=True,
+                    export_format='png', return_svg=False, x_range=None, y_range=None, percentage=True, 
+                    log_scale=False, log_base=10, alpha=1, log_axis_label='log', save_folder=None, figsize=(3,3),
+                    threshold=None):
+    """
+    Modified function to allow removing KDE fill, moving the legend,
+    and now adding correct % above/below threshold annotations.
+    """
+    # ——— NEW: compute threshold flags & percentages ———
+    if threshold is not None:
+        data_df, threshold_pct = annotate_threshold_simple(data_df, feature, threshold, separate)
+    else:
+        threshold_pct = None
+
+    # ——— existing master_dir default ———
+    if master_dir is None:
+        master_dir = "plots"
+    
+    # ——— existing font scaling ———
+    baseline_width = 3.0
+    scale_factor = figsize[0] / baseline_width
+    scaled_font = font_size * scale_factor
+    plt.rcParams.update({
+        'font.size': scaled_font,
+        'axes.titlesize': scaled_font,
+        'axes.labelsize': scaled_font,
+        'xtick.labelsize': scaled_font,
+        'ytick.labelsize': scaled_font,
+    })
+    
+    # ——— existing log‐scale handling ———
+    if log_scale:
+        new_feature = "log_" + feature
+        if (data_df[feature] <= 0).any():
+            raise ValueError(f"All values of {feature} must be positive for log scale.")
+        if log_base == 10:
+            data_df[new_feature] = np.log10(data_df[feature])
+        elif log_base == 2:
+            data_df[new_feature] = np.log2(data_df[feature])
+        else:
+            data_df[new_feature] = np.log(data_df[feature]) / np.log(log_base)
+        feature_to_plot = new_feature
+        x_label = f"log{log_base}({feature})" if log_axis_label != 'actual' else feature
+        # ——— NEW: threshold in log‐space ———
+        threshold_plot = (np.log(threshold) / np.log(log_base)) if threshold is not None else None
+    else:
+        feature_to_plot = feature
+        x_label = feature
+        threshold_plot = threshold
+
+    # ——— existing background colors ———
+    figure_background = 'none' if transparent else background if is_color_like(background) else 'white'
+    axis_background = figure_background
+
+    # ——— existing category setup ———
+    if separate is not None:
+        if not pd.api.types.is_categorical_dtype(data_df[separate]):
+            data_df[separate] = data_df[separate].astype('category')
+        if order is not None:
+            data_df[separate] = pd.Categorical(data_df[separate], categories=order, ordered=True)
+        unique_categories = data_df[separate].cat.categories
+    else:
+        unique_categories = [None]
+
+    # ——— existing color mapping ———
+    color_palette = sns.color_palette(palette, len(unique_categories))
+    if condition_colors is None:
+        condition_colors = {}
+    color_mapping = {}
+    for i, category in enumerate(unique_categories):
+        color_mapping[category] = condition_colors.get(category, color_palette[i % len(color_palette)])
+
+    # ——— existing x‐range ———
+    if x_range is not None:
+        global_lower_bound, global_upper_bound = x_range
+    else:
+        global_lower_bound = data_df[feature_to_plot].min()
+        global_upper_bound = xlimit if xlimit is not None else data_df[feature_to_plot].max()
+
+    # ——— existing figure/axes setup ———
+    if small_multiples and separate is not None:
+        fig, axes = plt.subplots(len(unique_categories), 1,
+                                 figsize=(figsize[0], figsize[1] * len(unique_categories)),
+                                 sharex=True, facecolor=figure_background)
+        if len(unique_categories) == 1:
+            axes = [axes]
+    else:
+        fig, ax = plt.subplots(figsize=figsize, facecolor=figure_background)
+        axes = [ax]
+
+    # ——— plot each category ———
+    for i, category in enumerate(unique_categories):
+        ax = axes[i] if (small_multiples and separate) else axes[0]
+        subset = data_df[data_df[separate] == category] if category else data_df
+        subsetvalues = subset[feature_to_plot]
+        subsetvalues = subsetvalues[(subsetvalues >= global_lower_bound) & (subsetvalues <= global_upper_bound)]
+        
+        ax.set_facecolor(axis_background)
+        bin_edges = np.linspace(global_lower_bound, global_upper_bound, bins + 1)
+
+        if use_kde:
+            sns.kdeplot(subsetvalues, fill=kde_fill, ax=ax,
+                        color=color_mapping[category],
+                        linewidth=1.5, label=category, alpha=alpha)
+        else:
+            counts, _ = np.histogram(subsetvalues, bins=bin_edges)
+            if percentage:
+                counts = 100 * counts / counts.sum() if counts.sum() > 0 else counts
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            ax.bar(bin_centers, counts, width=np.diff(bin_edges),
+                   color=color_mapping[category], alpha=alpha, label=category)
+        
+        avg_value = subsetvalues.mean() if average == 'mean' else subsetvalues.median()
+        if showavg:
+            ax.axvline(avg_value, color=line_color, linestyle='--')
+
+        # ——— NEW: small‐multiples threshold annotation ———
+        if threshold is not None and small_multiples:
+            ax.axvline(threshold_plot, color='gray', linestyle='--', linewidth=1.2)
+            y_max = ax.get_ylim()[1]
+            offset = 0.03 * (global_upper_bound - global_lower_bound)
+            pct = threshold_pct.get(category, threshold_pct) if isinstance(threshold_pct, dict) else threshold_pct
+            ax.text(threshold_plot - offset, y_max * 0.95,
+                    f"{pct['below']}% <", ha='right', va='top',
+                    fontsize=scaled_font, color=color_mapping[category])
+            ax.text(threshold_plot + offset, y_max * 0.95,
+                    f"{pct['above']}% >", ha='left', va='top',
+                    fontsize=scaled_font, color=color_mapping[category])
+        
+    # ——— existing axes labels & styling ———
+    ax.set_xlabel(x_label, fontsize=scaled_font, color=line_color)
+    ax.set_ylabel("Percentage" if percentage else "Count",
+                  fontsize=scaled_font, color=line_color)
+    ax.tick_params(axis='both', which='both',
+                   color=line_color, labelcolor=line_color, labelsize=scaled_font)
+
+    if grid:
+        ax.grid(True, linestyle='--', linewidth=0.5,
+                color=line_color if not transparent else (0,0,0,0.5),
+                alpha=0.7, axis='y')
+
+    for spine in ax.spines.values():
+        spine.set_edgecolor(line_color)
+        if transparent:
+            spine.set_alpha(0.9)
+
+    ax.set_xlim(global_lower_bound, global_upper_bound)
+    xticks = np.arange(global_lower_bound,
+                       global_upper_bound + tick_interval,
+                       tick_interval)
+    ax.set_xticks(xticks)
+    if y_range is not None:
+        ax.set_ylim(y_range)
+
+    if log_scale:
+        ax.set_xscale('linear')
+        if log_axis_label == 'actual':
+            formatter = FuncFormatter(lambda val, pos: f"{log_base ** val:.2g}")
+            ax.xaxis.set_major_formatter(formatter)
+
+    # ——— NEW: shared‐axis threshold annotation (once) ———
+    if threshold is not None and not (small_multiples and separate):
+        ax.axvline(threshold_plot, color='gray', linestyle='--', linewidth=1.2)
+        y_max = ax.get_ylim()[1]
+        offset = 0.03 * (global_upper_bound - global_lower_bound)
+        for j, cat in enumerate(unique_categories):
+            pct = threshold_pct.get(cat, threshold_pct) if isinstance(threshold_pct, dict) else threshold_pct
+            vert = y_max * (0.95 - j * 0.08)
+            ax.text(threshold_plot - offset, vert,
+                    f"{pct['below']}% <", ha='right', va='top',
+                    fontsize=scaled_font, color=color_mapping[cat])
+            ax.text(threshold_plot + offset, vert,
+                    f"{pct['above']}% >", ha='left', va='top',
+                    fontsize=scaled_font, color=color_mapping[cat])
+
+    # ——— existing legend placement ———
+    if small_multiples:
+        fig.legend(title=separate, fontsize=scaled_font,
+                   title_fontsize=scaled_font,
+                   loc='upper right', bbox_to_anchor=(1,1))
+    else:
+        legend = ax.legend(title=separate, fontsize=scaled_font,
+                           title_fontsize=scaled_font,
+                           loc='upper left', bbox_to_anchor=(1,1))
+        plt.gca().add_artist(legend)
+
+    # ——— existing saving logic (PNG/SVG + cleanup) ———
+    if save_folder is None:
+        save_folder = os.path.join(master_dir, 'plots', 'histograms')
+    os.makedirs(save_folder, exist_ok=True)
+
+    ext = export_format.lower()
+    if ext not in ['png', 'svg']:
+        print("Invalid export format specified. Defaulting to 'png'.")
+        ext = 'png'
+    out_filename = f"{feature}_histogram.{ext}"
+    full_save_path = os.path.join(save_folder, out_filename)
+
+    plt.savefig(full_save_path, bbox_inches='tight',
+                transparent=transparent, format=ext)
+
+    svg_data = None
+    if ext == 'svg':
+        with open(full_save_path, 'r', encoding='utf-8') as f:
+            svg_data = f.read()
+        # strip problematic clipPaths & metadata
+        svg_data = re.sub(r'<clipPath id="[^"]*">.*?</clipPath>',
+                          '', svg_data, flags=re.DOTALL)
+        svg_data = re.sub(r'\s*clip-path="url\([^)]*\)"', '',
+                          svg_data, flags=re.DOTALL)
+        svg_data = re.sub(r'<metadata>.*?</metadata>', '',
+                          svg_data, flags=re.DOTALL)
+        svg_data = re.sub(r'<\?xml[^>]*\?>', '',
+                          svg_data, flags=re.DOTALL)
+        svg_data = re.sub(r'<!DOCTYPE[^>]*>', '',
+                          svg_data, flags=re.DOTALL)
+        svg_data = svg_data.strip()
+        with open(full_save_path, 'w', encoding='utf-8') as f:
+            f.write(svg_data)
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+
+    if ext == 'svg' and return_svg:
+        return svg_data
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -599,7 +880,7 @@ def plot_multiple_particles(combined_df, particles_per_condition=2, plot_size=No
 
 
 def load_image(file_path):
-    return io.imread(file_path)
+    return skio.imread(file_path) #changed to skio to avoid shadowing
 
 def load_tracks(df, filename):
     tracks = df[df['filename'] == filename]
@@ -3474,7 +3755,7 @@ def read_csv_file(csv_path):
     return df
 
 def load_image(file_path):
-    return io.imread(file_path)
+    return skio.imread(file_path) # changed to skio to avoid conflict with imageio
 
 def load_tracks(df, filename):
     tracks = df[df['filename'] == filename]
@@ -4275,6 +4556,243 @@ def compute_cell_edge_angle_binning(points, centroid, edge_angle_bins=180, edge_
 DEFAULT_BOX_SIZE_PIXELS = 150
 # DEFAULT_MICRONS_PER_PIXEL = 0.065
 
+# def plot_contour_timelapse_datashader(
+#     df,
+#     time_col='time_s',
+#     value_col='diffusion_coefficient',
+#     time_bin=0.6,                 # Duration of each time window
+#     smooth_time_bins=0.3,         # Overlap between windows
+#     spatial_unit='microns',      # 'pixels' or 'microns'
+#     canvas_resolution=600,       # Resolution (in pixels) for Datashader Canvas
+#     output_format='gif',         # 'gif' or 'png'
+#     export_path=config.SAVED_DATA,
+#     cmap=colorcet.fire,          # Default colormap (from colorcet)
+#     box_size_pixels=DEFAULT_BOX_SIZE_PIXELS,
+#     microns_per_pixel=config.PIXELSIZE_MICRONS,
+#     gif_playback=None,           # Frame duration override (in seconds)
+#     time_between_frames=config.TIME_BETWEEN_FRAMES,    # Default frame duration if gif_playback is None
+#     overlay_contour_lines=False,  # Only used in the matplotlib branch
+#     show_colorbar=True,          # Only used with matplotlib's contouring branch
+#     contour_levels=200,          # Number of contour levels (for matplotlib branch)
+#     spatial_smoothing_sigma=1.0, # Gaussian sigma for spatial smoothing (0 disables)
+#     edge_angle_bins=180,         # For computing the cell edge
+#     edge_padding=0.05,           # Padding for cell edge computation
+#     edge_smoothing=0.1,          # Smoothing factor for cell edge computation
+#     remove_axes=False,           # If True, remove axes from the figure
+#     use_log_scale=False,         # If True, use logarithmic scaling
+#     use_datashader=True          # If True, use datashader native shading; otherwise, use Matplotlib contourf
+# ):
+#     """
+#     Generates a time-lapse map by aggregating data via Datashader and then rendering the
+#     result either using datashader’s native shading or Matplotlib’s contouring.
+    
+#     - When `use_datashader` is True:  
+#       The function converts the aggregated array into an xarray DataArray and calls  
+#       ds.tf.shade with:
+#           how='log'    if use_log_scale is True,
+#           how='linear' otherwise.
+    
+#     - When `use_datashader` is False:  
+#       The function renders the image with Matplotlib’s contourf. If use_log_scale is True,
+#       it uses LogNorm (after ensuring vmin is positive); otherwise, it uses a linear norm.
+    
+#     In both cases, a cell-edge contour (computed via helper function) is overlaid.
+#     """
+#     # Use the first unique filename from the dataframe.
+#     filename = df.filename.unique()[0]
+#     import colorcet
+    
+#     # Set coordinate columns.
+#     if spatial_unit == 'pixels':
+#         x_col, y_col = 'x', 'y'
+#         box_size = box_size_pixels
+#     elif spatial_unit == 'microns':
+#         x_col, y_col = 'x_um', 'y_um'
+#         box_size = box_size_pixels * microns_per_pixel
+#     else:
+#         raise ValueError("spatial_unit must be either 'pixels' or 'microns'")
+    
+#     # Define the fixed coordinate system.
+#     global_x_min, global_y_min = 0, 0
+#     global_x_max, global_y_max = box_size, box_size
+    
+#     # Create export folder if needed.
+#     if export_path is None:
+#         export_path = "./saved_data"
+#     if not os.path.isdir(export_path):
+#         os.makedirs(export_path)
+    
+#     # Determine global color scale.
+#     if use_log_scale:
+#         # For log scaling, vmin must be > 0.
+#         positive_vals = df[df[value_col] > 0][value_col]
+#         if positive_vals.empty:
+#             raise ValueError("No positive values found for log scale!")
+#         global_vmin = positive_vals.min()
+#     else:
+#         global_vmin = 0
+#     global_vmax = df[value_col].max()
+    
+#     # Only needed for the matplotlib contouring branch.
+#     if not use_datashader:
+#         norm = LogNorm(vmin=global_vmin, vmax=global_vmax) if use_log_scale else Normalize(vmin=global_vmin, vmax=global_vmax)
+#         fixed_ticks = np.linspace(global_vmin, global_vmax, 5)
+    
+#     # Convert cmap to a Matplotlib colormap if provided as a list.
+#     if isinstance(cmap, list):
+#         cmap = LinearSegmentedColormap.from_list('custom_cmap', cmap)
+    
+#     # Compute the cell edge from all data (assumes helper function defined elsewhere).
+#     all_points = df[[x_col, y_col]].dropna().values
+#     cell_edge_points = None
+#     if len(all_points) >= 3:
+#         centroid = np.mean(all_points, axis=0)
+#         cell_edge_points = compute_cell_edge_angle_binning(
+#             all_points,
+#             centroid,
+#             edge_angle_bins=edge_angle_bins,
+#             edge_padding=edge_padding,
+#             edge_smoothing=edge_smoothing
+#         )
+        
+#     def create_frame(window_df, title):
+#         """
+#         Creates one frame.
+#             - Aggregates the data with Datashader.
+#             - Optionally smoothes and masks the data using the cell edge.
+#             - Renders using either datashader’s native shading or Matplotlib’s contourf.
+#             - Overlays the cell-edge contour.
+#         """
+#         # Create Datashader Canvas.
+#         cvs = ds.Canvas(
+#             plot_width=canvas_resolution,
+#             plot_height=canvas_resolution,
+#             x_range=(global_x_min, global_x_max),
+#             y_range=(global_y_min, global_y_max)
+#         )
+#         agg = cvs.points(window_df, x=x_col, y=y_col, agg=mean(value_col))
+#         agg_array = agg.values
+#         agg_array = np.where(np.isnan(agg_array), global_vmin, agg_array)
+        
+#         if spatial_smoothing_sigma > 0:
+#             agg_array = gaussian_filter(agg_array, sigma=spatial_smoothing_sigma)
+        
+#         # Generate grid coordinates.
+#         x_lin = np.linspace(global_x_min, global_x_max, num=canvas_resolution)
+#         y_lin = np.linspace(global_y_min, global_y_max, num=canvas_resolution)
+#         X, Y = np.meshgrid(x_lin, y_lin)
+        
+#         # Apply cell edge mask.
+#         if cell_edge_points is not None:
+#             poly_path = mpltPath.Path(cell_edge_points)
+#             grid_points = np.vstack((X.ravel(), Y.ravel())).T
+#             mask = poly_path.contains_points(grid_points).reshape(X.shape)
+#             agg_array[~mask] = global_vmin
+        
+#         # Create the figure.
+#         fig, ax = plt.subplots(figsize=(6, 6))
+#         if use_datashader:
+#             # Convert aggregated array into an xarray DataArray.
+#             data = xr.DataArray(agg_array, dims=("y", "x"), coords={"y": y_lin, "x": x_lin})
+#             how_setting = 'log' if use_log_scale else 'linear'
+#             shaded = ds.tf.shade(data, cmap=cmap, how=how_setting)
+#             ax.imshow(shaded.to_pil(), extent=(global_x_min, global_x_max, global_y_min, global_y_max))
+#         else:
+#             # Matplotlib contourf branch.
+#             levels_global = np.linspace(global_vmin, global_vmax, contour_levels)
+#             cf = ax.contourf(X, Y, agg_array, levels=levels_global, cmap=cmap, norm=norm, alpha=0.8)
+#             if overlay_contour_lines:
+#                 ax.contour(X, Y, agg_array, levels=levels_global, colors='white', linewidths=0.1)
+#             if show_colorbar:
+#                 fig.subplots_adjust(right=0.85)
+#                 cbar_ax = fig.add_axes([0.88, 0.15, 0.03, 0.7])
+#                 fig.colorbar(cf, cax=cbar_ax, norm=norm, ticks=fixed_ticks, label=value_col)
+        
+#         ax.set_xlim(global_x_min, global_x_max)
+#         ax.set_ylim(global_y_min, global_y_max)
+#         ax.set_aspect('equal')
+#         ax.set_title(title)
+#         ax.set_xlabel(x_col)
+#         ax.set_ylabel(y_col)
+#         if remove_axes:
+#             ax.axis('off')
+        
+#         # Determine edge color: white if using datashader (for better contrast), else black.
+#         edge_color = 'white' if use_datashader else 'black'
+#         if cell_edge_points is not None:
+#             cell_edge_points_arr = np.array(cell_edge_points)
+#             ax.plot(cell_edge_points_arr[:, 0], cell_edge_points_arr[:, 1], color=edge_color, lw=0.5, linestyle=':', alpha = 0.95)
+#         return fig, ax
+
+#     # Single-frame case.
+#     if time_bin is None:
+#         title = "Contour Map: All Time"
+#         fig, ax = create_frame(df, title)
+#         if output_format.lower() == 'gif':
+#             buf = io.BytesIO()
+#             fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', transparent=True)
+#             buf.seek(0)
+#             img = imageio.v2.imread(buf)
+#             gif_file = os.path.join(export_path, f"{filename}.gif")
+#             duration = time_between_frames if gif_playback is None else gif_playback
+#             imageio.mimsave(gif_file, [img], duration=duration)
+#             plt.close(fig)
+#             print(f"Animated GIF saved to {gif_file}")
+#         else:
+#             folder_path = os.path.join(export_path, filename)
+#             if not os.path.exists(folder_path):
+#                 os.makedirs(folder_path)
+#             png_file = os.path.join(folder_path, f"{filename}_T000.png")
+#             fig.savefig(png_file, dpi=150, bbox_inches='tight', transparent=True)
+#             plt.close(fig)
+#             print(f"PNG saved to {png_file}")
+#         return
+
+#     # Multi-frame case.
+#     t_min = df[time_col].min()
+#     t_max = df[time_col].max()
+#     step = smooth_time_bins if smooth_time_bins is not None else time_bin
+
+#     if output_format.lower() == 'gif':
+#         frames = []
+#         n_frames = 0
+#         current_t = t_min
+#         while current_t <= t_max:
+#             t_end = current_t + time_bin
+#             window_df = df[(df[time_col] >= current_t) & (df[time_col] < t_end)]
+#             title = f"Time: {current_t:.2f}"
+#             fig, ax = create_frame(window_df, title)
+#             buf = io.BytesIO()
+#             fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', transparent=True)
+#             plt.close(fig)
+#             buf.seek(0)
+#             img = imageio.v2.imread(buf)
+#             frames.append(img)
+#             n_frames += 1
+#             current_t += step
+#         gif_file = os.path.join(export_path, f"{filename}.gif")
+#         duration = time_between_frames if gif_playback is None else gif_playback
+#         imageio.mimsave(gif_file, frames, duration=duration)
+#         print(f"Generated {n_frames} frames with frame duration = {duration} sec.")
+#         print(f"Animated GIF saved to {gif_file}")
+#     else:
+#         folder_path = os.path.join(export_path, filename)
+#         if not os.path.exists(folder_path):
+#             os.makedirs(folder_path)
+#         n_frames = 0
+#         current_t = t_min
+#         while current_t <= t_max:
+#             t_end = current_t + time_bin
+#             window_df = df[(df[time_col] >= current_t) & (df[time_col] < t_end)]
+#             title = f"Time: {current_t:.2f}"
+#             fig, ax = create_frame(window_df, title)
+#             png_file = os.path.join(folder_path, f"{filename}_T{n_frames:03d}.png")
+#             fig.savefig(png_file, dpi=150, bbox_inches='tight', transparent=True)
+#             plt.close(fig)
+#             n_frames += 1
+#             current_t += step
+#         print(f"Generated {n_frames} PNG files saved in folder {folder_path}")
+
 def plot_contour_timelapse_datashader(
     df,
     time_col='time_s',
@@ -4299,7 +4817,9 @@ def plot_contour_timelapse_datashader(
     edge_smoothing=0.1,          # Smoothing factor for cell edge computation
     remove_axes=False,           # If True, remove axes from the figure
     use_log_scale=False,         # If True, use logarithmic scaling
-    use_datashader=True          # If True, use datashader native shading; otherwise, use Matplotlib contourf
+    use_datashader=True,          # If True, use datashader native shading; otherwise, use Matplotlib contourf
+    vmin = None, # Minimum value for color scaling
+    vmax = None, # Maximum value for color scaling
 ):
     """
     Generates a time-lapse map by aggregating data via Datashader and then rendering the
@@ -4315,7 +4835,7 @@ def plot_contour_timelapse_datashader(
       The function renders the image with Matplotlib’s contourf. If use_log_scale is True,
       it uses LogNorm (after ensuring vmin is positive); otherwise, it uses a linear norm.
     
-    In both cases, a cell-edge contour (computed via your helper function) is overlaid.
+    In both cases, a cell-edge contour (computed via helper function) is overlaid.
     """
     # Use the first unique filename from the dataframe.
     filename = df.filename.unique()[0]
@@ -4342,15 +4862,33 @@ def plot_contour_timelapse_datashader(
         os.makedirs(export_path)
     
     # Determine global color scale.
-    if use_log_scale:
-        # For log scaling, vmin must be > 0.
-        positive_vals = df[df[value_col] > 0][value_col]
-        if positive_vals.empty:
-            raise ValueError("No positive values found for log scale!")
-        global_vmin = positive_vals.min()
+    # if use_log_scale:
+    #     # For log scaling, vmin must be > 0.
+    #     positive_vals = df[df[value_col] > 0][value_col]
+    #     if positive_vals.empty:
+    #         raise ValueError("No positive values found for log scale!")
+    #     global_vmin = positive_vals.min()
+    # else:
+    #     global_vmin = 0
+    # global_vmax = df[value_col].max()
+
+        # Determine global color scale (allow override via vmin/vmax).
+    if vmin is not None:
+        global_vmin = vmin
     else:
-        global_vmin = 0
-    global_vmax = df[value_col].max()
+        if use_log_scale:
+            # For log scaling, vmin must be > 0.
+            pos = df[df[value_col] > 0][value_col]
+            if pos.empty:
+                raise ValueError("No positive values found for log scale!")
+            global_vmin = pos.min()
+        else:
+            global_vmin = 0
+
+    if vmax is not None:
+        global_vmax = vmax
+    else:
+        global_vmax = df[value_col].max()
     
     # Only needed for the matplotlib contouring branch.
     if not use_datashader:
@@ -4414,7 +4952,13 @@ def plot_contour_timelapse_datashader(
             # Convert aggregated array into an xarray DataArray.
             data = xr.DataArray(agg_array, dims=("y", "x"), coords={"y": y_lin, "x": x_lin})
             how_setting = 'log' if use_log_scale else 'linear'
-            shaded = ds.tf.shade(data, cmap=cmap, how=how_setting)
+            # shaded = ds.tf.shade(data, cmap=cmap, how=how_setting)
+            shaded = ds.tf.shade(
+                data,
+                cmap=cmap,
+                how=how_setting,
+                span=(global_vmin, global_vmax)
+            )            
             ax.imshow(shaded.to_pil(), extent=(global_x_min, global_x_max, global_y_min, global_y_max))
         else:
             # Matplotlib contourf branch.
@@ -4511,6 +5055,9 @@ def plot_contour_timelapse_datashader(
             n_frames += 1
             current_t += step
         print(f"Generated {n_frames} PNG files saved in folder {folder_path}")
+
+
+
 
 
 ###################################
