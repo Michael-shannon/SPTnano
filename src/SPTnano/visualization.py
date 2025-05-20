@@ -37,15 +37,19 @@ from napari.utils.colormaps import ensure_colormap, Colormap
 import imageio
 import datashader as ds
 from datashader.reductions import mean
+import datashader.transfer_functions as tf
 from matplotlib.colors import Normalize, LogNorm, LinearSegmentedColormap
 from scipy.ndimage import gaussian_filter
 from scipy.interpolate import splprep, splev, griddata
 import matplotlib.path as mpltPath
+# from matplotlib import path as mpltPath
 import colorcet
 import xarray as xr  # for converting arrays to DataArray
 # import minmaxscaler
 from sklearn.preprocessing import MinMaxScaler
 import io
+
+
 
 # Set up fonts and SVG text handling so that text remains editable in Illustrator.
 mpl.rcParams['svg.fonttype'] = 'none'
@@ -5055,6 +5059,199 @@ def plot_contour_timelapse_datashader(
             n_frames += 1
             current_t += step
         print(f"Generated {n_frames} PNG files saved in folder {folder_path}")
+
+
+
+
+
+
+def plot_contour_panel_timelapse(
+    df,
+    time_col='time_s',
+    value_col='diffusion_coefficient',
+    time_bin=0.6,
+    smooth_time_bins=0.3,
+    spatial_unit='microns',
+    canvas_resolution=300,
+    export_path='./',
+    cmap='viridis',
+    box_size_pixels=100,
+    microns_per_pixel=0.1,
+    overlay_contour_lines=False,
+    show_colorbar=True,
+    contour_levels=50,
+    spatial_smoothing_sigma=1.0,
+    edge_angle_bins=180,
+    edge_padding=0.05,
+    edge_smoothing=0.1,
+    remove_axes=False,
+    use_log_scale=False,
+    use_datashader=True,
+    vmin=None,
+    vmax=None,
+    figsize_per_subplot=(3, 3),
+    downsample=1.0,
+    dpi=150,
+    output_format='png',
+    output_fname='panel'
+):
+    """
+    Creates a grid of subplots: rows = unique df.filename, columns = time windows.
+    Saves either PNG (with dpi) or SVG (vector) as specified.
+    """
+    # Prepare export folder
+    os.makedirs(export_path, exist_ok=True)
+
+    # Determine x,y columns and box size
+    if spatial_unit == 'pixels':
+        x_col, y_col = 'x', 'y'
+        box_size = box_size_pixels
+    elif spatial_unit == 'microns':
+        x_col, y_col = 'x_um', 'y_um'
+        box_size = box_size_pixels * microns_per_pixel
+    else:
+        raise ValueError("spatial_unit must be 'pixels' or 'microns'")
+
+    # Build time windows
+    t0, t1 = df[time_col].min(), df[time_col].max()
+    step = smooth_time_bins if smooth_time_bins is not None else time_bin
+    windows = []
+    t = t0
+    while t <= t1:
+        windows.append((t, t + time_bin, f"{t:.2f}–{t+time_bin:.2f}s"))
+        t += step
+
+    # List of cells
+    cells = sorted(df.filename.unique())
+    n_rows, n_cols = len(cells), len(windows)
+
+    # Compute global color range
+    if vmin is not None:
+        gmin = vmin
+    else:
+        gmin = df[df[value_col] > 0][value_col].min() if use_log_scale else 0
+    gmax = vmax if vmax is not None else df[value_col].max()
+
+    # Prepare norm & cmap
+    norm = LogNorm(vmin=gmin, vmax=gmax) if use_log_scale else Normalize(vmin=gmin, vmax=gmax)
+    if isinstance(cmap, list):
+        cmap = LinearSegmentedColormap.from_list('custom', cmap)
+
+    # Figure size with downsampling
+    fig_w = n_cols * figsize_per_subplot[0] * downsample
+    fig_h = n_rows * figsize_per_subplot[1] * downsample
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=(fig_w, fig_h),
+        squeeze=False
+    )
+
+    # Precompute cell edge for each
+    cell_edges = {}
+    for cell in cells:
+        pts = df[df.filename == cell][[x_col, y_col]].dropna().values
+        if len(pts) >= 3:
+            c0 = pts.mean(axis=0)
+            edge = compute_cell_edge_angle_binning(
+                pts, c0,
+                edge_angle_bins=edge_angle_bins,
+                edge_padding=edge_padding,
+                edge_smoothing=edge_smoothing
+            )
+            cell_edges[cell] = np.array(edge)
+        else:
+            cell_edges[cell] = None
+
+    # Fill in each subplot
+    for i, cell in enumerate(cells):
+        sub = df[df.filename == cell]
+        for j, (t_start, t_end, title) in enumerate(windows):
+            ax = axes[i][j]
+            win = sub[(sub[time_col] >= t_start) & (sub[time_col] < t_end)]
+
+            # Aggregate with Datashader
+            cvs = ds.Canvas(
+                plot_width=canvas_resolution,
+                plot_height=canvas_resolution,
+                x_range=(0, box_size),
+                y_range=(0, box_size)
+            )
+            agg = cvs.points(win, x=x_col, y=y_col, agg=ds.mean(value_col))
+            arr = np.nan_to_num(agg.values, nan=gmin)
+            if spatial_smoothing_sigma > 0:
+                arr = gaussian_filter(arr, sigma=spatial_smoothing_sigma)
+
+            # Mask outside cell
+            edge_pts = cell_edges[cell]
+            xs = np.linspace(0, box_size, canvas_resolution)
+            ys = np.linspace(0, box_size, canvas_resolution)
+            if edge_pts is not None:
+                X, Y = np.meshgrid(xs, ys)
+                mask = mpltPath.Path(edge_pts).contains_points(
+                    np.vstack((X.ravel(), Y.ravel())).T
+                ).reshape(X.shape)
+                arr[~mask] = gmin
+
+            # Render
+            if use_datashader:
+                da_xr = xr.DataArray(arr, dims=("y", "x"), coords={"y": ys, "x": xs})
+                how = 'log' if use_log_scale else 'linear'
+                img = tf.shade(da_xr, cmap=cmap, how=how, span=(gmin, gmax))
+                ax.imshow(img.to_pil(), extent=(0, box_size, 0, box_size))
+            else:
+                X, Y = np.meshgrid(xs, ys)
+                levels = np.linspace(gmin, gmax, contour_levels)
+                cf = ax.contourf(X, Y, arr, levels=levels, cmap=cmap, norm=norm)
+                if overlay_contour_lines:
+                    ax.contour(X, Y, arr, levels=levels, colors='white', linewidths=0.2)
+                if show_colorbar and (i == 0 and j == n_cols - 1):
+                    cax = fig.add_axes([0.92, 0.1, 0.02, 0.8])
+                    fig.colorbar(cf, cax=cax, norm=norm, label=value_col)
+
+            # Axes tweaks
+            ax.set_title(title, fontsize=8)
+            if remove_axes:
+                ax.axis('off')
+            else:
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+    plt.tight_layout(rect=(0, 0, 0.9, 1))
+
+    # Determine file extension & save
+    ext = output_format.lower()
+    out_file = os.path.join(export_path, f"{output_fname}.{ext}")
+    if ext == 'svg':
+        fig.savefig(out_file, format='svg', bbox_inches='tight')
+    else:
+        fig.savefig(out_file, dpi=dpi, format=ext, bbox_inches='tight')
+
+    plt.close(fig)
+    print(f"Panel figure saved to {out_file}")
+
+# # Quick dummy test (with random data)
+# if __name__ == "__main__":
+#     # Create a fake dataset with 2 cells, random coords & times
+#     np.random.seed(0)
+#     test_df = pd.DataFrame({
+#         'filename': np.repeat(['cellA', 'cellB'], 500),
+#         'x_um': np.random.rand(1000)*50,
+#         'y_um': np.random.rand(1000)*50,
+#         'time_s': np.random.rand(1000)*100,
+#         'diffusion_coefficient': np.random.rand(1000)*2
+#     })
+#     plot_contour_panel_timelapse(
+#         test_df,
+#         time_bin=20,
+#         smooth_time_bins=10,
+#         spatial_unit='microns',
+#         canvas_resolution=100,
+#         figsize_per_subplot=(2,2),
+#         downsample=0.5,
+#         output_format='svg',
+#         output_fname='test_panel',
+#         export_path='.'
+#     )
 
 
 
