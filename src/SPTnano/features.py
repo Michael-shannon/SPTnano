@@ -1523,6 +1523,630 @@ class ParticleMetrics:
         return avg_msd, D, alpha, motion_class
 
 
+    # def calculate_time_windowed_metrics(self, window_size=None, overlap=None, filter_metrics_df=False, **kwargs):
+    #     """
+    #     Calculate metrics for time windows across all tracks.
+        
+    #     Any additional keyword arguments are passed to calculate_msd_for_track,
+    #     including those controlling fit_method (e.g. "r2_threshold" vs "model_selection")
+    #     and the bad-fit handling options.
+        
+    #     For bad fits, three strategies are available via 'bad_fit_strategy':
+    #     - "remove_track": Remove all windows from the track.
+    #     - "excise_window": Excise (skip) the offending window. If an excision occurs,
+    #                         subsequent windows are given a new unique ID with the suffix '_s'.
+    #     - "flag": Keep the window but flag it (e.g. 'bad_fit_flagged_normal').
+        
+    #     Parameters:
+    #     - window_size: Number of frames per window.
+    #     - overlap: Number of overlapping frames.
+    #     - filter_metrics_df: If True, update self.metrics_df to only include frames in windows.
+    #     - **kwargs: Additional options to pass to calculate_msd_for_track.
+    #     """
+
+    #     if window_size is None:
+    #         window_size = self.calculate_default_window_size()
+    #     if overlap is None:
+    #         overlap = int(window_size / 2)
+        
+    #     print("Note: Partial windows (below the window size) are not included in the time-windowed metrics.")
+        
+    #     windowed_list = []
+    #     included_frames = set()
+        
+    #     for unique_id, track_data in tqdm(self.metrics_df.groupby('unique_id'), desc="Calculating Time-Windowed Metrics"):
+    #         n_frames = len(track_data)
+    #         track_removed = False
+    #         current_unique_id = unique_id  # May change if a bad window is excised.
+
+    #         # ─── Initialize split counter ───
+    #         split_count = 0
+    #         current_unique_id = unique_id
+            
+    #         for start in range(0, n_frames - window_size + 1, window_size - overlap):
+    #             end = start + window_size
+    #             window_data = track_data.iloc[start:end].copy()
+    #             included_frames.update(window_data['frame'].values)
+                
+    #             # Compute displacements.
+    #             start_row = window_data.iloc[0]
+    #             end_row = window_data.iloc[-1]
+    #             net_disp = np.sqrt((end_row['x_um'] - start_row['x_um'])**2 +
+    #                             (end_row['y_um'] - start_row['y_um'])**2)
+                
+    #             window_data['x_um_prev'] = window_data['x_um'].shift(1)
+    #             window_data['y_um_prev'] = window_data['y_um'].shift(1)
+    #             window_data['segment_len_um'] = np.sqrt(
+    #                 (window_data['x_um'] - window_data['x_um_prev'])**2 +
+    #                 (window_data['y_um'] - window_data['y_um_prev'])**2
+    #             ).fillna(0)
+    #             cum_disp = window_data['segment_len_um'].sum()
+                
+    #             # Call the MSD fitting function.
+    #             avg_msd, D, alpha, motion_class = self.calculate_msd_for_track(
+    #                 window_data,
+    #                 store_msd=True,
+    #                 time_window=start // (window_size - overlap),
+    #                 **kwargs
+    #             )
+                
+    #             if motion_class == 'bad_fit_removed_track':
+    #                 print(f"Removing entire track for unique_id {unique_id} due to a bad fit.")
+    #                 track_removed = True
+    #                 break
+    #             elif motion_class == 'excised_bad_fit':
+    #                 split_count += 1
+    #                 current_unique_id = f"{unique_id}_s{split_count}"
+    #                 print(f"Track {unique_id}: bad window #{split_count} excised; subsequent windows will have unique_id '{current_unique_id}'.")
+    #                 # if current_unique_id == unique_id:
+    #                 #     current_unique_id = f"{unique_id}_s"
+    #                 #     print(f"Track {unique_id}: first bad window excised; subsequent windows will have unique_id '{current_unique_id}'.")
+    #                 continue  # Skip this window.
+                
+    #             total_time_s = window_data['time_s'].iloc[-1] - window_data['time_s'].iloc[0]
+    #             avg_speed = window_data['speed_um_s'].mean()
+    #             avg_acceleration = window_data['acceleration_um_s2'].mean()
+    #             avg_jerk = window_data['jerk_um_s3'].mean()
+    #             avg_norm_curvature = window_data['normalized_curvature'].mean()
+    #             avg_angle_norm_curvature = window_data['angle_normalized_curvature'].mean()
+    #             persistence_length = self.calculate_persistence_length(window_data)
+
+    #             # --- New: Compute additional (window-specific) features --- April 2025
+    #             straightness = self.calculate_straightness_index(window_data)
+    #             rg = self.calculate_radius_of_gyration(window_data)
+    #             hull_area = self.calculate_convex_hull_area(window_data)
+    #             dir_entropy = self.calculate_directional_entropy(window_data)
+    #             speed_cv = self.calculate_speed_variability(window_data)
+    #             direction_autocorr = self.calculate_directional_autocorrelation(window_data)
+    #             eccentricity = self.calculate_trajectory_eccentricity(window_data)
+    #             tvar, tskew, tkurt = self.calculate_turning_angle_moments(window_data)
+    #             step_stats = self.calculate_steplength_distribution_stats(window_data)
+    #             if step_stats is not None:
+    #                 steplength_mean, steplength_std, steplength_skew, steplength_kurt = step_stats
+    #             else:
+    #                 steplength_mean, steplength_std, steplength_skew, steplength_kurt = (np.nan, np.nan, np.nan, np.nan)
+    #             diffusivity_cv = self.calculate_instantaneous_diffusivity_variability(window_data)
+    #             fractal_dim = self.calculate_fractal_dimension(window_data)
+    #             psd_slope_speed = self.calculate_psd_slope(window_data, signal='speed')
+    #             intersections = self.calculate_self_intersections(window_data)
+    #             pausing_fraction = self.calculate_pausing_metric(window_data, speed_threshold=0.1)
+                
+
+    #             # --- NEW: Compute von Mises kappa values for this window ---
+    #             kappa_turning, kappa_absolute = self.calculate_vonmises_kappa(window_data)
+                
+                
+    #             window_summary = pd.DataFrame({
+    #                 'time_window': [start // (window_size - overlap)],
+    #                 'x_um_start': [start_row['x_um']],
+    #                 'y_um_start': [start_row['y_um']],
+    #                 'x_um_end': [end_row['x_um']],
+    #                 'y_um_end': [end_row['y_um']],
+    #                 'particle': [start_row['particle']],
+    #                 'condition': [start_row['condition']],
+    #                 'filename': [start_row['filename']],
+    #                 'file_id': [start_row['file_id']],
+    #                 'unique_id': [current_unique_id],
+    #                 'avg_msd': [avg_msd],
+    #                 'n_frames': [window_size],
+    #                 'total_time_s': [total_time_s],
+    #                 'Location': [start_row['Location']],
+    #                 'diffusion_coefficient': [D],
+    #                 'anomalous_exponent': [alpha],
+    #                 'motion_class': [motion_class],
+    #                 'avg_speed_um_s': [avg_speed],
+    #                 'avg_acceleration_um_s2': [avg_acceleration],
+    #                 'avg_jerk_um_s3': [avg_jerk],
+    #                 'avg_normalized_curvature': [avg_norm_curvature],
+    #                 'avg_angle_normalized_curvature': [avg_angle_norm_curvature],
+    #                 'persistence_length': [persistence_length],
+    #                 'net_displacement_um': [net_disp],
+    #                 'cum_displacement_um': [cum_disp],
+    #                 # New metrics:
+    #                 'straightness_index': [straightness],
+    #                 'radius_of_gyration': [rg],
+    #                 'convex_hull_area': [hull_area],
+    #                 'directional_entropy': [dir_entropy],
+    #                 'speed_variability': [speed_cv],
+    #                 'direction_autocorrelation': [direction_autocorr],
+    #                 'kappa_turning': [kappa_turning],
+    #                 'kappa_absolute': [kappa_absolute],
+    #                 'eccentricity': [eccentricity],
+    #                 'turning_angle_variance': [tvar],
+    #                 'turning_angle_skew': [tskew],
+    #                 'turning_angle_kurtosis': [tkurt],
+    #                 'steplength_mean': [steplength_mean],
+    #                 'steplength_std': [steplength_std],
+    #                 'steplength_skew': [steplength_skew],
+    #                 'steplength_kurtosis': [steplength_kurt],
+    #                 'diffusivity_cv': [diffusivity_cv],
+    #                 'fractal_dimension': [fractal_dim],
+    #                 'psd_slope_speed': [psd_slope_speed],
+    #                 'self_intersections': [intersections],
+    #                 'pausing_fraction': [pausing_fraction],
+    #                 'bad_fit_flag': [motion_class.startswith("bad_fit_flagged")]
+    #             })
+                
+    #             # # Append the kappa values to the window summary DataFrame
+    #             # window_summary['kappa_turning'] = kappa_turning
+    #             # window_summary['kappa_absolute'] = kappa_absolute
+
+    #             windowed_list.append(window_summary)
+            
+    #         if track_removed:
+    #             print(f"Skipping unique_id {unique_id} entirely due to a bad fit in one or more windows.")
+    #             continue
+        
+    #     self.time_windowed_df = pd.concat(windowed_list).reset_index(drop=True)
+        
+    #     if filter_metrics_df:
+    #         print("Filtering metrics_df to only include frames within time windows...")
+    #         print(f"Initial number of frames: {len(self.metrics_df)}")
+    #         self.metrics_df = self.metrics_df[self.metrics_df['frame'].isin(included_frames)].copy()
+    #         print(f"Remaining frames after filtering: {len(self.metrics_df)}")
+
+    # def calculate_time_windowed_metrics(self, window_size=None, overlap=None, filter_metrics_df=False, **kwargs):
+    #     """
+    #     Calculate metrics for time windows across all tracks.
+        
+    #     Any additional keyword arguments are passed to calculate_msd_for_track,
+    #     including those controlling fit_method (e.g. "r2_threshold" vs "model_selection")
+    #     and the bad-fit handling options.
+        
+    #     For bad fits, three strategies are available via 'bad_fit_strategy':
+    #     - "remove_track": Remove all windows from the track.
+    #     - "excise_window": SUGGEST USE THIS. A new set of unique ids called e_uid are made. Bad fits
+    #     are subsequent windows are given a new unique ID with the suffix '_s'.
+    #     - "flag": Keep the window but flag it (e.g. 'bad_fit_flagged_normal').
+        
+    #     Parameters:
+    #     - window_size: Number of frames per window.
+    #     - overlap: Number of overlapping frames.
+    #     - filter_metrics_df: If True, update self.metrics_df to only include frames in windows.
+    #     - **kwargs: Additional options to pass to calculate_msd_for_track.
+    #     """
+
+    #     if window_size is None:
+    #         window_size = self.calculate_default_window_size()
+    #     if overlap is None:
+    #         overlap = int(window_size / 2)
+        
+    #     print("Note: Partial windows (below the window size) are not included in the time-windowed metrics.")
+        
+    #     windowed_list = []
+    #     included_frames = set()
+        
+    #     for unique_id, track_data in tqdm(self.metrics_df.groupby('unique_id'), desc="Calculating Time-Windowed Metrics"):
+    #         n_frames = len(track_data)
+    #         track_removed = False
+    #         current_unique_id = unique_id  # May change if a bad window is excised.
+
+    #         # ─── Initialize split counter ───
+    #         split_count = 0
+    #         # current_unique_id = unique_id
+    #         seg_count = 1
+            
+    #         for start in range(0, n_frames - window_size + 1, window_size - overlap):
+    #             end = start + window_size
+    #             window_data = track_data.iloc[start:end].copy()
+    #             included_frames.update(window_data['frame'].values)
+                
+    #             # Compute displacements.
+    #             start_row = window_data.iloc[0]
+    #             end_row = window_data.iloc[-1]
+    #             net_disp = np.sqrt((end_row['x_um'] - start_row['x_um'])**2 +
+    #                             (end_row['y_um'] - start_row['y_um'])**2)
+                
+    #             window_data['x_um_prev'] = window_data['x_um'].shift(1)
+    #             window_data['y_um_prev'] = window_data['y_um'].shift(1)
+    #             window_data['segment_len_um'] = np.sqrt(
+    #                 (window_data['x_um'] - window_data['x_um_prev'])**2 +
+    #                 (window_data['y_um'] - window_data['y_um_prev'])**2
+    #             ).fillna(0)
+    #             cum_disp = window_data['segment_len_um'].sum()
+                
+    #             # Call the MSD fitting function.
+    #             avg_msd, D, alpha, motion_class = self.calculate_msd_for_track(
+    #                 window_data,
+    #                 store_msd=True,
+    #                 time_window=start // (window_size - overlap),
+    #                 **kwargs
+    #             )
+                
+    #             if motion_class == 'bad_fit_removed_track':
+    #                 print(f"Removing entire track for unique_id {unique_id} due to a bad fit.")
+    #                 track_removed = True
+    #                 break
+    #             # elif motion_class == 'excised_bad_fit':
+    #             #     split_count += 1
+    #             #     current_unique_id = f"{unique_id}_s{split_count}"
+    #             #     print(f"Track {unique_id}: bad window #{split_count} excised; subsequent windows will have unique_id '{current_unique_id}'.")
+    #             #     # if current_unique_id == unique_id:
+    #             #     #     current_unique_id = f"{unique_id}_s"
+    #             #     #     print(f"Track {unique_id}: first bad window excised; subsequent windows will have unique_id '{current_unique_id}'.")
+    #             #     continue  # Skip this window.
+    #             if motion_class == 'excised_bad_fit':
+    #                 # this window gets “_excised”
+    #                 e_uid = f"{unique_id}_excised"
+    #             else:
+    #                 # each good (or flagged) window is numbered
+    #                 e_uid = f"{unique_id}_s{seg_count}"
+    #                 seg_count += 1
+                
+    #             total_time_s = window_data['time_s'].iloc[-1] - window_data['time_s'].iloc[0]
+    #             avg_speed = window_data['speed_um_s'].mean()
+    #             avg_acceleration = window_data['acceleration_um_s2'].mean()
+    #             avg_jerk = window_data['jerk_um_s3'].mean()
+    #             avg_norm_curvature = window_data['normalized_curvature'].mean()
+    #             avg_angle_norm_curvature = window_data['angle_normalized_curvature'].mean()
+    #             persistence_length = self.calculate_persistence_length(window_data)
+
+    #             # --- New: Compute additional (window-specific) features --- April 2025
+    #             straightness = self.calculate_straightness_index(window_data)
+    #             rg = self.calculate_radius_of_gyration(window_data)
+    #             hull_area = self.calculate_convex_hull_area(window_data)
+    #             dir_entropy = self.calculate_directional_entropy(window_data)
+    #             speed_cv = self.calculate_speed_variability(window_data)
+    #             direction_autocorr = self.calculate_directional_autocorrelation(window_data)
+    #             eccentricity = self.calculate_trajectory_eccentricity(window_data)
+    #             tvar, tskew, tkurt = self.calculate_turning_angle_moments(window_data)
+    #             step_stats = self.calculate_steplength_distribution_stats(window_data)
+    #             if step_stats is not None:
+    #                 steplength_mean, steplength_std, steplength_skew, steplength_kurt = step_stats
+    #             else:
+    #                 steplength_mean, steplength_std, steplength_skew, steplength_kurt = (np.nan, np.nan, np.nan, np.nan)
+    #             diffusivity_cv = self.calculate_instantaneous_diffusivity_variability(window_data)
+    #             fractal_dim = self.calculate_fractal_dimension(window_data)
+    #             psd_slope_speed = self.calculate_psd_slope(window_data, signal='speed')
+    #             intersections = self.calculate_self_intersections(window_data)
+    #             pausing_fraction = self.calculate_pausing_metric(window_data, speed_threshold=0.1)
+                
+
+    #             # --- NEW: Compute von Mises kappa values for this window ---
+    #             kappa_turning, kappa_absolute = self.calculate_vonmises_kappa(window_data)
+                
+                
+    #             window_summary = pd.DataFrame({
+    #                 'time_window': [start // (window_size - overlap)],
+    #                 'x_um_start': [start_row['x_um']],
+    #                 'y_um_start': [start_row['y_um']],
+    #                 'x_um_end': [end_row['x_um']],
+    #                 'y_um_end': [end_row['y_um']],
+    #                 'particle': [start_row['particle']],
+    #                 'condition': [start_row['condition']],
+    #                 'filename': [start_row['filename']],
+    #                 'file_id': [start_row['file_id']],
+    #                 # 'unique_id': [current_unique_id],
+    #                 'unique_id': [unique_id],
+    #                 'e_uid': [e_uid],
+    #                 'avg_msd': [avg_msd],
+    #                 'n_frames': [window_size],
+    #                 'total_time_s': [total_time_s],
+    #                 'Location': [start_row['Location']],
+    #                 'diffusion_coefficient': [D],
+    #                 'anomalous_exponent': [alpha],
+    #                 'motion_class': [motion_class],
+    #                 'avg_speed_um_s': [avg_speed],
+    #                 'avg_acceleration_um_s2': [avg_acceleration],
+    #                 'avg_jerk_um_s3': [avg_jerk],
+    #                 'avg_normalized_curvature': [avg_norm_curvature],
+    #                 'avg_angle_normalized_curvature': [avg_angle_norm_curvature],
+    #                 'persistence_length': [persistence_length],
+    #                 'net_displacement_um': [net_disp],
+    #                 'cum_displacement_um': [cum_disp],
+    #                 # New metrics:
+    #                 'straightness_index': [straightness],
+    #                 'radius_of_gyration': [rg],
+    #                 'convex_hull_area': [hull_area],
+    #                 'directional_entropy': [dir_entropy],
+    #                 'speed_variability': [speed_cv],
+    #                 'direction_autocorrelation': [direction_autocorr],
+    #                 'kappa_turning': [kappa_turning],
+    #                 'kappa_absolute': [kappa_absolute],
+    #                 'eccentricity': [eccentricity],
+    #                 'turning_angle_variance': [tvar],
+    #                 'turning_angle_skew': [tskew],
+    #                 'turning_angle_kurtosis': [tkurt],
+    #                 'steplength_mean': [steplength_mean],
+    #                 'steplength_std': [steplength_std],
+    #                 'steplength_skew': [steplength_skew],
+    #                 'steplength_kurtosis': [steplength_kurt],
+    #                 'diffusivity_cv': [diffusivity_cv],
+    #                 'fractal_dimension': [fractal_dim],
+    #                 'psd_slope_speed': [psd_slope_speed],
+    #                 'self_intersections': [intersections],
+    #                 'pausing_fraction': [pausing_fraction],
+    #                 'bad_fit_flag': [motion_class.startswith("bad_fit_flagged")]
+    #             })
+                
+    #             # # Append the kappa values to the window summary DataFrame
+    #             # window_summary['kappa_turning'] = kappa_turning
+    #             # window_summary['kappa_absolute'] = kappa_absolute
+
+    #             windowed_list.append(window_summary)
+            
+    #         if track_removed:
+    #             print(f"Skipping unique_id {unique_id} entirely due to a bad fit in one or more windows.")
+    #             continue
+        
+    #     self.time_windowed_df = pd.concat(windowed_list).reset_index(drop=True)
+        
+    #     if filter_metrics_df:
+    #         print("Filtering metrics_df to only include frames within time windows...")
+    #         print(f"Initial number of frames: {len(self.metrics_df)}")
+    #         self.metrics_df = self.metrics_df[self.metrics_df['frame'].isin(included_frames)].copy()
+    #         print(f"Remaining frames after filtering: {len(self.metrics_df)}")
+
+    ############### V4 above ################################
+
+
+    # def calculate_time_windowed_metrics(self, window_size=None, overlap=None, filter_metrics_df=False, **kwargs):
+    #     """
+    #     Calculate metrics for time windows across all tracks.
+        
+    #     Any additional keyword arguments are passed to calculate_msd_for_track,
+    #     including those controlling fit_method (e.g. "r2_threshold" vs "model_selection")
+    #     and the bad-fit handling options.
+        
+    #     For bad fits, three strategies are available via 'bad_fit_strategy':
+    #     - "remove_track": Remove all windows from the track.
+    #     - "excise_window": SUGGEST USE THIS. A new set of unique ids called e_uid are made. Bad fits
+    #     are subsequent windows are given a new unique ID with the suffix '_s'.
+    #     - "flag": Keep the window but flag it (e.g. 'bad_fit_flagged_normal').
+        
+    #     Parameters:
+    #     - window_size: Number of frames per window.
+    #     - overlap: Number of overlapping frames.
+    #     - filter_metrics_df: If True, update self.metrics_df to only include frames in windows.
+    #     - **kwargs: Additional options to pass to calculate_msd_for_track.
+    #     """
+
+        
+
+
+    #     if window_size is None:
+    #         window_size = self.calculate_default_window_size()
+    #     if overlap is None:
+    #         overlap = int(window_size / 2)
+
+    #      # ─── determine step and strategy ─── # NEW 
+    #     step = window_size - overlap
+    #     use_majority = (overlap > window_size/2)
+    #     if use_majority:
+    #         # we’ll collect *all* e_uid candidates per frame
+    #         self.metrics_df['E_UID_candidates'] = [[] for _ in range(len(self.metrics_df))]
+    #     else:
+    #         # simple overwrite
+    #         self.metrics_df['e_uid'] = None
+
+        
+    #     print("Note: Partial windows (below the window size) are not included in the time-windowed metrics.")
+    #     self.metrics_df['e_uid'] = None # NEW FOR MAPPING
+    #     windowed_list = []
+    #     included_frames = set()
+        
+    #     for unique_id, track_data in tqdm(self.metrics_df.groupby('unique_id'), desc="Calculating Time-Windowed Metrics"):
+    #         n_frames = len(track_data)
+    #         track_removed = False
+    #         current_unique_id = unique_id  # May change if a bad window is excised.
+
+    #         # ─── Initialize split counter ───
+    #         split_count = 0
+    #         # current_unique_id = unique_id
+    #         seg_count = 1
+    #         did_split=False # ADDED
+            
+    #         for start in range(0, n_frames - window_size + 1, window_size - overlap):
+    #             end = start + window_size
+    #             window_data = track_data.iloc[start:end].copy()
+    #             included_frames.update(window_data['frame'].values)
+                
+    #             # Compute displacements.
+    #             start_row = window_data.iloc[0]
+    #             end_row = window_data.iloc[-1]
+    #             net_disp = np.sqrt((end_row['x_um'] - start_row['x_um'])**2 +
+    #                             (end_row['y_um'] - start_row['y_um'])**2)
+                
+    #             window_data['x_um_prev'] = window_data['x_um'].shift(1)
+    #             window_data['y_um_prev'] = window_data['y_um'].shift(1)
+    #             window_data['segment_len_um'] = np.sqrt(
+    #                 (window_data['x_um'] - window_data['x_um_prev'])**2 +
+    #                 (window_data['y_um'] - window_data['y_um_prev'])**2
+    #             ).fillna(0)
+    #             cum_disp = window_data['segment_len_um'].sum()
+                
+    #             # Call the MSD fitting function.
+    #             avg_msd, D, alpha, motion_class = self.calculate_msd_for_track(
+    #                 window_data,
+    #                 store_msd=True,
+    #                 time_window=start // (window_size - overlap),
+    #                 **kwargs
+    #             )
+                
+    #             if motion_class == 'bad_fit_removed_track':
+    #                 print(f"Removing entire track for unique_id {unique_id} due to a bad fit.")
+    #                 track_removed = True
+    #                 break
+    #             # elif motion_class == 'excised_bad_fit':
+    #             #     split_count += 1
+    #             #     current_unique_id = f"{unique_id}_s{split_count}"
+    #             #     print(f"Track {unique_id}: bad window #{split_count} excised; subsequent windows will have unique_id '{current_unique_id}'.")
+    #             #     # if current_unique_id == unique_id:
+    #             #     #     current_unique_id = f"{unique_id}_s"
+    #             #     #     print(f"Track {unique_id}: first bad window excised; subsequent windows will have unique_id '{current_unique_id}'.")
+    #             #     continue  # Skip this window.
+    #             if motion_class == 'excised_bad_fit':
+    #                 # this window gets “_excised”
+    #                 e_uid = f"{unique_id}_excised"
+    #                 did_split = True
+    #             elif did_split:
+    #                 # this window is a continuation of a previous bad fit
+    #                 e_uid = f"{unique_id}_s{seg_count}"
+    #                 seg_count += 1
+    #             else:
+    #                 # each good (or flagged) window is numbered
+    #                 # e_uid = f"{unique_id}_s{seg_count}"
+    #                 # seg_count += 1
+    #                 e_uid = unique_id
+    #             # ─── assign per-frame, either by append or overwrite ───
+    #             if use_majority:
+    #                 # append to our per-frame candidate lists
+    #                 self.metrics_df.loc[window_data.index, 'E_UID_candidates'] = \
+    #                     self.metrics_df.loc[window_data.index, 'E_UID_candidates'].apply(lambda lst: lst + [e_uid])
+    #             else:
+    #                 # later window simply overwrites
+    #                 self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
+
+
+
+
+
+
+
+
+    #             # NEW: map that e_uid back onto every frame in this window
+    #             self.metrics_df.loc[window_data.index, 'E_UID'] = e_uid
+                
+    #             total_time_s = window_data['time_s'].iloc[-1] - window_data['time_s'].iloc[0]
+    #             avg_speed = window_data['speed_um_s'].mean()
+    #             avg_acceleration = window_data['acceleration_um_s2'].mean()
+    #             avg_jerk = window_data['jerk_um_s3'].mean()
+    #             avg_norm_curvature = window_data['normalized_curvature'].mean()
+    #             avg_angle_norm_curvature = window_data['angle_normalized_curvature'].mean()
+    #             persistence_length = self.calculate_persistence_length(window_data)
+
+    #             # --- New: Compute additional (window-specific) features --- April 2025
+    #             straightness = self.calculate_straightness_index(window_data)
+    #             rg = self.calculate_radius_of_gyration(window_data)
+    #             hull_area = self.calculate_convex_hull_area(window_data)
+    #             dir_entropy = self.calculate_directional_entropy(window_data)
+    #             speed_cv = self.calculate_speed_variability(window_data)
+    #             direction_autocorr = self.calculate_directional_autocorrelation(window_data)
+    #             eccentricity = self.calculate_trajectory_eccentricity(window_data)
+    #             tvar, tskew, tkurt = self.calculate_turning_angle_moments(window_data)
+    #             step_stats = self.calculate_steplength_distribution_stats(window_data)
+    #             if step_stats is not None:
+    #                 steplength_mean, steplength_std, steplength_skew, steplength_kurt = step_stats
+    #             else:
+    #                 steplength_mean, steplength_std, steplength_skew, steplength_kurt = (np.nan, np.nan, np.nan, np.nan)
+    #             diffusivity_cv = self.calculate_instantaneous_diffusivity_variability(window_data)
+    #             fractal_dim = self.calculate_fractal_dimension(window_data)
+    #             psd_slope_speed = self.calculate_psd_slope(window_data, signal='speed')
+    #             intersections = self.calculate_self_intersections(window_data)
+    #             pausing_fraction = self.calculate_pausing_metric(window_data, speed_threshold=0.1)
+                
+
+    #             # --- NEW: Compute von Mises kappa values for this window ---
+    #             kappa_turning, kappa_absolute = self.calculate_vonmises_kappa(window_data)
+                
+                
+    #             window_summary = pd.DataFrame({
+    #                 'time_window': [start // (window_size - overlap)],
+    #                 'x_um_start': [start_row['x_um']],
+    #                 'y_um_start': [start_row['y_um']],
+    #                 'x_um_end': [end_row['x_um']],
+    #                 'y_um_end': [end_row['y_um']],
+    #                 'particle': [start_row['particle']],
+    #                 'condition': [start_row['condition']],
+    #                 'filename': [start_row['filename']],
+    #                 'file_id': [start_row['file_id']],
+    #                 # 'unique_id': [current_unique_id],
+    #                 'unique_id': [unique_id],
+    #                 'frame_start': [start_row['frame']], # I added these to vectorize later mapping functions
+    #                 'frame_end':   [end_row  ['frame']],
+    #                 'e_uid': [e_uid],
+    #                 'avg_msd': [avg_msd],
+    #                 'n_frames': [window_size],
+    #                 'total_time_s': [total_time_s],
+    #                 'Location': [start_row['Location']],
+    #                 'diffusion_coefficient': [D],
+    #                 'anomalous_exponent': [alpha],
+    #                 'motion_class': [motion_class],
+    #                 'avg_speed_um_s': [avg_speed],
+    #                 'avg_acceleration_um_s2': [avg_acceleration],
+    #                 'avg_jerk_um_s3': [avg_jerk],
+    #                 'avg_normalized_curvature': [avg_norm_curvature],
+    #                 'avg_angle_normalized_curvature': [avg_angle_norm_curvature],
+    #                 'persistence_length': [persistence_length],
+    #                 'net_displacement_um': [net_disp],
+    #                 'cum_displacement_um': [cum_disp],
+    #                 # New metrics:
+    #                 'straightness_index': [straightness],
+    #                 'radius_of_gyration': [rg],
+    #                 'convex_hull_area': [hull_area],
+    #                 'directional_entropy': [dir_entropy],
+    #                 'speed_variability': [speed_cv],
+    #                 'direction_autocorrelation': [direction_autocorr],
+    #                 'kappa_turning': [kappa_turning],
+    #                 'kappa_absolute': [kappa_absolute],
+    #                 'eccentricity': [eccentricity],
+    #                 'turning_angle_variance': [tvar],
+    #                 'turning_angle_skew': [tskew],
+    #                 'turning_angle_kurtosis': [tkurt],
+    #                 'steplength_mean': [steplength_mean],
+    #                 'steplength_std': [steplength_std],
+    #                 'steplength_skew': [steplength_skew],
+    #                 'steplength_kurtosis': [steplength_kurt],
+    #                 'diffusivity_cv': [diffusivity_cv],
+    #                 'fractal_dimension': [fractal_dim],
+    #                 'psd_slope_speed': [psd_slope_speed],
+    #                 'self_intersections': [intersections],
+    #                 'pausing_fraction': [pausing_fraction],
+    #                 'bad_fit_flag': [motion_class.startswith("bad_fit_flagged")]
+    #             })
+                
+    #             # # Append the kappa values to the window summary DataFrame
+    #             # window_summary['kappa_turning'] = kappa_turning
+    #             # window_summary['kappa_absolute'] = kappa_absolute
+
+    #             windowed_list.append(window_summary)
+
+
+            
+    #         if track_removed:
+    #             print(f"Skipping unique_id {unique_id} entirely due to a bad fit in one or more windows.")
+    #             continue
+    #      # ─── after all windows, collapse majority if needed ───
+    #     if use_majority:
+    #         from collections import Counter
+    #         def pick_majority(cands):
+    #             if not cands: return None
+    #             return Counter(cands).most_common(1)[0][0]
+
+    #         self.metrics_df['E_UID'] = (
+    #             self.metrics_df['E_UID_candidates']
+    #                 .apply(pick_majority)
+    #         )
+    #         self.metrics_df.drop(columns=['E_UID_candidates'], inplace=True)
+        
+    #     self.time_windowed_df = pd.concat(windowed_list).reset_index(drop=True)
+        
+    #     if filter_metrics_df:
+    #         print("Filtering metrics_df to only include frames within time windows...")
+    #         print(f"Initial number of frames: {len(self.metrics_df)}")
+    #         self.metrics_df = self.metrics_df[self.metrics_df['frame'].isin(included_frames)].copy()
+    #         print(f"Remaining frames after filtering: {len(self.metrics_df)}")    
+
     def calculate_time_windowed_metrics(self, window_size=None, overlap=None, filter_metrics_df=False, **kwargs):
         """
         Calculate metrics for time windows across all tracks.
@@ -1533,8 +2157,8 @@ class ParticleMetrics:
         
         For bad fits, three strategies are available via 'bad_fit_strategy':
         - "remove_track": Remove all windows from the track.
-        - "excise_window": Excise (skip) the offending window. If an excision occurs,
-                            subsequent windows are given a new unique ID with the suffix '_s'.
+        - "excise_window": SUGGEST USE THIS. A new set of unique ids called e_uid are made. Bad fits
+        are subsequent windows are given a new unique ID with the suffix '_s'.
         - "flag": Keep the window but flag it (e.g. 'bad_fit_flagged_normal').
         
         Parameters:
@@ -1544,13 +2168,27 @@ class ParticleMetrics:
         - **kwargs: Additional options to pass to calculate_msd_for_track.
         """
 
+        
+
+
         if window_size is None:
             window_size = self.calculate_default_window_size()
         if overlap is None:
             overlap = int(window_size / 2)
+
+         # ─── determine step and strategy ─── # NEW 
+        step = window_size - overlap
+        use_majority = (overlap > window_size/2)
+        if use_majority:
+            # we’ll collect *all* e_uid candidates per frame
+            self.metrics_df['E_UID_candidates'] = [[] for _ in range(len(self.metrics_df))]
+        else:
+            # simple overwrite
+            self.metrics_df['e_uid'] = None
+
         
         print("Note: Partial windows (below the window size) are not included in the time-windowed metrics.")
-        
+        self.metrics_df['e_uid'] = None # NEW FOR MAPPING
         windowed_list = []
         included_frames = set()
         
@@ -1561,7 +2199,9 @@ class ParticleMetrics:
 
             # ─── Initialize split counter ───
             split_count = 0
-            current_unique_id = unique_id
+            # current_unique_id = unique_id
+            # seg_count = 1
+            did_split=False # ADDED
             
             for start in range(0, n_frames - window_size + 1, window_size - overlap):
                 end = start + window_size
@@ -1594,14 +2234,64 @@ class ParticleMetrics:
                     print(f"Removing entire track for unique_id {unique_id} due to a bad fit.")
                     track_removed = True
                     break
-                elif motion_class == 'excised_bad_fit':
+                # elif motion_class == 'excised_bad_fit':
+                #     split_count += 1
+                #     current_unique_id = f"{unique_id}_s{split_count}"
+                #     print(f"Track {unique_id}: bad window #{split_count} excised; subsequent windows will have unique_id '{current_unique_id}'.")
+                #     # if current_unique_id == unique_id:
+                #     #     current_unique_id = f"{unique_id}_s"
+                #     #     print(f"Track {unique_id}: first bad window excised; subsequent windows will have unique_id '{current_unique_id}'.")
+                #     continue  # Skip this window.
+
+
+
+
+                # if motion_class == 'excised_bad_fit':
+                #     # this window gets “_excised”
+                #     e_uid = f"{unique_id}_excised"
+                #     did_split = True
+                # elif did_split:
+                #     # this window is a continuation of a previous bad fit
+                #     e_uid = f"{unique_id}_s{seg_count}"
+                #     seg_count += 1
+                # else:
+                #     # each good (or flagged) window is numbered
+                #     # e_uid = f"{unique_id}_s{seg_count}"
+                #     # seg_count += 1
+                #     e_uid = unique_id
+                # NEW logic: only bump split_count (and thus _s suffix) on real excisions
+                if motion_class == 'excised_bad_fit':
+                    e_uid = f"{unique_id}_excised"
                     split_count += 1
-                    current_unique_id = f"{unique_id}_s{split_count}"
-                    print(f"Track {unique_id}: bad window #{split_count} excised; subsequent windows will have unique_id '{current_unique_id}'.")
-                    # if current_unique_id == unique_id:
-                    #     current_unique_id = f"{unique_id}_s"
-                    #     print(f"Track {unique_id}: first bad window excised; subsequent windows will have unique_id '{current_unique_id}'.")
-                    continue  # Skip this window.
+                else:
+                    # before any excision, split_count==0 → keep original ID
+                    # afterwards, split_count==1,2,… → use that as your segment index
+                    if split_count == 0:
+                        e_uid = unique_id
+                    else:
+                        e_uid = f"{unique_id}_s{split_count}"
+
+
+
+
+                # ─── assign per-frame, either by append or overwrite ───
+                if use_majority:
+                    # append to our per-frame candidate lists
+                    self.metrics_df.loc[window_data.index, 'E_UID_candidates'] = \
+                        self.metrics_df.loc[window_data.index, 'E_UID_candidates'].apply(lambda lst: lst + [e_uid])
+                else:
+                    # later window simply overwrites
+                    self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
+
+
+
+
+
+
+
+
+                # NEW: map that e_uid back onto every frame in this window
+                self.metrics_df.loc[window_data.index, 'E_UID'] = e_uid
                 
                 total_time_s = window_data['time_s'].iloc[-1] - window_data['time_s'].iloc[0]
                 avg_speed = window_data['speed_um_s'].mean()
@@ -1646,7 +2336,12 @@ class ParticleMetrics:
                     'condition': [start_row['condition']],
                     'filename': [start_row['filename']],
                     'file_id': [start_row['file_id']],
-                    'unique_id': [current_unique_id],
+                    # 'unique_id': [current_unique_id],
+                    'unique_id': [unique_id],
+                    'frame_start': [start_row['frame']], # I added these to vectorize later mapping functions
+                    'frame_end':   [end_row  ['frame']],
+                    'e_uid': [e_uid],
+                    'split_count': [split_count],  # NEW: track how many splits this window has
                     'avg_msd': [avg_msd],
                     'n_frames': [window_size],
                     'total_time_s': [total_time_s],
@@ -1692,10 +2387,24 @@ class ParticleMetrics:
                 # window_summary['kappa_absolute'] = kappa_absolute
 
                 windowed_list.append(window_summary)
+
+
             
             if track_removed:
                 print(f"Skipping unique_id {unique_id} entirely due to a bad fit in one or more windows.")
                 continue
+         # ─── after all windows, collapse majority if needed ───
+        if use_majority:
+            from collections import Counter
+            def pick_majority(cands):
+                if not cands: return None
+                return Counter(cands).most_common(1)[0][0]
+
+            self.metrics_df['e_uid'] = (
+                self.metrics_df['E_UID_candidates']
+                    .apply(pick_majority)
+            )
+            self.metrics_df.drop(columns=['E_UID_candidates'], inplace=True)
         
         self.time_windowed_df = pd.concat(windowed_list).reset_index(drop=True)
         
@@ -1703,12 +2412,7 @@ class ParticleMetrics:
             print("Filtering metrics_df to only include frames within time windows...")
             print(f"Initial number of frames: {len(self.metrics_df)}")
             self.metrics_df = self.metrics_df[self.metrics_df['frame'].isin(included_frames)].copy()
-            print(f"Remaining frames after filtering: {len(self.metrics_df)}")
-
-
-
-    ############### V4 above ################################
-
+            print(f"Remaining frames after filtering: {len(self.metrics_df)}")    
    
 
     def produce_time_averaged_df(self, max_lagtime=None):
