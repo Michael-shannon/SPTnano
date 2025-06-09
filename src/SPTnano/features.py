@@ -2181,7 +2181,7 @@ class ParticleMetrics:
         use_majority = (overlap > window_size/2)
         if use_majority:
             # we’ll collect *all* e_uid candidates per frame
-            self.metrics_df['E_UID_candidates'] = [[] for _ in range(len(self.metrics_df))]
+            self.metrics_df['e_uid_candidates'] = [[] for _ in range(len(self.metrics_df))]
         else:
             # simple overwrite
             self.metrics_df['e_uid'] = None
@@ -2277,8 +2277,8 @@ class ParticleMetrics:
                 # ─── assign per-frame, either by append or overwrite ───
                 if use_majority:
                     # append to our per-frame candidate lists
-                    self.metrics_df.loc[window_data.index, 'E_UID_candidates'] = \
-                        self.metrics_df.loc[window_data.index, 'E_UID_candidates'].apply(lambda lst: lst + [e_uid])
+                    self.metrics_df.loc[window_data.index, 'e_uid_candidates'] = \
+                        self.metrics_df.loc[window_data.index, 'e_uid_candidates'].apply(lambda lst: lst + [e_uid])
                 else:
                     # later window simply overwrites
                     self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
@@ -2401,10 +2401,10 @@ class ParticleMetrics:
                 return Counter(cands).most_common(1)[0][0]
 
             self.metrics_df['e_uid'] = (
-                self.metrics_df['E_UID_candidates']
+                self.metrics_df['e_uid_candidates']
                     .apply(pick_majority)
             )
-            self.metrics_df.drop(columns=['E_UID_candidates'], inplace=True)
+            self.metrics_df.drop(columns=['e_uid_candidates'], inplace=True)
         
         self.time_windowed_df = pd.concat(windowed_list).reset_index(drop=True)
         
