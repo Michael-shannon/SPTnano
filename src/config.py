@@ -1,24 +1,18 @@
 # config.py
 
 # Define global variables
-MASTER = 'D:/NEURONS_HTT_JULY_2024/100x_20ms_analyze/'
-# MASTER = 'D:/NEURONS_HTT_JULY_2024/60x_20_ms_analyze/'
-# D:\NEURONS_HTT_JULY_2024\60x_20_ms_analyze
+MASTER = 'D:/4_26_2025_Kinesininneurons_cort/'
 SAVED_DATA = MASTER + 'saved_data/'
 
 # Other configurations can be added here
-PIXELSIZE_MICRONS = 0.07
-TIME_BETWEEN_FRAMES = 0.02
+# PIXELSIZE_MICRONS = 0.065
+PIXELSIZE_MICRONS = 0.065
+TIME_BETWEEN_FRAMES = 0.01 #0.1
 
-# PIXELSIZE_MICRONS = 0.107
-# TIME_BETWEEN_FRAMES = 0.02
+TIME_WINDOW = 60#60 #60 #6
+OVERLAP = 30#30 #30 #3
 
-
-ORDEROFCONDITIONS = ['Condition_20H20S','Condition_77H20S','Condition_150H20S']
-######### For 60 x 10 ms #################
-# pixelsize_microns = 0.107
-# time_between_frames = 0.01
-
+ORDEROFCONDITIONS = ['Condition_RUES2_kinesin-10ms','Condition_HTTKO_kinesin-10ms','Condition_HTTCAG72_kinesin-10ms']
 
 # FEATURES
 
@@ -26,5 +20,10 @@ FEATURES = ['speed_um_s', 'direction_rad', 'acceleration_um_s2',
        'jerk_um_s3', 'normalized_curvature', 'angle_normalized_curvature',
        'instant_diff_coeff']
 
+FEATURES2 = ['speed_um_s', 'direction_rad', 'acceleration_um_s2',
+       'jerk_um_s3', 'normalized_curvature', 'angle_normalized_curvature',
+       'instant_diff_coeff', 'motion_class', 'diffusion_coefficient']
+
 
 print("Config module loaded. Master directory is:", MASTER)
+
