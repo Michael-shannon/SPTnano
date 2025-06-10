@@ -13,6 +13,8 @@ from tifffile import TiffWriter
 from nd2reader import ND2Reader
 import config
 import re
+from collections import Counter
+
 
 def generate_file_tree(startpath):
     tree = []
@@ -453,345 +455,7 @@ def create_cut_directory(master_folder_path):
                     tif_writer.write(frame, photometric='minisblack')
 
             print(f"Finished processing {tiff_file} in {condition}")
-
-
-
-
-# def clean_and_split_tracks(df, segment_length_threshold=0.3, remove_short_tracks=True, min_track_length=None):
-#     """
-#     Clean and split tracks based on segment length thresholds. Tracks with segments exceeding the threshold
-#     are split, erroneous segments are removed, and resulting subtracks are reassigned unique IDs.
-    
-#     Parameters:
-#     - df: pd.DataFrame, input dataframe containing particle tracking data with `x_um`, `y_um`, `unique_id`, and `time_s`.
-#     - segment_length_threshold: float, the maximum allowable segment length (in micrometers).
-#     - remove_short_tracks: bool, whether to remove tracks shorter than the minimum track length after splitting.
-#     - min_track_length: int, the minimum number of frames for a track to be considered valid after splitting.
-#                         Defaults to the size of the time window if not provided.
-    
-#     Returns:
-#     - cleaned_df: pd.DataFrame, the cleaned and split dataframe.
-#     - report: dict, a summary report detailing the modifications made to the dataset.
-#     """
-#     # Ensure `min_track_length` is specified
-#     if min_track_length is None:
-#         raise ValueError("Please specify `min_track_length` to remove short tracks.")
-
-#     original_track_count = df['unique_id'].nunique()
-#     original_row_count = len(df)
-
-#     # Calculate segment lengths
-#     df = df.sort_values(by=['unique_id', 'frame'])
-#     df[['x_um_prev', 'y_um_prev']] = df.groupby('unique_id')[['x_um', 'y_um']].shift(1)
-#     df['segment_len_um'] = np.sqrt(
-#         (df['x_um'] - df['x_um_prev'])**2 + 
-#         (df['y_um'] - df['y_um_prev'])**2
-#     )
-#     df['segment_len_um'] = df['segment_len_um'].fillna(0)
-
-#     # Initialize variables for splitting
-#     new_tracks = []
-#     new_unique_id = 0
-#     split_track_count = 0
-#     deleted_segments_count = 0
-
-#     # Process each track individually
-#     for unique_id, track_data in df.groupby('unique_id'):
-#         current_track = []
-#         previous_valid = None
-
-#         for i, row in track_data.iterrows():
-#             segment_length = row['segment_len_um']
-            
-#             if segment_length > segment_length_threshold:
-#                 # Count deleted rows
-#                 deleted_segments_count += 1
-
-#                 # Save current valid track if exists
-#                 if current_track:
-#                     split_track_count += 1
-#                     track_df = pd.DataFrame(current_track)
-#                     track_df['unique_id'] = new_unique_id
-#                     new_tracks.append(track_df)
-#                     new_unique_id += 1
-#                     current_track = []
-#                 previous_valid = False  # Mark the current segment as invalid
-#             else:
-#                 if previous_valid is False:
-#                     # Start a new track after invalid segments
-#                     split_track_count += 1
-#                     track_df = pd.DataFrame(current_track)
-#                     track_df['unique_id'] = new_unique_id
-#                     new_tracks.append(track_df)
-#                     new_unique_id += 1
-#                     current_track = []
-#                 current_track.append(row)
-#                 previous_valid = True
-
-#         # Save leftover valid track if exists
-#         if current_track:
-#             track_df = pd.DataFrame(current_track)
-#             track_df['unique_id'] = new_unique_id
-#             new_tracks.append(track_df)
-#             new_unique_id += 1
-
-#     # Combine all new tracks
-#     if new_tracks:
-#         cleaned_df = pd.concat(new_tracks).reset_index(drop=True)
-
-#         # Optionally remove short tracks
-#         if remove_short_tracks:
-#             cleaned_df['track_length'] = cleaned_df.groupby('unique_id')['unique_id'].transform('size')
-#             cleaned_df = cleaned_df[cleaned_df['track_length'] >= min_track_length]
-#             cleaned_df.drop(columns=['track_length'], inplace=True)
-#     else:
-#         cleaned_df = pd.DataFrame(columns=df.columns)  # Empty dataframe if no valid tracks remain
-
-#     # Generate report
-#     final_track_count = cleaned_df['unique_id'].nunique()
-#     final_row_count = len(cleaned_df)
-
-#     report = {
-#         'original_track_count': original_track_count,
-#         'final_track_count': final_track_count,
-#         'tracks_split': split_track_count,
-#         'deleted_segments': deleted_segments_count,
-#         'original_row_count': original_row_count,
-#         'final_row_count': final_row_count,
-#     }
-
-#     return cleaned_df, report
-
-
-# def clean_and_split_tracks(df, segment_length_threshold=0.3, remove_short_tracks=True, min_track_length=None):
-#     """
-#     Clean and split tracks based on segment length thresholds. Tracks with segments exceeding the threshold
-#     are split, erroneous segments are removed, and resulting subtracks are reassigned unique IDs.
-
-#     Parameters:
-#     - df: pd.DataFrame, input dataframe containing particle tracking data with `x_um`, `y_um`, `unique_id`, and `time_s`.
-#     - segment_length_threshold: float, the maximum allowable segment length (in micrometers).
-#     - remove_short_tracks: bool, whether to remove tracks shorter than the minimum track length after splitting.
-#     - min_track_length: int, the minimum number of frames for a track to be considered valid after splitting.
-#                         Defaults to the size of the time window if not provided.
-
-#     Returns:
-#     - cleaned_df: pd.DataFrame, the cleaned and split dataframe.
-#     - report: dict, a summary report detailing the modifications made to the dataset.
-#     """
-#     if min_track_length is None:
-#         raise ValueError("Please specify `min_track_length` to remove short tracks.")
-
-#     original_track_count = df['unique_id'].nunique()
-#     original_row_count = len(df)
-
-#     # Calculate segment lengths
-#     df = df.sort_values(by=['unique_id', 'frame'])
-#     df[['x_um_prev', 'y_um_prev']] = df.groupby('unique_id')[['x_um', 'y_um']].shift(1)
-#     df['segment_len_um'] = np.sqrt(
-#         (df['x_um'] - df['x_um_prev'])**2 + 
-#         (df['y_um'] - df['y_um_prev'])**2
-#     )
-#     df['segment_len_um'] = df['segment_len_um'].fillna(0)
-
-#     # Assign `file_id` for consistent unique_id generation
-#     df['file_id'] = pd.Categorical(df['filename']).codes
-
-#     # Initialize variables for splitting
-#     new_tracks = []
-#     split_track_count = 0
-#     deleted_segments_count = 0
-#     next_particle_id = 0  # Used to assign new particle IDs within the same file
-
-#     # Process each track individually
-#     for unique_id, track_data in df.groupby('unique_id'):
-#         current_track = []
-#         previous_valid = None
-
-#         for i, row in track_data.iterrows():
-#             segment_length = row['segment_len_um']
-
-#             if segment_length > segment_length_threshold:
-#                 # Count deleted rows
-#                 deleted_segments_count += 1
-
-#                 # Save the current valid track if it exists
-#                 if current_track:
-#                     split_track_count += 1
-#                     track_df = pd.DataFrame(current_track)
-#                     track_df['particle'] = next_particle_id
-#                     track_df['file_id'] = track_data['file_id'].iloc[0]  # Carry over `file_id`
-#                     track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
-#                     new_tracks.append(track_df)
-#                     next_particle_id += 1
-#                     current_track = []
-#                 previous_valid = False  # Mark the current segment as invalid
-#             else:
-#                 if previous_valid is False:
-#                     # Start a new track after invalid segments
-#                     split_track_count += 1
-#                     track_df = pd.DataFrame(current_track)
-#                     track_df['particle'] = next_particle_id
-#                     track_df['file_id'] = track_data['file_id'].iloc[0]  # Carry over `file_id`
-#                     track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str) + '.0'
-#                     new_tracks.append(track_df)
-#                     next_particle_id += 1
-#                     current_track = []
-#                 current_track.append(row)
-#                 previous_valid = True
-
-#         # Save any leftover valid track
-#         if current_track:
-#             track_df = pd.DataFrame(current_track)
-#             track_df['particle'] = next_particle_id
-#             track_df['file_id'] = track_data['file_id'].iloc[0]  # Carry over `file_id`
-#             track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str) + '.0'
-#             new_tracks.append(track_df)
-#             next_particle_id += 1
-
-#     # Combine all new tracks
-#     if new_tracks:
-#         cleaned_df = pd.concat(new_tracks).reset_index(drop=True)
-
-#         # Optionally remove short tracks
-#         if remove_short_tracks:
-#             cleaned_df['track_length'] = cleaned_df.groupby('unique_id')['unique_id'].transform('size')
-#             cleaned_df = cleaned_df[cleaned_df['track_length'] >= min_track_length]
-#             cleaned_df.drop(columns=['track_length'], inplace=True)
-#     else:
-#         cleaned_df = pd.DataFrame(columns=df.columns)  # Empty dataframe if no valid tracks remain
-
-#     # Generate report
-#     final_track_count = cleaned_df['unique_id'].nunique()
-#     final_row_count = len(cleaned_df)
-
-#     report = {
-#         'original_track_count': original_track_count,
-#         'final_track_count': final_track_count,
-#         'tracks_split': split_track_count,
-#         'deleted_segments': deleted_segments_count,
-#         'original_row_count': original_row_count,
-#         'final_row_count': final_row_count,
-#     }
-
-#     return cleaned_df, report
-
-
-
-# def clean_and_split_tracks(df, segment_length_threshold=0.3, remove_short_tracks=True, min_track_length=None):
-#     """
-#     Clean and split tracks based on segment length thresholds. Tracks with segments exceeding the threshold
-#     are split, erroneous segments are removed, and resulting subtracks are reassigned unique IDs.
-
-#     Parameters:
-#     - df: pd.DataFrame, input dataframe containing particle tracking data with `x_um`, `y_um`, `unique_id`, and `time_s`.
-#     - segment_length_threshold: float, the maximum allowable segment length (in micrometers).
-#     - remove_short_tracks: bool, whether to remove tracks shorter than the minimum track length after splitting.
-#     - min_track_length: int, the minimum number of frames for a track to be considered valid after splitting.
-
-#     Returns:
-#     - cleaned_df: pd.DataFrame, the cleaned and split dataframe.
-#     - removed_unique_ids: list, `unique_id`s that were removed due to short length or other reasons.
-#     - report: dict, a summary report detailing the modifications made to the dataset.
-#     """
-#     if min_track_length is None:
-#         raise ValueError("Please specify `min_track_length` to remove short tracks.")
-
-#     original_track_count = df['unique_id'].nunique()
-#     original_row_count = len(df)
-
-#     # Calculate segment lengths
-#     df = df.sort_values(by=['unique_id', 'frame'])
-#     df[['x_um_prev', 'y_um_prev']] = df.groupby('unique_id')[['x_um', 'y_um']].shift(1)
-#     df['segment_len_um'] = np.sqrt(
-#         (df['x_um'] - df['x_um_prev'])**2 + 
-#         (df['y_um'] - df['y_um_prev'])**2
-#     )
-#     df['segment_len_um'] = df['segment_len_um'].fillna(0)
-
-#     # Assign `file_id` for consistent unique_id generation
-#     df['file_id'] = pd.Categorical(df['filename']).codes
-
-#     # Initialize variables for splitting
-#     new_tracks = []
-#     split_track_count = 0
-#     deleted_segments_count = 0
-#     next_particle_id = 0
-#     removed_unique_ids = set()  # To track removed IDs
-
-#     # Process each track individually
-#     for unique_id, track_data in df.groupby('unique_id'):
-#         current_track = []
-#         previous_valid = None
-
-#         for i, row in track_data.iterrows():
-#             segment_length = row['segment_len_um']
-
-#             if segment_length > segment_length_threshold:
-#                 # Count deleted rows
-#                 deleted_segments_count += 1
-
-#                 # Save the current valid track if it exists
-#                 if current_track:
-#                     split_track_count += 1
-#                     track_df = pd.DataFrame(current_track)
-#                     track_df['particle'] = next_particle_id
-#                     track_df['file_id'] = track_data['file_id'].iloc[0]
-#                     track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
-#                     new_tracks.append(track_df)
-#                     next_particle_id += 1
-#                     current_track = []
-#                 previous_valid = False
-#             else:
-#                 if previous_valid is False:
-#                     split_track_count += 1
-#                     track_df = pd.DataFrame(current_track)
-#                     track_df['particle'] = next_particle_id
-#                     track_df['file_id'] = track_data['file_id'].iloc[0]
-#                     track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
-#                     new_tracks.append(track_df)
-#                     next_particle_id += 1
-#                     current_track = []
-#                 current_track.append(row)
-#                 previous_valid = True
-
-#         # Save any leftover valid track
-#         if current_track:
-#             track_df = pd.DataFrame(current_track)
-#             track_df['particle'] = next_particle_id
-#             track_df['file_id'] = track_data['file_id'].iloc[0]
-#             track_df['unique_id'] = track_df['file_id'].astype(str) + '_' + track_df['particle'].astype(str)
-#             new_tracks.append(track_df)
-#             next_particle_id += 1
-
-#     # Combine all new tracks
-#     if new_tracks:
-#         cleaned_df = pd.concat(new_tracks).reset_index(drop=True)
-
-#         # Optionally remove short tracks
-#         if remove_short_tracks:
-#             cleaned_df['track_length'] = cleaned_df.groupby('unique_id')['unique_id'].transform('size')
-#             removed_unique_ids = set(cleaned_df.loc[cleaned_df['track_length'] < min_track_length, 'unique_id'])
-#             cleaned_df = cleaned_df[cleaned_df['track_length'] >= min_track_length]
-#             cleaned_df.drop(columns=['track_length'], inplace=True)
-#     else:
-#         cleaned_df = pd.DataFrame(columns=df.columns)  # Empty dataframe if no valid tracks remain
-
-#     # Generate report
-#     final_track_count = cleaned_df['unique_id'].nunique()
-#     final_row_count = len(cleaned_df)
-
-#     report = {
-#         'original_track_count': original_track_count,
-#         'final_track_count': final_track_count,
-#         'tracks_split': split_track_count,
-#         'deleted_segments': deleted_segments_count,
-#         'original_row_count': original_row_count,
-#         'final_row_count': final_row_count,
-#     }
-
-#     return cleaned_df, removed_unique_ids, report
-
+import numpy as np
 
 def clean_and_split_tracks(
     df, 
@@ -1043,267 +707,6 @@ def pathfixer(
     return cleaned_df, removed_unique_ids, report
 
 
-# def add_motion_class(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW):
-#     """
-#     Add a 'motion_class' column to metrics_df based on time_windowed_df with debugging.
-    
-#     Parameters:
-#     - metrics_df: DataFrame containing the particle tracking data.
-#     - time_windowed_df: DataFrame containing the motion class for time windows.
-#     - time_window: Number of frames in a time window (default 6).
-    
-#     Returns:
-#     - Updated metrics_df with 'motion_class' column added.
-#     """
-#     # Initialize the motion_class column with empty values
-#     metrics_df['motion_class'] = ''
-
-#     # Temporary dictionary to store motion classes per frame
-#     frame_classes = {}
-
-#     # Debugging counters
-#     total_windows = 0
-#     matched_windows = 0
-#     unmatched_rows = set(metrics_df.index)  # Track unmatched rows
-
-#     # Tolerance for floating-point comparison
-#     tolerance = 1e-5
-
-#     # Iterate over each unique ID in the time_windowed_df
-#     for unique_id in time_windowed_df['unique_id'].unique():
-#         # Filter data for the current unique_id
-#         tw_df = time_windowed_df[time_windowed_df['unique_id'] == unique_id]
-#         m_df = metrics_df[metrics_df['unique_id'] == unique_id]  # Match particle ID
-
-#         if m_df.empty:
-#             print(f"Warning: No matching data found in metrics_df for unique_id '{unique_id}'")
-#             continue
-
-#         for _, tw_row in tw_df.iterrows():
-#             total_windows += 1
-#             x_start, y_start = tw_row['x_um_start'], tw_row['y_um_start']
-#             time_win_class = tw_row['motion_class']
-
-#             # Locate the start index in metrics_df (using tolerance for floating-point comparison)
-#             start_idx = m_df[
-#                 (abs(m_df['x_um'] - x_start) < tolerance) & 
-#                 (abs(m_df['y_um'] - y_start) < tolerance)
-#             ].index
-
-#             if not start_idx.empty:
-#                 matched_windows += 1
-#                 # Calculate frame range for the time window
-#                 start_idx = start_idx[0]
-#                 frame_range = range(start_idx, start_idx + time_window)
-
-#                 # Assign the motion_class for this time window
-#                 for frame_idx in frame_range:
-#                     if frame_idx < len(metrics_df):
-#                         if frame_idx in unmatched_rows:
-#                             unmatched_rows.remove(frame_idx)
-#                         if frame_idx not in frame_classes:
-#                             frame_classes[frame_idx] = []
-#                         frame_classes[frame_idx].append(time_win_class)
-#             else:
-#                 print(f"Warning: No matching start point found for x_start={x_start}, y_start={y_start} in unique_id '{unique_id}'")
-
-#     # Apply majority rule to resolve overlaps
-#     for frame_idx, classes in frame_classes.items():
-#         # Assign the most frequent motion_class for this frame
-#         metrics_df.at[frame_idx, 'motion_class'] = max(set(classes), key=classes.count)
-
-#     # Assign 'unlabeled' to unmatched rows
-#     for idx in unmatched_rows:
-#         metrics_df.at[idx, 'motion_class'] = 'unlabeled'
-
-#     # Debugging output
-#     print(f"Total time windows processed: {total_windows}")
-#     print(f"Matched time windows: {matched_windows}")
-#     print(f"Unmatched rows assigned 'unlabeled': {len(unmatched_rows)}")
-
-#     return metrics_df
-
-# def add_motion_class(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW):
-#     """
-#     Add a 'motion_class' column to metrics_df based on time_windowed_df with debugging.
-    
-#     Parameters:
-#     - metrics_df: DataFrame containing the particle tracking data.
-#     - time_windowed_df: DataFrame containing the motion class for time windows.
-#     - time_window: Number of frames in a time window (default 6).
-    
-#     Returns:
-#     - Updated metrics_df with 'motion_class' column added.
-#     """
-#     # Initialize the motion_class column with empty values
-#     metrics_df['motion_class'] = ''
-
-#     # Temporary dictionary to store motion classes per frame
-#     frame_classes = {}
-
-#     # Debugging counters
-#     total_windows = 0
-#     matched_windows = 0
-#     unmatched_rows = set(metrics_df.index)  # Track unmatched rows
-
-#     # Tolerance for floating-point comparison
-#     tolerance = 1e-5
-
-#     # Iterate over each unique ID in the time_windowed_df
-#     for unique_id in time_windowed_df['unique_id'].unique():
-#         # Filter data for the current unique_id
-#         tw_df = time_windowed_df[time_windowed_df['unique_id'] == unique_id]
-#         m_df = metrics_df[metrics_df['unique_id'] == unique_id]  # Match particle ID
-
-#         if m_df.empty:
-#             print(f"Warning: No matching data found in metrics_df for unique_id '{unique_id}'")
-#             continue
-
-#         for _, tw_row in tw_df.iterrows():
-#             total_windows += 1
-#             x_start, y_start = tw_row['x_um_start'], tw_row['y_um_start']
-#             time_win_class = tw_row['motion_class']
-
-#             # Locate the start index in metrics_df (using tolerance for floating-point comparison)
-#             start_idx = m_df[
-#                 (abs(m_df['x_um'] - x_start) < tolerance) & 
-#                 (abs(m_df['y_um'] - y_start) < tolerance)
-#             ].index
-
-#             if not start_idx.empty:
-#                 matched_windows += 1
-#                 # Calculate frame range for the time window
-#                 start_idx = start_idx[0]
-#                 frame_range = range(start_idx, start_idx + time_window)
-#                 # print(len(frame_range))
-
-#                 # Assign the motion_class for this time window
-#                 for frame_idx in frame_range:
-#                     if frame_idx < len(metrics_df):
-#                         if frame_idx in unmatched_rows:
-#                             unmatched_rows.remove(frame_idx)
-#                         if frame_idx not in frame_classes:
-#                             frame_classes[frame_idx] = []
-#                         frame_classes[frame_idx].append(time_win_class)
-#             else:
-#                 print(f"Warning: No matching start point found for x_start={x_start}, y_start={y_start} in unique_id '{unique_id}'")
-
-#     # Apply majority rule to resolve overlaps
-#     for frame_idx, classes in frame_classes.items():
-#         # Assign the most frequent motion_class for this frame
-#         metrics_df.at[frame_idx, 'motion_class'] = max(set(classes), key=classes.count)
-
-#     # Assign 'unlabeled' to unmatched rows
-#     for idx in unmatched_rows:
-#         metrics_df.at[idx, 'motion_class'] = 'unlabeled'
-
-#     # Debugging output
-#     print(f"Total time windows processed: {total_windows}")
-#     print(f"Matched time windows: {matched_windows}")
-#     print(f"Unmatched rows assigned 'unlabeled': {len(unmatched_rows)}")
-
-#     return metrics_df
-# ########################### backup version #############################
-# def add_motion_class(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW): #updated to cope with the new functions on making sure there are no crazy Ds.
-#     """
-#     Add a 'motion_class' column to metrics_df based on time_windowed_df with debugging.
-    
-#     This updated function takes into account that some time_windowed_df unique_ids may have 
-#     been modified by the excision process (e.g. appended with "_s"). If a unique_id from time_windowed_df 
-#     is not found in metrics_df, the function uses the base unique_id (obtained by removing the '_s' suffix)
-#     for matching. For each time window, the motion_class is assigned over the corresponding block of frames,
-#     with overlapping assignments resolved by majority rule.
-    
-#     Finally, to facilitate visualization, any gaps (i.e. rows that remain empty) are filled
-#     via a forward fill and backward fill so that every row receives a motion_class.
-    
-#     Parameters:
-#       - metrics_df: DataFrame containing the instantaneous particle tracking data.
-#                     Must include columns ['unique_id', 'x_um', 'y_um'].
-#       - time_windowed_df: DataFrame containing time-windowed motion class information.
-#                           Must include columns ['unique_id', 'x_um_start', 'y_um_start', 'motion_class'].
-#       - time_window: Number of frames per time window (default: config.TIME_WINDOW).
-    
-#     Returns:
-#       Updated metrics_df with a new 'motion_class' column.
-#     """
-
-
-#     # Initialize the 'motion_class' column to empty strings.
-#     metrics_df['motion_class'] = ''
-    
-#     # Dictionary to hold lists of motion_class assignments for each frame index.
-#     frame_classes = {}
-    
-#     # Debugging counters.
-#     total_windows = 0
-#     matched_windows = 0
-#     # Keep track of rows which did not get assigned any value.
-#     unmatched_rows = set(metrics_df.index)
-    
-#     # Tolerance for matching the coordinates (as in the D mapping function).
-#     tolerance = 1e-5
-    
-#     # Loop over each unique_id in time_windowed_df.
-#     for uid in tqdm(time_windowed_df['unique_id'].unique(), desc="Processing tracks"):
-#         # First, try to see if the uid is present in metrics_df.
-#         if uid in metrics_df['unique_id'].unique():
-#             m_df = metrics_df[metrics_df['unique_id'] == uid]
-#         else:
-#             # If not, assume it may have an excision suffix and try the base unique_id.
-#             base_uid = uid.split('_s')[0]
-#             m_df = metrics_df[metrics_df['unique_id'] == base_uid]
-        
-#         tw_df = time_windowed_df[time_windowed_df['unique_id'] == uid]
-        
-#         if m_df.empty:
-#             print(f"Warning: No matching data found in metrics_df for unique_id '{uid}' (or its base).")
-#             continue
-        
-#         for _, tw_row in tw_df.iterrows():
-#             total_windows += 1
-#             x_start, y_start = tw_row['x_um_start'], tw_row['y_um_start']
-#             time_win_class = tw_row['motion_class']
-            
-#             # Locate the starting frame in m_df using the coordinate tolerance.
-#             start_idx_series = m_df[
-#                 (abs(m_df['x_um'] - x_start) < tolerance) &
-#                 (abs(m_df['y_um'] - y_start) < tolerance)
-#             ].index
-            
-#             if not start_idx_series.empty:
-#                 matched_windows += 1
-#                 start_idx = start_idx_series[0]
-#                 # Define the frame range for the time window.
-#                 frame_range = range(start_idx, start_idx + time_window)
-#                 for frame_idx in frame_range:
-#                     if frame_idx < len(metrics_df):
-#                         unmatched_rows.discard(frame_idx)
-#                         frame_classes.setdefault(frame_idx, []).append(time_win_class)
-#             else:
-#                 print(f"Warning: No matching start point found for uid '{uid}' at x={x_start}, y={y_start}.")
-    
-#     # Resolve any overlapping assignments via majority rule.
-#     for frame_idx, classes in frame_classes.items():
-#         metrics_df.at[frame_idx, 'motion_class'] = max(set(classes), key=classes.count)
-    
-#     # Assign 'unlabeled' to any rows that remain unmatched.
-#     for idx in unmatched_rows:
-#         metrics_df.at[idx, 'motion_class'] = 'unlabeled'
-    
-#     print(f"Total time windows processed: {total_windows}")
-#     print(f"Matched time windows: {matched_windows}")
-#     print(f"Unmatched rows assigned 'unlabeled': {len(unmatched_rows)}")
-    
-#     # For visualization, fill any remaining gaps (empty strings) by forward fill then backward fill.
-#     # metrics_df['motion_class'] = metrics_df['motion_class'].replace('', np.nan)
-#     metrics_df['motion_class'] = metrics_df['motion_class'].replace(['', 'unlabeled'], np.nan)
-#     metrics_df['motion_class'] = metrics_df['motion_class'].ffill().bfill()
-    
-#     return metrics_df
-
-############### BACKUP VERSION #######################
-
 
 def add_motion_class(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW):
     """
@@ -1399,436 +802,6 @@ def extract_metadata(df, filename_col):
 
     return df
 
-
-# def map_D_to_instant(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW, 
-#                      overlap_method='average', tolerance=1e-5):
-#     """
-#     Map time-windowed diffusion coefficients back to the instantaneous tracking DataFrame.
-    
-#     For each unique track (using 'unique_id'), the function finds the frame in metrics_df
-#     corresponding to the starting point (x_um_start, y_um_start) provided in time_windowed_df.
-#     It then assigns the diffusion coefficient (from 'diffusion_coefficient') over a block of frames 
-#     defined by 'time_window'. If frames belong to overlapping time windows (e.g. overlap of 30 frames),
-#     the final diffusion coefficient is computed according to the chosen 'overlap_method'.
-
-#     Parameters:
-#       metrics_df (pd.DataFrame): Instantaneous tracking data. Must include ['unique_id', 'x_um', 'y_um'].
-#       time_windowed_df (pd.DataFrame): Time-windowed tracking data with columns 
-#                                        ['unique_id', 'x_um_start', 'y_um_start', 'diffusion_coefficient'].
-#       time_window (int): Number of frames that each time window covers (default is 60).
-#       overlap_method (str): Method to resolve overlapping diffusion coefficient assignments:
-#                             - 'average' (default): arithmetic mean of overlapping D values.
-#                             - 'first': use the first assigned D value.
-#                             - 'last': use the last assigned D value.
-#                             - 'min': use the minimum D value.
-#                             - 'max': use the maximum D value.
-#                             - 'median': use the median D value.
-#       tolerance (float): Tolerance for matching start coordinates (default is 1e-5).
-
-#     Returns:
-#       tuple: (updated metrics_df, report)
-#              - metrics_df: The input DataFrame with a new 'diffusion_coefficient' column populated.
-#              - report: A list of strings containing warnings and summary debug messages.
-#     """
-#     report = []  # This list will hold warnings and summary messages.
-    
-#     # Initialize the diffusion_coefficient column with NaN values.
-#     metrics_df['diffusion_coefficient'] = np.nan
-    
-#     # Dictionary to hold lists of D values for each frame index.
-#     frame_D = {}
-    
-#     # Debug counters.
-#     total_windows = 0
-#     matched_windows = 0
-#     unmatched_rows = set(metrics_df.index)
-    
-#     # Wrap the outer loop with tqdm to show progress across unique tracks.
-#     for unique_id in tqdm(time_windowed_df['unique_id'].unique(), desc="Processing tracks"):
-#         # Extract data for the current unique_id.
-#         tw_df = time_windowed_df[time_windowed_df['unique_id'] == unique_id]
-#         inst_df = metrics_df[metrics_df['unique_id'] == unique_id]
-        
-#         if inst_df.empty:
-#             report.append(f"Warning: No matching data in metrics_df for unique_id '{unique_id}'.")
-#             continue
-        
-#         # Optionally, if you have many time windows, you can wrap the inner loop as well:
-#         for _, tw_row in tqdm(tw_df.iterrows(), total=tw_df.shape[0],
-#                                 desc=f"Processing windows for track {unique_id}", leave=False):
-#             total_windows += 1
-#             start_x = tw_row['x_um_start']
-#             start_y = tw_row['y_um_start']
-#             D_value = tw_row['diffusion_coefficient']
-            
-#             # Locate the starting frame in inst_df using tolerance for x and y.
-#             start_idx_series = inst_df[
-#                 (abs(inst_df['x_um'] - start_x) < tolerance) &
-#                 (abs(inst_df['y_um'] - start_y) < tolerance)
-#             ].index
-            
-#             if not start_idx_series.empty:
-#                 matched_windows += 1
-#                 start_idx = start_idx_series[0]
-#                 # For the defined time window, assign the D_value.
-#                 for frame_idx in range(start_idx, start_idx + time_window):
-#                     if frame_idx < len(metrics_df):
-#                         if frame_idx in unmatched_rows:
-#                             unmatched_rows.remove(frame_idx)
-#                         # Append this D_value; overlapping frames will have multiple values.
-#                         frame_D.setdefault(frame_idx, []).append(D_value)
-#             else:
-#                 report.append(
-#                     f"Warning: No matching start point found for unique_id '{unique_id}' at x={start_x}, y={start_y}."
-#                 )
-    
-#     # Resolve diffusion coefficient for each frame, especially those with overlapping window assignments.
-#     for frame_idx, D_values in frame_D.items():
-#         if overlap_method == 'average':
-#             combined_D = sum(D_values) / len(D_values)
-#         elif overlap_method == 'first':
-#             combined_D = D_values[0]
-#         elif overlap_method == 'last':
-#             combined_D = D_values[-1]
-#         elif overlap_method == 'min':
-#             combined_D = min(D_values)
-#         elif overlap_method == 'max':
-#             combined_D = max(D_values)
-#         elif overlap_method == 'median':
-#             combined_D = np.median(D_values)
-#         else:
-#             report.append(f"Warning: Unknown overlap_method '{overlap_method}'. Defaulting to average.")
-#             combined_D = sum(D_values) / len(D_values)
-            
-#         metrics_df.at[frame_idx, 'diffusion_coefficient'] = combined_D
-    
-#     # Append summary debug information to the report.
-#     report.append(f"Total time windows processed: {total_windows}")
-#     report.append(f"Matched time windows: {matched_windows}")
-#     report.append(f"Frames left unmatched (remain as NaN): {len(unmatched_rows)}")
-    
-#     return metrics_df, report
-
-# def map_D_to_instant(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW, # NEW ONE
-#                      overlap_method='average', tolerance=1e-5):
-#     """
-#     Map time-windowed diffusion coefficients back to the instantaneous tracking DataFrame.
-    
-#     For each unique track (using 'unique_id'), the function finds the frame in metrics_df
-#     corresponding to the starting point (x_um_start, y_um_start) provided in time_windowed_df.
-#     It then assigns the diffusion coefficient (from 'diffusion_coefficient') over a block of frames 
-#     defined by 'time_window'. If frames belong to overlapping time windows, the final diffusion coefficient 
-#     is computed according to the chosen 'overlap_method'.
-    
-#     This version has been updated to handle cases where excision has been used to split a track 
-#     (e.g. unique_id '1' becomes '1_s'). In such cases it falls back to matching the base unique_id.
-#     Additionally, after mapping the D values, a new column 'D_fit_quality' is added to metrics_df. 
-#     Rows with a NaN diffusion coefficient are flagged as 'bad', and others as 'good'.
-    
-#     Parameters:
-#       metrics_df (pd.DataFrame): Instantaneous tracking data. Must include ['unique_id', 'x_um', 'y_um'].
-#       time_windowed_df (pd.DataFrame): Time-windowed tracking data with columns 
-#                                        ['unique_id', 'x_um_start', 'y_um_start', 'diffusion_coefficient'].
-#       time_window (int): Number of frames that each time window covers (default is 60).
-#       overlap_method (str): Method to resolve overlapping diffusion coefficient assignments:
-#                             - 'average' (default): arithmetic mean of overlapping D values.
-#                             - 'first': use the first assigned D value.
-#                             - 'last': use the last assigned D value.
-#                             - 'min': use the minimum D value.
-#                             - 'max': use the maximum D value.
-#                             - 'median': use the median D value.
-#       tolerance (float): Tolerance for matching start coordinates (default is 1e-5).
-    
-#     Returns:
-#       tuple: (updated metrics_df, report)
-#              - metrics_df: The input DataFrame with a new 'diffusion_coefficient' column and 'D_fit_quality' column.
-#              - report: A list of strings containing warnings and summary debug messages.
-#     """
-#     import numpy as np
-#     from tqdm import tqdm
-    
-#     report = []  # Holds warnings and summary messages.
-    
-#     # Initialize the diffusion_coefficient column with NaN.
-#     metrics_df['diffusion_coefficient'] = np.nan
-    
-#     # Dictionary to hold lists of D values by frame index.
-#     frame_D = {}
-    
-#     # Debug counters.
-#     total_windows = 0
-#     matched_windows = 0
-#     unmatched_rows = set(metrics_df.index)
-    
-#     # Get all unique base ids from metrics_df (assumes they are the original unique_ids).
-#     base_ids = set(metrics_df['unique_id'].unique())
-    
-#     # Iterate over unique_ids in time_windowed_df.
-#     for uid in tqdm(time_windowed_df['unique_id'].unique(), desc="Processing tracks"):
-#         # If the unique_id has been modified (e.g. ends with '_s'), try to get the base id.
-#         if uid not in base_ids:
-#             # For instance, if uid = '1_s', then base_uid will be '1'.
-#             base_uid = uid.split('_s')[0]
-#             if base_uid in base_ids:
-#                 uid_to_use = base_uid
-#             else:
-#                 uid_to_use = uid  # Fallback: no base found.
-#         else:
-#             uid_to_use = uid
-
-#         # Extract data for the current track from both DataFrames.
-#         tw_df = time_windowed_df[time_windowed_df['unique_id'] == uid]
-#         inst_df = metrics_df[metrics_df['unique_id'] == uid_to_use]
-        
-#         if inst_df.empty:
-#             report.append(f"Warning: No matching data in metrics_df for unique_id '{uid_to_use}' (from time_windowed_df uid '{uid}').")
-#             continue
-        
-#         for _, tw_row in tqdm(tw_df.iterrows(), total=tw_df.shape[0],
-#                                 desc=f"Processing windows for track {uid}", leave=False):
-#             total_windows += 1
-#             start_x = tw_row['x_um_start']
-#             start_y = tw_row['y_um_start']
-#             D_value = tw_row['diffusion_coefficient']
-            
-#             # Locate the starting frame using tolerance.
-#             start_idx_series = inst_df[
-#                 (abs(inst_df['x_um'] - start_x) < tolerance) &
-#                 (abs(inst_df['y_um'] - start_y) < tolerance)
-#             ].index
-            
-#             if not start_idx_series.empty:
-#                 matched_windows += 1
-#                 start_idx = start_idx_series[0]
-#                 # For the time window, assign the D_value.
-#                 for frame_idx in range(start_idx, start_idx + time_window):
-#                     if frame_idx < len(metrics_df):
-#                         if frame_idx in unmatched_rows:
-#                             unmatched_rows.remove(frame_idx)
-#                         frame_D.setdefault(frame_idx, []).append(D_value)
-#             else:
-#                 report.append(
-#                     f"Warning: No matching start point found for unique_id '{uid_to_use}' at x={start_x}, y={start_y}."
-#                 )
-    
-#     # Resolve diffusion coefficient for each frame.
-#     for frame_idx, D_values in frame_D.items():
-#         if overlap_method == 'average':
-#             combined_D = sum(D_values) / len(D_values)
-#         elif overlap_method == 'first':
-#             combined_D = D_values[0]
-#         elif overlap_method == 'last':
-#             combined_D = D_values[-1]
-#         elif overlap_method == 'min':
-#             combined_D = min(D_values)
-#         elif overlap_method == 'max':
-#             combined_D = max(D_values)
-#         elif overlap_method == 'median':
-#             combined_D = np.median(D_values)
-#         else:
-#             report.append(f"Warning: Unknown overlap_method '{overlap_method}'. Defaulting to average.")
-#             combined_D = sum(D_values) / len(D_values)
-            
-#         metrics_df.at[frame_idx, 'diffusion_coefficient'] = combined_D
-    
-#     # Flag rows based on whether a diffusion coefficient was assigned.
-#     metrics_df['D_fit_quality'] = np.where(metrics_df['diffusion_coefficient'].isna(), 'bad', 'good')
-    
-#     report.append(f"Total time windows processed: {total_windows}")
-#     report.append(f"Matched time windows: {matched_windows}")
-#     report.append(f"Frames left unmatched (remain as NaN): {len(unmatched_rows)}")
-    
-#     return metrics_df, report
-
-# def map_D_to_instant(metrics_df, time_windowed_df, time_window=config.TIME_WINDOW, 
-#                      overlap_method='average', tolerance=1e-5):
-#     """
-#     Map time-windowed diffusion coefficients back to the instantaneous tracking DataFrame.
-    
-#     For each unique track (using 'unique_id'), the function finds the frame in metrics_df
-#     corresponding to the starting point (x_um_start, y_um_start) provided in time_windowed_df.
-#     It then assigns the diffusion coefficient (from 'diffusion_coefficient') over a block of frames 
-#     defined by 'time_window'. If frames belong to overlapping time windows, the final diffusion coefficient 
-#     is computed according to the chosen 'overlap_method'.
-    
-#     This version handles cases where excision has been used to split a track (e.g. unique_id '1' becomes '1_s')
-#     by matching the base unique_id. After mapping, a new column 'D_fit_quality' is added:
-#       - Rows with an assigned D are flagged "good"
-#       - Rows with no assigned D (i.e. NaN) are flagged "bad"
-    
-#     Finally, instead of linear interpolation, any remaining NaN gaps in 'diffusion_coefficient'
-#     are filled by repeating the neighbor values as follows:
-#       - For each contiguous block of NaNs, determine the "previous" good value (just before the block)
-#         and the "next" good value (just after the block).
-#       - Split the gap (if more than one frame) at the midpoint: assign the first half of the gap
-#         the previous good value, and the second half the next good value.
-#       - For a gap of one frame, assign the previous good value if available; otherwise, assign the next.
-    
-#     Parameters:
-#       metrics_df (pd.DataFrame): Instantaneous tracking data. Must include ['unique_id', 'x_um', 'y_um'].
-#       time_windowed_df (pd.DataFrame): Time-windowed tracking data with columns 
-#                                        ['unique_id', 'x_um_start', 'y_um_start', 'diffusion_coefficient'].
-#       time_window (int): Number of frames that each time window covers (default is 60).
-#       overlap_method (str): Method to resolve overlapping diffusion coefficient assignments:
-#                             - 'average' (default): arithmetic mean of overlapping D values.
-#                             - 'first': use the first assigned D value.
-#                             - 'last': use the last assigned D value.
-#                             - 'min': use the minimum D value.
-#                             - 'max': use the maximum D value.
-#                             - 'median': use the median D value.
-#       tolerance (float): Tolerance for matching start coordinates (default is 1e-5).
-    
-#     Returns:
-#       tuple: (updated metrics_df, report)
-#              - metrics_df: The input DataFrame with new columns 'diffusion_coefficient' (with gaps filled)
-#                            and 'D_fit_quality' (indicating the original mapping quality).
-#              - report: A list of strings containing warnings and summary messages.
-#     """
-#     import numpy as np
-#     from tqdm import tqdm
-#     import pandas as pd
-
-#     report = []  # Will hold warnings and summary messages.
-    
-#     # Initialize diffusion_coefficient column as NaN.
-#     metrics_df['diffusion_coefficient'] = np.nan
-    
-#     # Dictionary to hold lists of D values for each frame index.
-#     frame_D = {}
-    
-#     # Debug counters.
-#     total_windows = 0
-#     matched_windows = 0
-#     unmatched_rows = set(metrics_df.index)
-    
-#     # Get the set of base unique_ids present in metrics_df.
-#     base_ids = set(metrics_df['unique_id'].unique())
-    
-#     # Loop over unique_ids in time_windowed_df.
-#     for uid in tqdm(time_windowed_df['unique_id'].unique(), desc="Processing tracks"):
-#         # If uid has an excision suffix (e.g. '1_s'), remove it and use the base unique_id.
-#         if uid not in base_ids:
-#             base_uid = uid.split('_s')[0]
-#             uid_to_use = base_uid if base_uid in base_ids else uid
-#         else:
-#             uid_to_use = uid
-        
-#         # Select corresponding data from time_windowed_df and metrics_df.
-#         tw_df = time_windowed_df[time_windowed_df['unique_id'] == uid]
-#         inst_df = metrics_df[metrics_df['unique_id'] == uid_to_use]
-        
-#         if inst_df.empty:
-#             report.append(f"Warning: No matching data in metrics_df for unique_id '{uid_to_use}' (from time_windowed_df uid '{uid}').")
-#             continue
-        
-#         for _, tw_row in tqdm(tw_df.iterrows(), total=tw_df.shape[0],
-#                                 desc=f"Processing windows for track {uid}", leave=False):
-#             total_windows += 1
-#             start_x = tw_row['x_um_start']
-#             start_y = tw_row['y_um_start']
-#             D_value = tw_row['diffusion_coefficient']
-            
-#             # Locate the starting frame in inst_df using x and y tolerances.
-#             start_idx_series = inst_df[
-#                 (abs(inst_df['x_um'] - start_x) < tolerance) &
-#                 (abs(inst_df['y_um'] - start_y) < tolerance)
-#             ].index
-            
-#             if not start_idx_series.empty:
-#                 matched_windows += 1
-#                 start_idx = start_idx_series[0]
-#                 # For frames from start_idx to start_idx+time_window, assign D_value.
-#                 for frame_idx in range(start_idx, start_idx + time_window):
-#                     if frame_idx < len(metrics_df):
-#                         unmatched_rows.discard(frame_idx)
-#                         frame_D.setdefault(frame_idx, []).append(D_value)
-#             else:
-#                 report.append(
-#                     f"Warning: No matching start point found for unique_id '{uid_to_use}' at x={start_x}, y={start_y}."
-#                 )
-    
-#     # For each frame index that has at least one D value assigned,
-#     # resolve the diffusion coefficient using the chosen overlap_method.
-#     for frame_idx, D_values in frame_D.items():
-#         if overlap_method == 'average':
-#             combined_D = sum(D_values) / len(D_values)
-#         elif overlap_method == 'first':
-#             combined_D = D_values[0]
-#         elif overlap_method == 'last':
-#             combined_D = D_values[-1]
-#         elif overlap_method == 'min':
-#             combined_D = min(D_values)
-#         elif overlap_method == 'max':
-#             combined_D = max(D_values)
-#         elif overlap_method == 'median':
-#             combined_D = np.median(D_values)
-#         else:
-#             report.append(f"Warning: Unknown overlap_method '{overlap_method}'. Defaulting to average.")
-#             combined_D = sum(D_values) / len(D_values)
-            
-#         metrics_df.at[frame_idx, 'diffusion_coefficient'] = combined_D
-    
-#     # Create the D_fit_quality flag: "good" if D is assigned, "bad" if NaN.
-#     metrics_df['D_fit_quality'] = np.where(metrics_df['diffusion_coefficient'].isna(), 'bad', 'good')
-    
-#     # --- Custom "repetition" fill for missing diffusion_coefficient values ---
-#     # Rather than interpolate linearly, we fill contiguous NaN blocks by repeating the last
-#     # good value for the first half of the gap and the next good value for the second half.
-#     D_series = metrics_df['diffusion_coefficient']
-#     nan_mask = D_series.isna()
-#     nan_indices = np.where(nan_mask)[0]
-    
-#     if len(nan_indices) > 0:
-#         groups = []
-#         group_start = nan_indices[0]
-#         prev_idx = nan_indices[0]
-#         for ix in nan_indices[1:]:
-#             if ix == prev_idx + 1:
-#                 prev_idx = ix
-#             else:
-#                 groups.append((group_start, prev_idx))
-#                 group_start = ix
-#                 prev_idx = ix
-#         groups.append((group_start, prev_idx))
-    
-#         for (start, end) in groups:
-#             gap_length = end - start + 1
-#             # Get previous good value (if exists).
-#             if start > 0:
-#                 prev_good = metrics_df.iloc[start - 1]['diffusion_coefficient']
-#             else:
-#                 prev_good = None
-#             # Get next good value (if exists).
-#             if end < len(metrics_df) - 1:
-#                 next_good = metrics_df.iloc[end + 1]['diffusion_coefficient']
-#             else:
-#                 next_good = None
-                
-#             # Decide on fill values.
-#             if gap_length == 1:
-#                 # For a single missing frame, use previous good if available; else next good.
-#                 fill_val = prev_good if prev_good is not None else next_good
-#                 metrics_df.iat[start, metrics_df.columns.get_loc('diffusion_coefficient')] = fill_val
-#             else:
-#                 half = gap_length // 2
-#                 # First half of gap.
-#                 if prev_good is not None:
-#                     metrics_df.loc[start:(start+half-1), 'diffusion_coefficient'] = prev_good
-#                 else:
-#                     # If no previous good, use next good.
-#                     metrics_df.loc[start:(start+half-1), 'diffusion_coefficient'] = next_good
-#                 # Second half of gap.
-#                 if next_good is not None:
-#                     metrics_df.loc[(start+half):end, 'diffusion_coefficient'] = next_good
-#                 else:
-#                     # If no next good, use previous good.
-#                     metrics_df.loc[(start+half):end, 'diffusion_coefficient'] = prev_good
-    
-#     report.append(f"Total time windows processed: {total_windows}")
-#     report.append(f"Matched time windows: {matched_windows}")
-#     report.append(f"Frames left unmatched before gap filling: {len(unmatched_rows)}")
-    
-#     return metrics_df, report
 
 
 def map_D_to_instant(metrics_df, time_windowed_df,
@@ -1963,6 +936,98 @@ def map_D_to_instant(metrics_df, time_windowed_df,
         f"Frames still unmatched:  {unmatched}",
     ]
     return metrics_df, report
+
+
+
+def map_windowed_to_instant(
+    metrics_df: pd.DataFrame,
+    windowed_df: pd.DataFrame,
+    window_size: int,
+    overlap: int,
+    field_cols: list,
+    track_col: str = 'unique_id',
+    frame_col: str = 'frame',
+    window_col: str = 'time_window'
+) -> pd.DataFrame:
+    """
+    Broadcast selected windowed_df columns back onto each frame in metrics_df.
+    - Non-float columns (e.g. 'cluster', 'motion_class'): majority vote
+    - Float columns: mean over overlapping windows
+    """
+    # 1) Sort and index metrics_df
+    md = (
+        metrics_df
+        .sort_values([track_col, frame_col], ignore_index=False)
+        .reset_index()
+        .rename(columns={'index': '__orig_idx'})
+    )
+    md['__frame_idx'] = md.groupby(track_col).cumcount()
+    N = len(md)
+
+    # 2) Map (track, frame_idx) to absolute row
+    idx_map = md[[track_col, '__frame_idx']].copy()
+    idx_map['__row'] = idx_map.index
+
+    # 3) Prepare windows and compute start rows
+    step = window_size - overlap
+    w = windowed_df[[track_col, window_col] + field_cols].copy()
+    w['__start_idx'] = w[window_col] * step
+    w = w.merge(
+        idx_map,
+        left_on=[track_col, '__start_idx'],
+        right_on=[track_col, '__frame_idx'],
+        how='left'
+    ).dropna(subset=['__row'])
+    w['__row'] = w['__row'].astype(int)
+
+    # 4) Build coverage indices
+    M = len(w)
+    T = window_size
+    starts = w['__row'].values.reshape(M,1)
+    offsets = np.arange(T).reshape(1,T)
+    idxs = starts + offsets            # (M,T)
+    valid = (idxs >= 0) & (idxs < N)
+    flat_idxs = idxs[valid]
+
+    result = md.copy()
+
+    # 5) Scatter-and-reduce for each field
+    for fld in field_cols:
+        vals = w[fld].values.reshape(M,1)
+        flat_vals = np.repeat(vals, T, axis=1)[valid]
+        if pd.api.types.is_float_dtype(windowed_df[fld]):
+            # mean aggregation
+            sum_arr = np.zeros(N, dtype=float)
+            count_arr = np.zeros(N, dtype=int)
+            np.add.at(sum_arr, flat_idxs, flat_vals.astype(float))
+            np.add.at(count_arr, flat_idxs, 1)
+            # arr = sum_arr / np.where(count_arr>0, count_arr, 1)
+            arr = sum_arr / count_arr.astype(float)     # this will give inf where count_arr==0
+            arr[count_arr == 0] = np.nan                # mask out those inf’s into NaN
+        else:
+            # majority vote
+            ser = pd.Series(flat_vals, index=flat_idxs)
+            mode = ser.groupby(level=0).agg(lambda s: Counter(s).most_common(1)[0][0])
+            arr = np.full(N, np.nan, dtype=object)
+            arr[mode.index.values.astype(int)] = mode.values
+        result[fld] = arr
+
+    # 6) Forward/backward fill within each track using transform for alignment
+    for fld in field_cols:
+        filled = result.groupby(track_col)[fld].transform(lambda s: s.ffill().bfill())
+        # cast back to original dtype
+        if pd.api.types.is_float_dtype(result[fld]):
+            result[fld] = filled.astype(float)
+        else:
+            result[fld] = filled.astype(result[fld].dtype)
+
+    # 7) Restore original ordering
+    return (
+        result
+        .sort_values('__orig_idx')
+        .drop(columns=['__orig_idx','__frame_idx'])
+        .reset_index(drop=True)
+    )
 
 
 
