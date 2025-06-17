@@ -10,6 +10,14 @@ from .features import ParticleMetrics
 
 from .visualization import *
 
+from . import tensorboard_utils
+from . import augmentations
+from . import training_utils
+
+# Import config from parent directory
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import config
 # from .helper_scripts import generate_file_tree, display_file_tree
 

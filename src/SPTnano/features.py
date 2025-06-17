@@ -1,4 +1,3 @@
-
 import numpy as np
 import pandas as pd
 # from scipy.stats import vonmises
@@ -11,7 +10,14 @@ import config
 class ParticleMetrics:
     def __init__(self, df, time_between_frames=None, tolerance=None):
         self.df = df.copy()
-        self.df['Location'] = self.df['filename'].apply(self.extract_location)  # Add Location column
+        # self.df['location'] = self.df['filename'].apply(self.extract_location)  # Add Location column
+        # self.df['molecule'] = self.df['filename'].apply(self.extract_molecule)  # Add Molecule column
+        # self.df['genotype'] = self.df['filename'].apply(self.extract_genotype)  # Add Genotype column
+        # self.df['cell_type'] = self.df['filename'].apply(self.extract_cell_type)  # Add Cell Type column
+        self.df['location'] = self.df['condition'].apply(self.extract_location)  # Add Location column
+        self.df['molecule'] = self.df['condition'].apply(self.extract_molecule)  # Add Molecule column
+        self.df['genotype'] = self.df['condition'].apply(self.extract_genotype)  # Add Genotype column
+        self.df['cell_type'] = self.df['condition'].apply(self.extract_cell_type)  # Add Cell Type column
         self.metrics_df = self.df.copy()
 
         # Retrieve time_between_frames from config if not provided
@@ -22,7 +28,7 @@ class ParticleMetrics:
         self.time_averaged_df = pd.DataFrame(columns=[
             'x_um_start', 'y_um_start', 'x_um_end', 'y_um_end', 
             'particle', 'condition', 'filename', 'file_id', 'unique_id',
-            'avg_msd', 'n_frames', 'total_time_s', 'Location', 
+            'avg_msd', 'n_frames', 'total_time_s', 'location', 'molecule', 'genotype', 'cell_type',
             'diffusion_coefficient', 'anomalous_exponent', 'motion_class',
             'avg_speed_um_s', 'avg_acceleration_um_s2', 'avg_jerk_um_s3',
             'avg_normalized_curvature', 'avg_angle_normalized_curvature',
@@ -41,7 +47,8 @@ class ParticleMetrics:
         self.time_windowed_df = pd.DataFrame(columns=[
             'time_window', 'x_um_start', 'y_um_start', 'x_um_end', 'y_um_end',
             'particle', 'condition', 'filename', 'file_id', 'unique_id',
-            'avg_msd', 'n_frames', 'total_time_s', 'Location',
+            'frame_start', 'frame_end', 'e_uid', 'window_uid', 'split_count',
+            'avg_msd', 'n_frames', 'total_time_s', 'location', 'molecule', 'genotype', 'cell_type',
             'diffusion_coefficient', 'anomalous_exponent', 'motion_class',
             'avg_speed_um_s', 'avg_acceleration_um_s2', 'avg_jerk_um_s3',
             'avg_normalized_curvature', 'avg_angle_normalized_curvature',
@@ -54,7 +61,7 @@ class ParticleMetrics:
             'turning_angle_kurtosis', 'steplength_mean', 'steplength_std',
             'steplength_skew', 'steplength_kurtosis', 'diffusivity_cv',
             'fractal_dimension', 'psd_slope_speed', 'self_intersections',
-            'pausing_fraction'
+            'pausing_fraction', 'bad_fit_flag'
         ])
 
         self.msd_lagtime_df = pd.DataFrame(columns=[
@@ -75,10 +82,31 @@ class ParticleMetrics:
 
     @staticmethod
     def extract_location(filename):
-        match = re.match(r'loc-(\w{2})_', filename)
+        match = re.search(r'loc-(\w+)(?:_|$)', filename)
         if match:
             return match.group(1)
         return 'Unknown'  # Default value if no location is found
+    
+    @staticmethod
+    def extract_molecule(filename):
+        match = re.search(r'mol-(\w+)(?:_|$)', filename)
+        if match:
+            return match.group(1)
+        return 'Unknown'  # Default value if no molecule is found
+    
+    @staticmethod
+    def extract_genotype(filename):
+        match = re.search(r'geno-(\w+)(?:_|$)', filename)
+        if match:
+            return match.group(1)
+        return 'Unknown'  # Default value if no genotype is found
+    
+    @staticmethod
+    def extract_cell_type(filename):
+        match = re.search(r'type-(\w+)(?:_|$)', filename)
+        if match:
+            return match.group(1)
+        return 'Unknown'  # Default value if no cell type is found
 
     @staticmethod
     def msd_model(t, D, alpha):
@@ -620,7 +648,7 @@ class ParticleMetrics:
         - anomalous_r2_threshold: R² threshold for the anomalous model (default: 0.80).
         - bad_fit_strategy: How to handle a poor fit:
                 "remove_track" (remove the entire track),
-                "excise_window" (skip the offending window and, if it’s the first such instance in the track,
+                "excise_window" (skip the offending window and, if it's the first such instance in the track,
                                     later windows will get a new unique ID),
                 "flag" (keep the window but mark it as flagged).
                 Default is "flag".
@@ -731,7 +759,7 @@ class ParticleMetrics:
             # Decide which R² threshold applies.
             threshold = r2_threshold if chosen_model == "normal" else anomalous_r2_threshold
             
-            # Check if the chosen model’s fit is acceptable.
+            # Check if the chosen model's fit is acceptable.
             if chosen_r2 < threshold:
                 if bad_fit_strategy == "remove_track":
                     print(f"Bad fit (model_selection) for unique_id {track_data['unique_id'].iloc[0]} (R² = {chosen_r2:.3f}). Removing track.")
@@ -777,14 +805,6 @@ class ParticleMetrics:
                             motion_class = "superdiffusive"
                         else:
                             motion_class = "normal"
-                else:
-                    # Use fixed tolerance as a default.
-                    if alpha < 1 - self.tolerance:
-                        motion_class = "subdiffusive"
-                    elif alpha > 1 + self.tolerance:
-                        motion_class = "superdiffusive"
-                    else:
-                        motion_class = "normal"
             
             avg_msd = np.mean(msd_values)
         
@@ -878,15 +898,21 @@ class ParticleMetrics:
         step = window_size - overlap
         use_majority = (overlap > window_size/2)
         if use_majority:
-            # we’ll collect *all* e_uid candidates per frame
+            # we'll collect *all* e_uid candidates per frame
             self.metrics_df['e_uid_candidates'] = [[] for _ in range(len(self.metrics_df))]
+            # NEW: Also collect window_uid candidates for majority vote
+            self.metrics_df['window_uid_candidates'] = [[] for _ in range(len(self.metrics_df))]
         else:
             # simple overwrite
             self.metrics_df['e_uid'] = None
+            # NEW: Initialize window_uid column
+            self.metrics_df['window_uid'] = None
 
         
         print("Note: Partial windows (below the window size) are not included in the time-windowed metrics.")
         self.metrics_df['e_uid'] = None # NEW FOR MAPPING
+        # NEW: Initialize window_uid column for mapping
+        self.metrics_df['window_uid'] = None
         windowed_list = []
         included_frames = set()
         
@@ -932,31 +958,7 @@ class ParticleMetrics:
                     print(f"Removing entire track for unique_id {unique_id} due to a bad fit.")
                     track_removed = True
                     break
-                # elif motion_class == 'excised_bad_fit':
-                #     split_count += 1
-                #     current_unique_id = f"{unique_id}_s{split_count}"
-                #     print(f"Track {unique_id}: bad window #{split_count} excised; subsequent windows will have unique_id '{current_unique_id}'.")
-                #     # if current_unique_id == unique_id:
-                #     #     current_unique_id = f"{unique_id}_s"
-                #     #     print(f"Track {unique_id}: first bad window excised; subsequent windows will have unique_id '{current_unique_id}'.")
-                #     continue  # Skip this window.
 
-
-
-
-                # if motion_class == 'excised_bad_fit':
-                #     # this window gets “_excised”
-                #     e_uid = f"{unique_id}_excised"
-                #     did_split = True
-                # elif did_split:
-                #     # this window is a continuation of a previous bad fit
-                #     e_uid = f"{unique_id}_s{seg_count}"
-                #     seg_count += 1
-                # else:
-                #     # each good (or flagged) window is numbered
-                #     # e_uid = f"{unique_id}_s{seg_count}"
-                #     # seg_count += 1
-                #     e_uid = unique_id
                 # NEW logic: only bump split_count (and thus _s suffix) on real excisions
                 if motion_class == 'excised_bad_fit':
                     e_uid = f"{unique_id}_excised"
@@ -969,27 +971,30 @@ class ParticleMetrics:
                     else:
                         e_uid = f"{unique_id}_s{split_count}"
 
-
-
+                # NEW: Create window_uid with format: unique_id_timewindow_framestart_frameend
+                time_window_num = start // (window_size - overlap)
+                frame_start = start_row['frame']
+                frame_end = end_row['frame']
+                window_uid = f"{unique_id}_{time_window_num}_{frame_start}_{frame_end}"
 
                 # ─── assign per-frame, either by append or overwrite ───
                 if use_majority:
                     # append to our per-frame candidate lists
                     self.metrics_df.loc[window_data.index, 'e_uid_candidates'] = \
                         self.metrics_df.loc[window_data.index, 'e_uid_candidates'].apply(lambda lst: lst + [e_uid])
+                    # NEW: append window_uid candidates
+                    self.metrics_df.loc[window_data.index, 'window_uid_candidates'] = \
+                        self.metrics_df.loc[window_data.index, 'window_uid_candidates'].apply(lambda lst: lst + [window_uid])
                 else:
                     # later window simply overwrites
                     self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
-
-
-
-
-
-
-
+                    # NEW: assign window_uid to frames
+                    self.metrics_df.loc[window_data.index, 'window_uid'] = window_uid
 
                 # NEW: map that e_uid back onto every frame in this window
-                self.metrics_df.loc[window_data.index, 'E_UID'] = e_uid
+                self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
+                # NEW: map window_uid back onto every frame in this window
+                self.metrics_df.loc[window_data.index, 'window_uid'] = window_uid
                 
                 total_time_s = window_data['time_s'].iloc[-1] - window_data['time_s'].iloc[0]
                 avg_speed = window_data['speed_um_s'].mean()
@@ -1025,7 +1030,7 @@ class ParticleMetrics:
                 
                 
                 window_summary = pd.DataFrame({
-                    'time_window': [start // (window_size - overlap)],
+                    'time_window': [time_window_num],
                     'x_um_start': [start_row['x_um']],
                     'y_um_start': [start_row['y_um']],
                     'x_um_end': [end_row['x_um']],
@@ -1036,14 +1041,18 @@ class ParticleMetrics:
                     'file_id': [start_row['file_id']],
                     # 'unique_id': [current_unique_id],
                     'unique_id': [unique_id],
-                    'frame_start': [start_row['frame']], # I added these to vectorize later mapping functions
-                    'frame_end':   [end_row  ['frame']],
+                    'frame_start': [frame_start], # I added these to vectorize later mapping functions
+                    'frame_end':   [frame_end],
                     'e_uid': [e_uid],
+                    'window_uid': [window_uid],  # NEW: Add window_uid to windowed dataframe
                     'split_count': [split_count],  # NEW: track how many splits this window has
                     'avg_msd': [avg_msd],
                     'n_frames': [window_size],
                     'total_time_s': [total_time_s],
-                    'Location': [start_row['Location']],
+                    'location': [start_row['location']],
+                    'molecule': [start_row['molecule']],
+                    'genotype': [start_row['genotype']],
+                    'cell_type': [start_row['cell_type']],
                     'diffusion_coefficient': [D],
                     'anomalous_exponent': [alpha],
                     'motion_class': [motion_class],
@@ -1102,7 +1111,12 @@ class ParticleMetrics:
                 self.metrics_df['e_uid_candidates']
                     .apply(pick_majority)
             )
-            self.metrics_df.drop(columns=['e_uid_candidates'], inplace=True)
+            # NEW: Apply majority vote for window_uid as well
+            self.metrics_df['window_uid'] = (
+                self.metrics_df['window_uid_candidates']
+                    .apply(pick_majority)
+            )
+            self.metrics_df.drop(columns=['e_uid_candidates', 'window_uid_candidates'], inplace=True)
         
         self.time_windowed_df = pd.concat(windowed_list).reset_index(drop=True)
         
@@ -1180,7 +1194,10 @@ class ParticleMetrics:
                 'avg_msd': [avg_msd],  # Add the average MSD (units: μm²)
                 'n_frames': [len(track_data)],  # Add the number of frames
                 'total_time_s': [total_time_s],  # Add the total time in seconds
-                'Location': [start_row['Location']],  # Add the Location
+                'location': [start_row['location']],  # Add the Location
+                'molecule': [start_row['molecule']],
+                'genotype': [start_row['genotype']],
+                'cell_type': [start_row['cell_type']], # Add the Cell Type
                 'diffusion_coefficient': [D],  # Add the diffusion coefficient
                 'anomalous_exponent': [alpha],  # Add the anomalous exponent
                 'motion_class': [motion_class],  # Add the motion class
