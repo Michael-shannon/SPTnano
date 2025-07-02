@@ -695,6 +695,12 @@ class ParticleMetrics:
         use_ci_flag = kwargs.get("use_ci", False)
         ci_multiplier = kwargs.get("ci_multiplier", 1.96)  # Approximately 95% CI if errors are normal.
         
+        # Initialize variables that will be returned
+        motion_class = 'unlabeled'  # Default value
+        avg_msd = np.nan
+        D = np.nan
+        alpha = np.nan
+        
         log_obs = np.log10(msd_values)
         n = len(lag_times)
         
@@ -842,30 +848,32 @@ class ParticleMetrics:
                         motion_class = 'bad_fit_flagged_normal'
                     return np.mean(msd_values), D, alpha, motion_class
             else:
+                # Good fit - classify motion type
                 if alpha < 1 - self.tolerance:
                     motion_class = 'subdiffusive'
                 elif alpha > 1 + self.tolerance:
                     motion_class = 'superdiffusive'
                 else:
                     motion_class = 'normal'
+            
             avg_msd = np.mean(msd_values)
-        
-        # Optionally store per-lag MSD records.
-        if store_msd and (time_window is not None):
-            import pandas as pd
-            msd_records = [{
-                'unique_id': track_data['unique_id'].iloc[0],
-                'time_window': time_window,
-                'lag_time': lag,
-                'msd': msd,
-                'diffusion_coefficient': D,
-                'anomalous_exponent': alpha
-            } for lag, msd in zip(lag_times, msd_values)]
-            if msd_records:
-                msd_records_df = pd.DataFrame(msd_records)
-                self.msd_lagtime_df = pd.concat([self.msd_lagtime_df, msd_records_df], ignore_index=True)
-        
-        return avg_msd, D, alpha, motion_class
+            
+            # Optionally store per-lag MSD records.
+            if store_msd and (time_window is not None):
+                import pandas as pd
+                msd_records = [{
+                    'unique_id': track_data['unique_id'].iloc[0],
+                    'time_window': time_window,
+                    'lag_time': lag,
+                    'msd': msd,
+                    'diffusion_coefficient': D,
+                    'anomalous_exponent': alpha
+                } for lag, msd in zip(lag_times, msd_values)]
+                if msd_records:
+                    msd_records_df = pd.DataFrame(msd_records)
+                    self.msd_lagtime_df = pd.concat([self.msd_lagtime_df, msd_records_df], ignore_index=True)
+            
+            return avg_msd, D, alpha, motion_class
 
 
     def calculate_time_windowed_metrics(self, window_size=None, overlap=None, filter_metrics_df=False, **kwargs):
@@ -878,9 +886,9 @@ class ParticleMetrics:
         
         For bad fits, three strategies are available via 'bad_fit_strategy':
         - "remove_track": Remove all windows from the track.
-        - "excise_window": SUGGEST USE THIS. A new set of unique ids called e_uid are made. Bad fits
+        - "excise_window": A new set of unique ids called e_uid are made. Bad fits
         are subsequent windows are given a new unique ID with the suffix '_s'.
-        - "flag": Keep the window but flag it (e.g. 'bad_fit_flagged_normal').
+        - "flag": DEFAULT. Keep the window but flag it (e.g. 'bad_fit_flagged_normal').
         
         Parameters:
         - window_size: Number of frames per window.
@@ -891,12 +899,22 @@ class ParticleMetrics:
 
         if window_size is None:
             window_size = self.calculate_default_window_size()
+
         if overlap is None:
             overlap = int(window_size / 2)
 
          # ─── determine step and strategy ─── # NEW 
         step = window_size - overlap
         use_majority = (overlap > window_size/2)
+        
+        # ─── NEW: Set default bad_fit_strategy to "flag" ───
+        if 'bad_fit_strategy' not in kwargs:
+            kwargs['bad_fit_strategy'] = 'flag'
+            print("ℹ️  Using default bad_fit_strategy='flag' (no track splitting)")
+        
+        bad_fit_strategy = kwargs.get('bad_fit_strategy', 'flag')
+        print(f"ℹ️  Bad fit strategy: {bad_fit_strategy}")
+        
         if use_majority:
             # we'll collect *all* e_uid candidates per frame
             self.metrics_df['e_uid_candidates'] = [[] for _ in range(len(self.metrics_df))]
@@ -919,13 +937,9 @@ class ParticleMetrics:
         for unique_id, track_data in tqdm(self.metrics_df.groupby('unique_id'), desc="Calculating Time-Windowed Metrics"):
             n_frames = len(track_data)
             track_removed = False
-            current_unique_id = unique_id  # May change if a bad window is excised.
 
-            # ─── Initialize split counter ───
+            # ─── Initialize split counter (only used if bad_fit_strategy="excise_window") ───
             split_count = 0
-            # current_unique_id = unique_id
-            # seg_count = 1
-            did_split=False # ADDED
             
             for start in range(0, n_frames - window_size + 1, window_size - overlap):
                 end = start + window_size
@@ -959,17 +973,19 @@ class ParticleMetrics:
                     track_removed = True
                     break
 
-                # NEW logic: only bump split_count (and thus _s suffix) on real excisions
-                if motion_class == 'excised_bad_fit':
+                # ─── NEW: Simplified excision logic ───
+                if bad_fit_strategy == 'excise_window' and motion_class == 'excised_bad_fit':
+                    # Only create new e_uid if explicitly using excision strategy
                     e_uid = f"{unique_id}_excised"
                     split_count += 1
+                    # For subsequent windows after excision, use split numbering
+                elif bad_fit_strategy == 'excise_window' and split_count > 0:
+                    # After excision has occurred, use split numbering
+                    e_uid = f"{unique_id}_s{split_count}"
                 else:
-                    # before any excision, split_count==0 → keep original ID
-                    # afterwards, split_count==1,2,… → use that as your segment index
-                    if split_count == 0:
-                        e_uid = unique_id
-                    else:
-                        e_uid = f"{unique_id}_s{split_count}"
+                    # Default behavior: keep original unique_id
+                    # This covers both 'flag' strategy and normal windows in 'excise_window' strategy
+                    e_uid = unique_id
 
                 # NEW: Create window_uid with format: unique_id_timewindow_framestart_frameend
                 time_window_num = start // (window_size - overlap)
@@ -1039,8 +1055,7 @@ class ParticleMetrics:
                     'condition': [start_row['condition']],
                     'filename': [start_row['filename']],
                     'file_id': [start_row['file_id']],
-                    # 'unique_id': [current_unique_id],
-                    'unique_id': [unique_id],
+                    'unique_id': [unique_id],  # ← Always uses original unique_id now
                     'frame_start': [frame_start], # I added these to vectorize later mapping functions
                     'frame_end':   [frame_end],
                     'e_uid': [e_uid],
@@ -1089,17 +1104,12 @@ class ParticleMetrics:
                     'bad_fit_flag': [motion_class.startswith("bad_fit_flagged")]
                 })
                 
-                # # Append the kappa values to the window summary DataFrame
-                # window_summary['kappa_turning'] = kappa_turning
-                # window_summary['kappa_absolute'] = kappa_absolute
-
                 windowed_list.append(window_summary)
 
-
-            
             if track_removed:
                 print(f"Skipping unique_id {unique_id} entirely due to a bad fit in one or more windows.")
                 continue
+                
          # ─── after all windows, collapse majority if needed ───
         if use_majority:
             from collections import Counter
@@ -1281,16 +1291,28 @@ class ParticleMetrics:
         default_window_size = int(avg_track_length / 2)  # Example: use half the average length of the tracks
         return default_window_size
 
-    def calculate_all_features(self, max_lagtime=None, calculate_time_windowed=False):
+    def calculate_all_features(self, max_lagtime=None, calculate_time_windowed=False, calculate_time_averaged=True):
         """
         Calculate all features for the particle tracking data.
         This method will call all individual feature calculation methods.
+        
         Parameters:
-        - max_lagtime: maximum number of frames to consider for lag times
-        - calculate_time_windowed: boolean flag to indicate if time-windowed metrics should be calculated
+        -----------
+        max_lagtime : int, optional
+            Maximum number of frames to consider for lag times
+        calculate_time_windowed : bool, default False
+            Whether to calculate time-windowed metrics
+        calculate_time_averaged : bool, default True
+            Whether to calculate time-averaged metrics (MSD analysis per track)
+            Set to False for faster processing when only instantaneous features are needed
         """
-        # Calculate default max lag time if not provided
-        if max_lagtime is None:
+        print(f"🔧 Feature calculation options:")
+        print(f"   • Instantaneous features: ✓ Always calculated")
+        print(f"   • Time-windowed features: {'✓ Enabled' if calculate_time_windowed else '✗ Disabled'}")
+        print(f"   • Time-averaged features: {'✓ Enabled' if calculate_time_averaged else '✗ Disabled'}")
+        
+        # Calculate default max lag time if not provided (only needed for time-averaged)
+        if calculate_time_averaged and max_lagtime is None:
             max_lagtime = self.calculate_default_max_lagtime()
 
         # Calculate distances between consecutive frames
@@ -1320,18 +1342,34 @@ class ParticleMetrics:
 
         self.calculate_cum_displacement() #ADDED 3_19_2025
 
-        # Calculate MSD for each track and aggregate
-        self.calculate_msd_for_all_tracks(max_lagtime)
+        # Calculate MSD for each track and aggregate (OPTIONAL)
+        if calculate_time_averaged:
+            print("📊 Calculating time-averaged metrics (MSD analysis)...")
+            self.calculate_msd_for_all_tracks(max_lagtime)
+        else:
+            print("⏭️  Skipping time-averaged metrics calculation")
+            # Initialize empty time_averaged_df for consistency
+            self.time_averaged_df = pd.DataFrame()
 
         # Calculate instantaneous velocity
         self.calculate_instantaneous_velocity()
         
-        # Calculate time-windowed metrics if requested
+        # Calculate time-windowed metrics if requested (OPTIONAL)
         if calculate_time_windowed:
+            print("📊 Calculating time-windowed metrics...")
             self.calculate_time_windowed_metrics()
+        else:
+            print("⏭️  Skipping time-windowed metrics calculation")
+            # Initialize empty time_windowed_df for consistency
+            self.time_windowed_df = pd.DataFrame()
         
         # Cleanup step to remove temporary columns
         self.cleanup()
+        
+        print(f"✅ Feature calculation completed:")
+        print(f"   • Instantaneous features: {len(self.metrics_df)} trajectory points")
+        print(f"   • Time-averaged features: {len(self.time_averaged_df)} tracks")
+        print(f"   • Time-windowed features: {len(self.time_windowed_df)} windows")
         
         return self.metrics_df
 

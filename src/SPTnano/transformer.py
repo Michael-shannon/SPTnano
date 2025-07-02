@@ -180,13 +180,20 @@ def contrastive_loss(z_i, z_j, temperature=0.5):
     return loss.mean()
 
 class MotionTrainer:
-    def __init__(self, model, dataloader, lr=1e-4, device='cuda', use_tensorboard=False, tensorboard_log_dir=None, augmentation_strategy='basic', use_scheduler=False):
+    def __init__(self, model, train_dataloader, val_dataloader=None, lr=1e-4, device='cuda', use_tensorboard=False, tensorboard_log_dir=None, augmentation_strategy='basic', use_scheduler=False):
         self.model = model.to(device)
-        self.dataloader = dataloader
+        self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader  # NEW: Add validation dataloader
         self.device = device
         self.optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         self.criterion = torch.nn.MSELoss()
-        self.losses = []
+        
+        # Track both training and validation losses
+        self.train_losses = []
+        self.val_losses = []  # NEW: Track validation losses
+        
+        # For backward compatibility
+        self.losses = self.train_losses
         
         # Learning rate scheduler
         self.use_scheduler = use_scheduler
@@ -196,22 +203,6 @@ class MotionTrainer:
             self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer, mode='min', factor=0.5, patience=3, verbose=True
             )
-            
-            # 🔥 Alternative scheduler options (uncomment to try):
-            # Option 1: More conservative plateau detection
-            # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            #     self.optimizer, mode='min', factor=0.8, patience=8, verbose=True
-            # )
-            
-            # Option 2: Step-based reduction (every N epochs)
-            # self.scheduler = torch.optim.lr_scheduler.StepLR(
-            #     self.optimizer, step_size=10, gamma=0.8
-            # )
-            
-            # Option 3: Cosine annealing (smooth reduction)
-            # self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            #     self.optimizer, T_max=epochs, eta_min=1e-6
-            # )
         
         # TensorBoard setup
         self.use_tensorboard = use_tensorboard
@@ -248,11 +239,41 @@ class MotionTrainer:
                 return x + 0.01 * torch.randn_like(x, device=self.device)
             self.augmentation_fn = basic_noise_augmentation
     
-    def train(self, epochs=10):
+    def _train_epoch(self, dataloader):
+        """Train one epoch and return average loss"""
         self.model.train()
-        for epoch in range(epochs):
-            epoch_loss = 0
-            for batch in self.dataloader:
+        epoch_loss = 0
+        
+        for batch in dataloader:
+            # Handle both old format (tensor) and new format (dict)
+            if isinstance(batch, dict):
+                batch_features = batch['features'].to(self.device)
+            else:
+                batch_features = batch.to(self.device)
+            
+            x1 = batch_features
+            x2 = self.augmentation_fn(batch_features)
+            z1 = self.model(x1)
+            z2 = self.model(x2)
+            loss = contrastive_loss(z1, z2)
+            
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            epoch_loss += loss.item()
+        
+        return epoch_loss / len(dataloader)
+    
+    def _validate_epoch(self, dataloader):
+        """Validate one epoch and return average loss"""
+        if dataloader is None:
+            return None
+            
+        self.model.eval()
+        epoch_loss = 0
+        
+        with torch.no_grad():
+            for batch in dataloader:
                 # Handle both old format (tensor) and new format (dict)
                 if isinstance(batch, dict):
                     batch_features = batch['features'].to(self.device)
@@ -260,54 +281,83 @@ class MotionTrainer:
                     batch_features = batch.to(self.device)
                 
                 x1 = batch_features
-                x2 = self.augmentation_fn(batch_features)  # Now guaranteed to be on the correct device
+                x2 = self.augmentation_fn(batch_features)
                 z1 = self.model(x1)
                 z2 = self.model(x2)
                 loss = contrastive_loss(z1, z2)
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
                 epoch_loss += loss.item()
+        
+        return epoch_loss / len(dataloader)
+    
+    def train(self, epochs=10):
+        """Enhanced training with validation loss tracking"""
+        for epoch in range(epochs):
+            # Train epoch
+            train_loss = self._train_epoch(self.train_dataloader)
+            self.train_losses.append(train_loss)
             
-            avg_loss = epoch_loss / len(self.dataloader)
-            self.losses.append(avg_loss)
+            # Validate epoch
+            val_loss = self._validate_epoch(self.val_dataloader)
+            if val_loss is not None:
+                self.val_losses.append(val_loss)
             
             # Update learning rate scheduler
             if self.use_scheduler and self.scheduler:
-                self.scheduler.step(avg_loss)
+                # Use validation loss if available, otherwise training loss
+                loss_for_scheduler = val_loss if val_loss is not None else train_loss
+                self.scheduler.step(loss_for_scheduler)
             
             # Log to TensorBoard
             if self.use_tensorboard and self.writer:
-                self.writer.add_scalar('Loss/Train', avg_loss, epoch)
+                self.writer.add_scalar('Loss/Train', train_loss, epoch)
+                if val_loss is not None:
+                    self.writer.add_scalar('Loss/Validation', val_loss, epoch)
                 self.writer.add_scalar('Learning_Rate', self.optimizer.param_groups[0]['lr'], epoch)
-                # Also log learning rate changes as events
-                if epoch > 0 and len(self.losses) > 1:
-                    prev_lr = self.optimizer.param_groups[0]['lr']
-                    self.writer.add_scalar('LR_vs_Loss', prev_lr, avg_loss)
-                self.writer.flush()  # Ensure immediate logging
+                self.writer.flush()
             
+            # Print progress
             current_lr = self.optimizer.param_groups[0]['lr']
-            print(f"Epoch {epoch + 1}: Loss = {avg_loss:.4f}, LR = {current_lr:.2e}")
+            if val_loss is not None:
+                print(f"Epoch {epoch + 1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}, LR = {current_lr:.2e}")
+            else:
+                print(f"Epoch {epoch + 1}: Train Loss = {train_loss:.4f}, LR = {current_lr:.2e}")
         
         # Close TensorBoard writer
         if self.use_tensorboard and self.writer:
             self.writer.close()
 
     def plot_loss_curve(self):
-        """Plot the training loss curve"""
-        plt.figure(figsize=(10, 5))
-        plt.plot(self.losses, label='Training Loss')
+        """Plot training and validation loss curves"""
+        plt.figure(figsize=(12, 5))
+        
+        # Plot training loss
+        plt.subplot(1, 2, 1)
+        plt.plot(self.train_losses, label='Training Loss', color='blue')
+        if self.val_losses:
+            plt.plot(self.val_losses, label='Validation Loss', color='red')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
-        plt.title('Training Loss Curve')
+        plt.title('Training Progress')
         plt.legend()
         plt.grid(True)
+        
+        # Plot learning rate if scheduler is used
+        if self.use_scheduler and len(self.train_losses) > 1:
+            plt.subplot(1, 2, 2)
+            # This is approximate - in practice you'd store LR history
+            plt.plot(range(len(self.train_losses)), [self.optimizer.param_groups[0]['lr']] * len(self.train_losses))
+            plt.xlabel('Epoch')
+            plt.ylabel('Learning Rate')
+            plt.title('Learning Rate Schedule')
+            plt.grid(True)
+        
+        plt.tight_layout()
         plt.show()
 
     def extract_embeddings(self, dataloader=None):
         """Extract embeddings from the dataloader"""
         if dataloader is None:
-            dataloader = self.dataloader
+            dataloader = self.train_dataloader
             
         self.model.eval()
         all_embeddings = []
@@ -340,7 +390,8 @@ class MotionTrainer:
         save_dict = {
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'losses': self.losses,
+            'train_losses': self.train_losses,
+            'val_losses': self.val_losses,  # NEW: Save validation losses
             'augmentation_strategy': self.augmentation_strategy,
             'device': str(self.device)
         }
@@ -360,8 +411,16 @@ class MotionTrainer:
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
         # Load training history
-        if 'losses' in checkpoint:
-            self.losses = checkpoint['losses']
+        if 'train_losses' in checkpoint:
+            self.train_losses = checkpoint['train_losses']
+        elif 'losses' in checkpoint:  # Backward compatibility
+            self.train_losses = checkpoint['losses']
+        
+        if 'val_losses' in checkpoint:
+            self.val_losses = checkpoint['val_losses']
+        
+        # Update losses reference for backward compatibility
+        self.losses = self.train_losses
         
         # Load augmentation strategy
         if 'augmentation_strategy' in checkpoint:
@@ -369,13 +428,15 @@ class MotionTrainer:
             self._setup_augmentation()
         
         print(f"✅ Model loaded from: {path}")
-        print(f"   Previous training epochs: {len(self.losses)}")
+        print(f"   Previous training epochs: {len(self.train_losses)}")
+        if self.val_losses:
+            print(f"   Previous validation epochs: {len(self.val_losses)}")
         if 'augmentation_strategy' in checkpoint:
             print(f"   Augmentation strategy: {checkpoint['augmentation_strategy']}")
     
     def resume_training(self, epochs=10):
         """Resume training from current state"""
-        print(f"🔄 Resuming training from epoch {len(self.losses) + 1}")
+        print(f"🔄 Resuming training from epoch {len(self.train_losses) + 1}")
         self.train(epochs)
 
 # Convenience functions for easy use from notebooks
@@ -383,12 +444,329 @@ def create_trajectory_dataset(instant_df, window_size=60, overlap=30, min_track_
     """Create a trajectory dataset from pandas DataFrame"""
     return PandasTrajectoryDataset(instant_df, window_size, overlap, min_track_length)
 
+def create_smart_train_val_test_split(instant_df, 
+                                    val_split=0.15, 
+                                    test_split=0.2, 
+                                    split_strategy='hybrid_cell',
+                                    random_seed=42):
+    """
+    Create smart train/validation/test splits with multiple strategies.
+    
+    Args:
+        instant_df: DataFrame with trajectory data
+        val_split: Fraction for validation set
+        test_split: Fraction for test set  
+        split_strategy: 'hybrid_cell', 'stratified', 'random', 'cell_balanced'
+        random_seed: Random seed for reproducibility
+    
+    Returns:
+        train_df, val_df, test_df: Split dataframes
+        split_info: Dictionary with split statistics
+    """
+    np.random.seed(random_seed)
+    
+    # Get track and cell information
+    track_info = instant_df.groupby('unique_id').agg({
+        'condition': 'first',
+        'filename': 'first',  # Cell identifier
+        'frame': 'count'      # Track length
+    }).reset_index()
+    track_info.columns = ['unique_id', 'condition', 'filename', 'track_length']
+    
+    print(f"📊 Data Overview:")
+    print(f"   Total tracks: {len(track_info)}")
+    print(f"   Unique conditions: {track_info['condition'].nunique()}")
+    print(f"   Unique cells (filenames): {track_info['filename'].nunique()}")
+    print(f"   Strategy: {split_strategy}")
+    
+    if split_strategy == 'hybrid_cell':
+        # 🎯 HYBRID STRATEGY: Mixed train/val, complete cells for test
+        print(f"\n🎯 Hybrid Cell Strategy:")
+        print(f"   - Test set: Complete cells (clean visualization)")
+        print(f"   - Train/Val: Mixed tracks from remaining cells (robust training)")
+        
+        # Group tracks by cell (filename) and condition
+        cells_info = track_info.groupby('filename').agg({
+            'unique_id': 'count',
+            'condition': lambda x: list(x.unique()),
+            'track_length': 'sum'
+        }).reset_index()
+        cells_info.columns = ['filename', 'n_tracks', 'conditions', 'total_frames']
+        
+        # 🔥 NEW: Condition-aware test cell selection
+        print(f"\n🔍 Analyzing cells by condition for balanced test selection...")
+        
+        # Get unique conditions and their distribution
+        all_conditions = track_info['condition'].unique()
+        condition_track_counts = track_info['condition'].value_counts()
+        
+        print(f"   Available conditions: {list(all_conditions)}")
+        print(f"   Track distribution: {dict(condition_track_counts)}")
+        
+        # Group cells by their primary condition (handle multi-condition cells)
+        cells_by_condition = {}
+        for _, cell in cells_info.iterrows():
+            # Handle cells that might have multiple conditions (should be rare)
+            primary_condition = cell['conditions'][0] if cell['conditions'] else 'unknown'
+            if len(cell['conditions']) > 1:
+                print(f"   ⚠️ Cell {cell['filename']} has multiple conditions: {cell['conditions']}")
+                print(f"      Using primary condition: {primary_condition}")
+            
+            if primary_condition not in cells_by_condition:
+                cells_by_condition[primary_condition] = []
+            cells_by_condition[primary_condition].append(cell)
+        
+        # Calculate target test tracks per condition (proportional to condition frequency)
+        target_test_tracks = int(len(track_info) * test_split)
+        target_per_condition = {}
+        
+        for condition in all_conditions:
+            condition_proportion = condition_track_counts[condition] / len(track_info)
+            target_per_condition[condition] = int(target_test_tracks * condition_proportion)
+        
+        print(f"   Target test tracks per condition: {target_per_condition}")
+        
+        # Select test cells while balancing conditions
+        test_cells = []
+        selected_per_condition = {condition: 0 for condition in all_conditions}
+        
+        # Sort cells within each condition by total frames (prefer larger cells for cleaner visualization)
+        for condition in all_conditions:
+            if condition in cells_by_condition:
+                condition_cells = sorted(cells_by_condition[condition], 
+                                       key=lambda x: x['total_frames'], reverse=True)
+                
+                # Select cells for this condition
+                for cell in condition_cells:
+                    current_selected = selected_per_condition[condition]
+                    target_for_condition = target_per_condition[condition]
+                    
+                    # Add cell if we haven't reached the target for this condition
+                    # Or if no cells selected yet for this condition (ensure each condition gets at least one cell)
+                    if (current_selected < target_for_condition or 
+                        (current_selected == 0 and len(test_cells) < len(all_conditions))):
+                        
+                        test_cells.append(cell['filename'])
+                        selected_per_condition[condition] += cell['n_tracks']
+                        
+                        print(f"   ✅ Selected cell {cell['filename']} ({condition}): {cell['n_tracks']} tracks")
+                        
+                        # Check if we have enough total test tracks
+                        total_selected = sum(selected_per_condition.values())
+                        if total_selected >= target_test_tracks:
+                            break
+                
+                # Break outer loop if we have enough tracks
+                total_selected = sum(selected_per_condition.values())
+                if total_selected >= target_test_tracks:
+                    break
+        
+        # Fallback: if we don't have enough cells, add more from any condition
+        total_selected = sum(selected_per_condition.values())
+        if total_selected < target_test_tracks * 0.8:  # If we're significantly under target
+            print(f"   ⚠️ Only selected {total_selected} tracks, target was {target_test_tracks}")
+            print(f"   📋 Adding additional cells to reach target...")
+            
+            # Get all remaining cells
+            all_remaining_cells = []
+            for condition, cells in cells_by_condition.items():
+                for cell in cells:
+                    if cell['filename'] not in test_cells:
+                        all_remaining_cells.append(cell)
+            
+            # Sort by size and add until we reach target
+            all_remaining_cells.sort(key=lambda x: x['total_frames'], reverse=True)
+            for cell in all_remaining_cells:
+                if total_selected >= target_test_tracks:
+                    break
+                test_cells.append(cell['filename'])
+                # Find which condition this cell belongs to
+                cell_condition = cell['conditions'][0]
+                selected_per_condition[cell_condition] += cell['n_tracks']
+                total_selected += cell['n_tracks']
+                print(f"   📋 Added {cell['filename']} ({cell_condition}): {cell['n_tracks']} tracks")
+        
+        # Report final test set composition
+        print(f"\n📊 Final Test Set Composition:")
+        for condition in all_conditions:
+            selected = selected_per_condition[condition]
+            total_condition = condition_track_counts[condition]
+            percentage = (selected / total_condition * 100) if total_condition > 0 else 0
+            print(f"   {condition}: {selected}/{total_condition} tracks ({percentage:.1f}%)")
+        
+        # Get test tracks (complete cells)
+        test_track_ids = track_info[track_info['filename'].isin(test_cells)]['unique_id'].tolist()
+        
+        # Remaining tracks for train/val (mixed cells)
+        remaining_track_info = track_info[~track_info['filename'].isin(test_cells)]
+        
+        # Stratified split of remaining tracks for train/val
+        train_tracks, val_tracks = _stratified_track_split(
+            remaining_track_info, 
+            val_fraction=val_split / (1 - test_split),  # Adjust for reduced pool
+            random_seed=random_seed
+        )
+        
+        split_info = {
+            'strategy': 'hybrid_cell',
+            'test_cells': test_cells,
+            'test_tracks': len(test_track_ids),
+            'train_tracks': len(train_tracks),
+            'val_tracks': len(val_tracks),
+            'test_complete_cells': True,
+            'test_condition_balance': selected_per_condition,  # NEW: Track condition balance
+            'target_per_condition': target_per_condition  # NEW: Track targets
+        }
+        
+    elif split_strategy == 'stratified':
+        # Stratified by condition only
+        train_tracks, remaining_tracks = _stratified_track_split(
+            track_info, 
+            val_fraction=val_split + test_split,
+            random_seed=random_seed
+        )
+        
+        remaining_info = track_info[track_info['unique_id'].isin(remaining_tracks)]
+        val_tracks, test_track_ids = _stratified_track_split(
+            remaining_info,
+            val_fraction=val_split / (val_split + test_split),
+            random_seed=random_seed + 1
+        )
+        
+        split_info = {
+            'strategy': 'stratified',
+            'test_complete_cells': False
+        }
+        
+    elif split_strategy == 'cell_balanced':
+        # Balance cells across splits
+        cells_info = track_info.groupby('filename').agg({
+            'unique_id': list,
+            'condition': lambda x: list(x.unique())
+        }).reset_index()
+        
+        # Distribute cells across splits
+        np.random.shuffle(cells_info.values)
+        n_cells = len(cells_info)
+        
+        test_cells_end = int(n_cells * test_split)
+        val_cells_end = test_cells_end + int(n_cells * val_split)
+        
+        test_cells = cells_info.iloc[:test_cells_end]
+        val_cells = cells_info.iloc[test_cells_end:val_cells_end]
+        train_cells = cells_info.iloc[val_cells_end:]
+        
+        test_track_ids = [track for tracks in test_cells['unique_id'] for track in tracks]
+        val_tracks = [track for tracks in val_cells['unique_id'] for track in tracks]
+        train_tracks = [track for tracks in train_cells['unique_id'] for track in tracks]
+        
+        split_info = {
+            'strategy': 'cell_balanced',
+            'test_complete_cells': True
+        }
+        
+    else:  # random
+        # Simple random split
+        all_tracks = track_info['unique_id'].tolist()
+        np.random.shuffle(all_tracks)
+        
+        n_test = int(len(all_tracks) * test_split)
+        n_val = int(len(all_tracks) * val_split)
+        
+        test_track_ids = all_tracks[:n_test]
+        val_tracks = all_tracks[n_test:n_test + n_val]
+        train_tracks = all_tracks[n_test + n_val:]
+        
+        split_info = {
+            'strategy': 'random',
+            'test_complete_cells': False
+        }
+    
+    # Create the split dataframes
+    train_df = instant_df[instant_df['unique_id'].isin(train_tracks)].copy()
+    val_df = instant_df[instant_df['unique_id'].isin(val_tracks)].copy()
+    test_df = instant_df[instant_df['unique_id'].isin(test_track_ids)].copy()
+    
+    # Update split info with final statistics
+    split_info.update({
+        'total_tracks': len(track_info),
+        'train_tracks': len(train_tracks),
+        'val_tracks': len(val_tracks),
+        'test_tracks': len(test_track_ids),
+        'train_points': len(train_df),
+        'val_points': len(val_df),
+        'test_points': len(test_df)
+    })
+    
+    # Report split quality
+    print(f"\n✅ Split Results:")
+    print(f"   Train: {len(train_tracks)} tracks ({len(train_df):,} points)")
+    print(f"   Val:   {len(val_tracks)} tracks ({len(val_df):,} points)")
+    print(f"   Test:  {len(test_track_ids)} tracks ({len(test_df):,} points)")
+    
+    # Check condition balance
+    print(f"\n🔍 Condition Balance:")
+    for split_name, df in [('Train', train_df), ('Val', val_df), ('Test', test_df)]:
+        if len(df) > 0:
+            condition_counts = df.groupby('unique_id')['condition'].first().value_counts()
+            print(f"   {split_name}: {dict(condition_counts)}")
+    
+    if split_strategy == 'hybrid_cell':
+        print(f"\n🎯 Test Set Cell Info:")
+        test_cell_info = test_df.groupby('filename').agg({
+            'unique_id': 'nunique',
+            'condition': lambda x: list(x.unique())[0]
+        })
+        for filename, info in test_cell_info.iterrows():
+            print(f"   {filename}: {info['unique_id']} tracks, {info['condition']}")
+        
+        # NEW: Show condition balance quality
+        if 'test_condition_balance' in split_info:
+            print(f"\n🎯 Test Set Condition Balance Quality:")
+            actual_balance = split_info['test_condition_balance']
+            target_balance = split_info['target_per_condition']
+            
+            for condition in actual_balance.keys():
+                actual = actual_balance[condition]
+                target = target_balance[condition]
+                ratio = (actual / target) if target > 0 else float('inf')
+                
+                if 0.8 <= ratio <= 1.2:  # Within 20% of target
+                    status = "✅ Good"
+                elif 0.5 <= ratio <= 2.0:  # Within 50% of target
+                    status = "⚠️ Acceptable"
+                else:
+                    status = "❌ Imbalanced"
+                
+                print(f"   {condition}: {actual}/{target} tracks (ratio: {ratio:.2f}) {status}")
+    
+    return train_df, val_df, test_df, split_info
+
+def _stratified_track_split(track_info, val_fraction, random_seed=42):
+    """Helper function for stratified splitting by condition"""
+    np.random.seed(random_seed)
+    
+    train_tracks = []
+    val_tracks = []
+    
+    for condition in track_info['condition'].unique():
+        condition_tracks = track_info[track_info['condition'] == condition]['unique_id'].tolist()
+        np.random.shuffle(condition_tracks)
+        
+        n_val = int(len(condition_tracks) * val_fraction)
+        val_tracks.extend(condition_tracks[:n_val])
+        train_tracks.extend(condition_tracks[n_val:])
+    
+    return train_tracks, val_tracks
+
 def train_motion_transformer(instant_df, 
                            window_size=60, 
                            overlap=30, 
                            batch_size=64, 
                            epochs=10, 
+                           val_split=0.15,
                            test_split=0.2,
+                           split_strategy='hybrid_cell',
                            device='auto',
                            use_tensorboard=False,
                            tensorboard_log_dir=None,
@@ -396,7 +774,7 @@ def train_motion_transformer(instant_df,
                            save_model_path=None,
                            use_scheduler=False):
     """
-    Complete pipeline to train a motion transformer on trajectory data
+    Enhanced pipeline to train a motion transformer with smart data splitting and validation tracking.
     
     Args:
         instant_df: DataFrame with trajectory data
@@ -404,60 +782,79 @@ def train_motion_transformer(instant_df,
         overlap: Overlap between windows
         batch_size: Training batch size
         epochs: Number of training epochs
+        val_split: Fraction of data for validation (from train+val pool)
         test_split: Fraction of data for testing
+        split_strategy: 'hybrid_cell', 'stratified', 'random', 'cell_balanced'
         device: 'auto', 'cuda', or 'cpu'
         use_tensorboard: Enable TensorBoard logging
         tensorboard_log_dir: Directory for TensorBoard logs
-        augmentation_strategy: Augmentation strategy ('basic', 'comprehensive', etc.)
-        save_model_path: Path to save trained model (optional)
+        augmentation_strategy: Augmentation strategy
+        save_model_path: Path to save trained model
+        use_scheduler: Use learning rate scheduler
     
     Returns:
         trainer: Trained MotionTrainer object
-        train_dataset: Training dataset
-        test_dataset: Test dataset
+        datasets: Dict with train, val, test datasets
+        split_info: Information about the data split
     """
     if device == 'auto':
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    print(f"Using device: {device}")
+    print(f"🚀 Enhanced Motion Transformer Training")
+    print(f"   Device: {device}")
+    print(f"   Window: {window_size}f, Overlap: {overlap}f")
+    print(f"   Splits: {1-(val_split+test_split):.1f} train, {val_split:.1f} val, {test_split:.1f} test")
     
-    # Split data by tracks to avoid leakage
-    unique_tracks = instant_df['unique_id'].unique()
-    np.random.seed(42)
-    train_tracks = np.random.choice(unique_tracks, size=int((1-test_split) * len(unique_tracks)), replace=False)
-    test_tracks = np.setdiff1d(unique_tracks, train_tracks)
-    
-    train_df = instant_df[instant_df['unique_id'].isin(train_tracks)]
-    test_df = instant_df[instant_df['unique_id'].isin(test_tracks)]
-    
-    print(f"Train tracks: {len(train_tracks)}, Test tracks: {len(test_tracks)}")
+    # Create smart train/val/test split
+    train_df, val_df, test_df, split_info = create_smart_train_val_test_split(
+        instant_df, 
+        val_split=val_split,
+        test_split=test_split, 
+        split_strategy=split_strategy
+    )
     
     # Create datasets
+    print(f"\n🔄 Creating datasets...")
     train_dataset = PandasTrajectoryDataset(train_df, window_size, overlap)
+    val_dataset = PandasTrajectoryDataset(val_df, window_size, overlap) if len(val_df) > 0 else None
     test_dataset = PandasTrajectoryDataset(test_df, window_size, overlap)
     
-    print(f"Train windows: {len(train_dataset)}, Test windows: {len(test_dataset)}")
+    print(f"   Train windows: {len(train_dataset)}")
+    print(f"   Val windows: {len(val_dataset) if val_dataset else 0}")
+    print(f"   Test windows: {len(test_dataset)}")
     
     # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False) if val_dataset else None
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     
     # Create and train model
-    model = TransformerMotionEncoder(input_dim=3)  # 3 features: dx, dy, direction
-    trainer = MotionTrainer(model, train_loader, device=device, 
-                           use_tensorboard=use_tensorboard, 
-                           tensorboard_log_dir=tensorboard_log_dir,
-                           augmentation_strategy=augmentation_strategy,
-                           use_scheduler=use_scheduler)
+    model = TransformerMotionEncoder(input_dim=3)
+    trainer = MotionTrainer(
+        model, 
+        train_loader, 
+        val_loader,  # Now properly supports validation
+        device=device, 
+        use_tensorboard=use_tensorboard, 
+        tensorboard_log_dir=tensorboard_log_dir,
+        augmentation_strategy=augmentation_strategy,
+        use_scheduler=use_scheduler
+    )
     
-    print("Starting training...")
+    print(f"\n🚀 Starting training with validation tracking...")
     trainer.train(epochs=epochs)
     
     # Save model if path provided
     if save_model_path:
         trainer.save_model(save_model_path)
     
-    return trainer, train_dataset, test_dataset
+    datasets = {
+        'train': train_dataset,
+        'val': val_dataset,
+        'test': test_dataset
+    }
+    
+    return trainer, datasets, split_info
 
 def train_multi_scale_transformers(
     df, 
@@ -552,13 +949,15 @@ def train_multi_scale_transformers(
             if save_models and tensorboard_base_dir:
                 scale_model_path = os.path.join(tensorboard_base_dir, f"model_{window_size}f.pt")
             
-            trainer, train_dataset, test_dataset = train_motion_transformer(
+            trainer, datasets, split_info = train_motion_transformer(
                 df,
                 window_size=window_size,
                 overlap=overlap,
                 batch_size=batch_size,
                 epochs=epochs,
+                val_split=0.15,  # Add validation split
                 test_split=test_split,
+                split_strategy='hybrid_cell',  # Use smart splitting
                 device=device,
                 use_tensorboard=use_tensorboard,
                 tensorboard_log_dir=scale_tensorboard_dir,
@@ -566,6 +965,9 @@ def train_multi_scale_transformers(
                 save_model_path=scale_model_path,
                 use_scheduler=use_scheduler
             )
+            
+            train_dataset = datasets['train']
+            test_dataset = datasets['test']
             
             print(f"   ✓ Training completed: {len(train_dataset)} train, {len(test_dataset)} test windows")
             
