@@ -74,7 +74,6 @@ class PandasTrajectoryDataset(Dataset):
                 continue
                 
             # Generate overlapping windows for this track
-            time_window_num = 0
             for start_idx in range(0, len(track_data) - self.window_size + 1, self.step_size):
                 end_idx = start_idx + self.window_size
                 window_data = track_data.iloc[start_idx:end_idx].copy()
@@ -83,6 +82,9 @@ class PandasTrajectoryDataset(Dataset):
                 features = self._extract_features(window_data)
                 
                 if features is not None:
+                    # Calculate time_window_num EXACTLY like features.py: start // (window_size - overlap)
+                    time_window_num = start_idx // self.step_size
+                    
                     # Create window_uid that matches features.py format: unique_id_timewindow_framestart_frameend
                     frame_start = window_data.iloc[0]['frame']
                     frame_end = window_data.iloc[-1]['frame']
@@ -98,7 +100,6 @@ class PandasTrajectoryDataset(Dataset):
                         'time_window': time_window_num,  # NEW: Add time window number
                         'condition': track_data['condition'].iloc[0]  # Store condition for analysis
                     })
-                    time_window_num += 1
                     
         return windows
     
@@ -368,18 +369,73 @@ class MotionTrainer:
                 # Handle both old format (tensor) and new format (dict)
                 if isinstance(batch, dict):
                     batch_features = batch['features'].to(self.device)
-                    # Store track info if available
-                    if hasattr(dataloader.dataset, 'get_track_info'):
-                        batch_size = batch_features.shape[0]
-                        batch_indices = range(len(track_info), len(track_info) + batch_size)
-                        # This is approximate - for exact mapping you'd need batch indices
+                    # Extract metadata for each item in the batch
+                    batch_metadata = []
+                    for i in range(len(batch_features)):
+                        metadata = {}
+                        for key, value in batch.items():
+                            if key != 'features':  # Skip the features tensor
+                                if isinstance(value, list):
+                                    metadata[key] = value[i] if i < len(value) else None
+                                elif hasattr(value, '__getitem__'):
+                                    try:
+                                        metadata[key] = value[i].item() if hasattr(value[i], 'item') else value[i]
+                                    except:
+                                        metadata[key] = None
+                                else:
+                                    metadata[key] = value
+                        batch_metadata.append(metadata)
+                    track_info.extend(batch_metadata)
                 else:
                     batch_features = batch.to(self.device)
+                    # No metadata available for old format
+                    batch_metadata = [{}] * len(batch_features)
+                    track_info.extend(batch_metadata)
                 
                 embeddings = self.model(batch_features)
                 all_embeddings.append(embeddings.cpu().numpy())
                 
         return np.vstack(all_embeddings)
+    
+    def extract_embeddings_with_metadata(self, dataloader=None):
+        """Extract embeddings AND metadata for proper mapping"""
+        if dataloader is None:
+            dataloader = self.train_dataloader
+            
+        self.model.eval()
+        all_embeddings = []
+        all_metadata = []
+        
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(dataloader):
+                # Handle both old format (tensor) and new format (dict)
+                if isinstance(batch, dict):
+                    batch_features = batch['features'].to(self.device)
+                    # Extract metadata for each item in the batch
+                    for i in range(len(batch_features)):
+                        metadata = {'batch_idx': batch_idx, 'within_batch_idx': i}
+                        for key, value in batch.items():
+                            if key != 'features':  # Skip the features tensor
+                                if isinstance(value, list):
+                                    metadata[key] = value[i] if i < len(value) else None
+                                elif hasattr(value, '__getitem__'):
+                                    try:
+                                        metadata[key] = value[i].item() if hasattr(value[i], 'item') else value[i]
+                                    except:
+                                        metadata[key] = None
+                                else:
+                                    metadata[key] = value
+                        all_metadata.append(metadata)
+                else:
+                    batch_features = batch.to(self.device)
+                    # No metadata available for old format
+                    for i in range(len(batch_features)):
+                        all_metadata.append({'batch_idx': batch_idx, 'within_batch_idx': i})
+                
+                embeddings = self.model(batch_features)
+                all_embeddings.append(embeddings.cpu().numpy())
+                
+        return np.vstack(all_embeddings), all_metadata
 
     def cluster_embeddings(self, embeddings, n_clusters=5):
         kmeans = KMeans(n_clusters=n_clusters, random_state=42)
@@ -1425,3 +1481,326 @@ def map_multiscale_clusters_to_instant(
         )
     
     return result_df
+
+def map_clusters_to_time_windowed_df(
+    time_windowed_df: pd.DataFrame, 
+    transformer_windows: list, 
+    cluster_labels: np.ndarray
+) -> pd.DataFrame:
+    """
+    Step 1: Map transformer clusters to time_windowed_df using window_uid.
+    
+    This is the direct mapping step - transformer windows should have the same
+    window_uid format as time_windowed_df: unique_id_timewindow_framestart_frameend
+    
+    Parameters:
+    -----------
+    time_windowed_df : pd.DataFrame
+        Your original time_windowed_df with window_uid column
+    transformer_windows : list
+        List of window info dicts from transformer dataset.get_track_info()
+    cluster_labels : np.ndarray
+        Cluster assignments from clustering the transformer embeddings
+        
+    Returns:
+    --------
+    pd.DataFrame
+        time_windowed_df with cluster column added
+    """
+    print("🔗 Step 1: Mapping clusters to time_windowed_df using window_uid...")
+    print("🔍 DETAILED DIAGNOSTICS:")
+    
+    # Create window_uid -> cluster mapping
+    window_cluster_map = {}
+    for i, window_info in enumerate(transformer_windows):
+        if i < len(cluster_labels):
+            window_uid = window_info['window_uid']
+            cluster_id = cluster_labels[i]
+            window_cluster_map[window_uid] = cluster_id
+    
+    print(f"   📊 Created mapping for {len(window_cluster_map)} transformer windows")
+    
+    # Diagnostic: Check window_uid formats
+    print(f"\n🔍 WINDOW_UID FORMAT ANALYSIS:")
+    
+    # Sample transformer window_uids
+    transformer_sample = list(window_cluster_map.keys())[:5]
+    print(f"   📋 Sample transformer window_uids:")
+    for uid in transformer_sample:
+        print(f"      • {uid}")
+    
+    # Sample time_windowed_df window_uids
+    windowed_sample = time_windowed_df['window_uid'].head(5).tolist()
+    print(f"   📋 Sample time_windowed_df window_uids:")
+    for uid in windowed_sample:
+        print(f"      • {uid}")
+    
+    # Check for exact matches
+    transformer_uids = set(window_cluster_map.keys())
+    windowed_uids = set(time_windowed_df['window_uid'].tolist())
+    
+    matches = transformer_uids.intersection(windowed_uids)
+    transformer_only = transformer_uids - windowed_uids
+    windowed_only = windowed_uids - transformer_uids
+    
+    print(f"\n🎯 MATCHING ANALYSIS:")
+    print(f"   ✅ Exact matches: {len(matches)}")
+    print(f"   🔴 Transformer only: {len(transformer_only)}")
+    print(f"   🔵 Time_windowed only: {len(windowed_only)}")
+    
+    if len(transformer_only) > 0:
+        print(f"   📋 Sample transformer-only window_uids:")
+        for uid in list(transformer_only)[:3]:
+            print(f"      • {uid}")
+    
+    if len(windowed_only) > 0:
+        print(f"   📋 Sample windowed-only window_uids:")
+        for uid in list(windowed_only)[:3]:
+            print(f"      • {uid}")
+    
+    # Add cluster column to time_windowed_df
+    result_df = time_windowed_df.copy()
+    result_df['cluster'] = result_df['window_uid'].map(window_cluster_map)
+    
+    # Report mapping success
+    mapped_count = result_df['cluster'].notna().sum()
+    total_count = len(result_df)
+    coverage = (mapped_count / total_count) * 100
+    
+    print(f"\n   ✅ Successfully mapped {mapped_count:,}/{total_count:,} windows ({coverage:.1f}% coverage)")
+    
+    return result_df
+
+def map_clusters_from_windowed_to_instant_df(
+    instant_df: pd.DataFrame, 
+    time_windowed_df_with_clusters: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Step 2: Map clusters from time_windowed_df to instant_df using existing window_uid.
+    
+    This uses the pre-calculated window_uid mapping that already exists between
+    time_windowed_df and instant_df (created when features were calculated).
+    
+    Parameters:
+    -----------
+    instant_df : pd.DataFrame
+        Your original instant_df with window_uid column
+    time_windowed_df_with_clusters : pd.DataFrame
+        time_windowed_df with cluster column added from step 1
+        
+    Returns:
+    --------
+    pd.DataFrame
+        instant_df with cluster column added
+    """
+    print("🔗 Step 2: Mapping clusters from time_windowed_df to instant_df using window_uid...")
+    
+    # Create window_uid -> cluster mapping from time_windowed_df
+    window_cluster_map = {}
+    for _, row in time_windowed_df_with_clusters.iterrows():
+        window_uid = row['window_uid']
+        cluster_id = row['cluster']
+        if pd.notna(cluster_id):
+            window_cluster_map[window_uid] = cluster_id
+    
+    print(f"   📊 Created mapping for {len(window_cluster_map)} windows with clusters")
+    
+    # Add cluster column to instant_df using existing window_uid
+    result_df = instant_df.copy()
+    result_df['cluster'] = result_df['window_uid'].map(window_cluster_map)
+    
+    # Report mapping success
+    mapped_count = result_df['cluster'].notna().sum()
+    total_count = len(result_df)
+    coverage = (mapped_count / total_count) * 100
+    
+    print(f"   ✅ Successfully mapped {mapped_count:,}/{total_count:,} trajectory points ({coverage:.1f}% coverage)")
+    
+    return result_df
+
+def cluster_test_set_only_with_mapping(
+    trainer,
+    datasets: dict,
+    time_windowed_df: pd.DataFrame,
+    instant_df: pd.DataFrame,
+    n_clusters: int = 5,
+    cluster_method: str = 'kmeans'
+) -> dict:
+    """
+    Complete test-set-only pipeline: Extract test embeddings, cluster, and map to filtered dataframes.
+    
+    This is the scientifically rigorous approach that:
+    1. Clusters TEST embeddings only
+    2. Filters time_windowed_df to TEST cells only
+    3. Filters instant_df to TEST cells only  
+    4. Maps test clusters to test-only dataframes using window_uid
+    
+    Parameters:
+    -----------
+    trainer : MotionTrainer
+        Trained transformer model
+    datasets : dict
+        Dictionary containing 'train', 'val', 'test' datasets
+    time_windowed_df : pd.DataFrame
+        Full time_windowed_df (will be filtered to test cells)
+    instant_df : pd.DataFrame
+        Full instant_df (will be filtered to test cells)
+    n_clusters : int
+        Number of clusters
+    cluster_method : str
+        Clustering method ('kmeans', 'hdbscan')
+        
+    Returns:
+    --------
+    dict
+        Results with test-only dataframes containing cluster assignments
+    """
+    print("🧪 TEST-SET-ONLY Transformer Clustering with window_uid Mapping")
+    print("=" * 70)
+    
+    # Step 1: Extract test embeddings and cluster
+    print("📊 Step 1: Extracting and clustering TEST embeddings...")
+    from torch.utils.data import DataLoader
+    
+    test_dataset = datasets['test']
+    test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+    
+    test_embeddings = trainer.extract_embeddings(test_dataloader)
+    test_clusters = trainer.cluster_embeddings(test_embeddings, n_clusters=n_clusters)
+    transformer_windows = test_dataset.get_track_info()
+    
+    print(f"   ✅ Extracted {test_embeddings.shape[0]} test embeddings")
+    print(f"   ✅ Clustered into {len(np.unique(test_clusters))} clusters")
+    
+    # Step 2: Get test cell filenames
+    print("\n📂 Step 2: Identifying test cells...")
+    test_cell_filenames = set()
+    for window_info in transformer_windows:
+        # Get track info from the original dataset to find filename
+        track_id = window_info['unique_id']
+        track_condition = window_info['condition']
+        test_cell_filenames.add((track_id, track_condition))
+    
+    # Get actual filenames from instant_df for these tracks
+    test_track_ids = [info['unique_id'] for info in transformer_windows]
+    test_filenames = instant_df[instant_df['unique_id'].isin(test_track_ids)]['filename'].unique()
+    
+    print(f"   ✅ Test tracks: {len(test_track_ids)} unique tracks")
+    print(f"   ✅ Test cells: {len(test_filenames)} unique filenames")
+    print(f"   📋 Test filenames: {list(test_filenames)[:5]}{'...' if len(test_filenames) > 5 else ''}")
+    
+    # Step 3: Filter time_windowed_df to test cells only
+    print("\n🔍 Step 3: Filtering time_windowed_df to test cells only...")
+    if 'filename' in time_windowed_df.columns:
+        test_time_windowed_df = time_windowed_df[time_windowed_df['filename'].isin(test_filenames)].copy()
+    else:
+        # Fallback: filter by unique_id
+        test_time_windowed_df = time_windowed_df[time_windowed_df['unique_id'].isin(test_track_ids)].copy()
+    
+    print(f"   📊 Original time_windowed_df: {len(time_windowed_df)} windows")
+    print(f"   📊 Test-only time_windowed_df: {len(test_time_windowed_df)} windows")
+    print(f"   📊 Reduction: {len(time_windowed_df) - len(test_time_windowed_df)} windows filtered out")
+    
+    # Step 4: Filter instant_df to test cells only
+    print("\n🔍 Step 4: Filtering instant_df to test cells only...")
+    test_instant_df = instant_df[instant_df['filename'].isin(test_filenames)].copy()
+    
+    print(f"   📊 Original instant_df: {len(instant_df)} trajectory points")
+    print(f"   📊 Test-only instant_df: {len(test_instant_df)} trajectory points")
+    print(f"   📊 Reduction: {len(instant_df) - len(test_instant_df)} points filtered out")
+    
+    # Step 5: Map test clusters to test-only time_windowed_df
+    print("\n🔗 Step 5: Mapping clusters to test-only time_windowed_df...")
+    
+    # Create window_uid -> cluster mapping from transformer results
+    window_cluster_map = {}
+    for i, window_info in enumerate(transformer_windows):
+        window_uid = window_info['window_uid']
+        cluster_id = test_clusters[i]
+        window_cluster_map[window_uid] = cluster_id
+    
+    print(f"   📊 Created mapping for {len(window_cluster_map)} test windows")
+    
+    # Add cluster column to test time_windowed_df
+    test_time_windowed_df_with_clusters = test_time_windowed_df.copy()
+    test_time_windowed_df_with_clusters['cluster'] = test_time_windowed_df_with_clusters['window_uid'].map(window_cluster_map)
+    
+    # Report mapping success for windowed data
+    windowed_mapped_count = test_time_windowed_df_with_clusters['cluster'].notna().sum()
+    windowed_total_count = len(test_time_windowed_df_with_clusters)
+    windowed_coverage = (windowed_mapped_count / windowed_total_count) * 100
+    
+    print(f"   ✅ Windowed mapping: {windowed_mapped_count:,}/{windowed_total_count:,} windows ({windowed_coverage:.1f}% coverage)")
+    
+    # Step 6: Map clusters from test windowed to test instant using window_uid
+    print("\n🔗 Step 6: Mapping clusters from test windowed to test instant...")
+    
+    # Create window_uid -> cluster mapping from test windowed data
+    windowed_cluster_map = {}
+    for _, row in test_time_windowed_df_with_clusters.iterrows():
+        window_uid = row['window_uid']
+        cluster_id = row['cluster']
+        if pd.notna(cluster_id):
+            windowed_cluster_map[window_uid] = cluster_id
+    
+    # Add cluster column to test instant_df
+    test_instant_df_with_clusters = test_instant_df.copy()
+    test_instant_df_with_clusters['cluster'] = test_instant_df_with_clusters['window_uid'].map(windowed_cluster_map)
+    
+    # Report mapping success for instant data
+    instant_mapped_count = test_instant_df_with_clusters['cluster'].notna().sum()
+    instant_total_count = len(test_instant_df_with_clusters)
+    instant_coverage = (instant_mapped_count / instant_total_count) * 100
+    
+    print(f"   ✅ Instant mapping: {instant_mapped_count:,}/{instant_total_count:,} points ({instant_coverage:.1f}% coverage)")
+    
+    # Step 7: Calculate clustering quality metrics
+    print("\n📊 Step 7: Calculating clustering quality metrics...")
+    
+    from sklearn.metrics import silhouette_score, davies_bouldin_score
+    import collections
+    
+    test_silhouette = silhouette_score(test_embeddings, test_clusters)
+    test_davies_bouldin = davies_bouldin_score(test_embeddings, test_clusters)
+    cluster_counts = collections.Counter(test_clusters)
+    cluster_balance = min(cluster_counts.values()) / max(cluster_counts.values())
+    
+    print(f"   • Silhouette Score: {test_silhouette:.3f}")
+    print(f"   • Davies-Bouldin Score: {test_davies_bouldin:.3f}")
+    print(f"   • Cluster Balance: {cluster_balance:.3f}")
+    print(f"   • Cluster Counts: {dict(cluster_counts)}")
+    
+    # Final success assessment
+    mapping_success = windowed_coverage > 80 and instant_coverage > 50
+    
+    print(f"\n🎯 TEST-SET-ONLY CLUSTERING RESULTS:")
+    print(f"   ✅ Test embeddings: {len(test_embeddings)} windows from {len(test_filenames)} cells")
+    print(f"   ✅ Windowed coverage: {windowed_coverage:.1f}%")
+    print(f"   ✅ Instant coverage: {instant_coverage:.1f}%")
+    print(f"   ✅ Mapping success: {'✅ SUCCESS' if mapping_success else '❌ FAILED'}")
+    
+    if mapping_success:
+        print(f"   🚀 Ready for visualization and analysis!")
+    else:
+        print(f"   ⚠️  Low coverage - check window_uid consistency")
+    
+    return {
+        'test_time_windowed_df_with_clusters': test_time_windowed_df_with_clusters,
+        'test_instant_df_with_clusters': test_instant_df_with_clusters,
+        'test_embeddings': test_embeddings,
+        'test_clusters': test_clusters,
+        'test_filenames': test_filenames,
+        'transformer_windows': transformer_windows,
+        'cluster_info': {
+            'silhouette_score': test_silhouette,
+            'davies_bouldin_score': test_davies_bouldin,
+            'cluster_balance': cluster_balance,
+            'cluster_counts': cluster_counts,
+            'windowed_coverage': windowed_coverage,
+            'instant_coverage': instant_coverage,
+            'mapping_success': mapping_success,
+            'n_test_cells': len(test_filenames),
+            'n_test_windows': len(test_embeddings),
+            'n_test_points': len(test_instant_df_with_clusters)
+        }
+    }
