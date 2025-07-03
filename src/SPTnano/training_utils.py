@@ -604,14 +604,18 @@ def create_phase1_visualizations(evaluator, save_path=None):
     ax4 = plt.subplot(2, 3, 4)
     ax4.axis('off')
     
+    # Format conditional values first
+    val_loss_str = f"{evaluator.metrics['final_val_loss']:.4f}" if evaluator.metrics['final_val_loss'] is not None else 'N/A'
+    train_val_gap_str = f"{evaluator.metrics['train_val_gap']:.4f}" if evaluator.metrics['train_val_gap'] is not None else 'N/A'
+    
     metrics_text = f"""
 EVALUATION METRICS
 {'='*20}
 Silhouette: {evaluator.metrics['silhouette_score']:.3f}
 Davies-Bouldin: {evaluator.metrics['davies_bouldin_score']:.3f}
 Train Loss: {evaluator.metrics['final_train_loss']:.4f}
-Val Loss: {evaluator.metrics['final_val_loss']:.4f if evaluator.metrics['final_val_loss'] else 'N/A'}
-Train-Val Gap: {evaluator.metrics['train_val_gap']:.4f if evaluator.metrics['train_val_gap'] else 'N/A'}
+Val Loss: {val_loss_str}
+Train-Val Gap: {train_val_gap_str}
 Clusters: {evaluator.metrics['n_clusters']}
 Balance: {evaluator.metrics['cluster_balance']:.3f}
 """

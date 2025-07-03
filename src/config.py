@@ -6,6 +6,7 @@ import os
 # MASTER = 'path/to/top/level/directory/'  # Update this path to your master directory
 # MASTER = 'D:/4_26_2025_Kinesininneurons_cort/'
 MASTER = 'D:/data_transformer_input/'
+# MASTER = 'D:/Reanalzye_April2025/FIGURE2_Neurons_WTHTTinRegionsofNeurons/2_25_2025_CorticalNeuron_20H20S_FreeHalo_20H77S_77H20S_analyze/'
 
 # MASTER = 'D:/Reanalzye_April2025/FIGURE2_Neurons_WTHTTinRegionsofNeurons/2_25_2025_CorticalNeuron_20H20S_FreeHalo_20H77S_77H20S_analyze/'
 SAVED_DATA = MASTER + 'saved_data/'

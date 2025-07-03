@@ -62,6 +62,34 @@ else:
     mpl.rcParams['font.sans-serif'] = ['Arial']
 
 
+# Helper function to handle Location/location column case sensitivity
+def _get_location_column(df):
+    """
+    Helper function to detect whether dataframe has 'Location' or 'location' column.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        DataFrame to check for location column
+        
+    Returns:
+    --------
+    str
+        The correct column name ('Location' or 'location')
+        
+    Raises:
+    -------
+    ValueError
+        If neither 'Location' nor 'location' column is found
+    """
+    if 'Location' in df.columns:
+        return 'Location'
+    elif 'location' in df.columns:
+        return 'location'
+    else:
+        raise ValueError("Neither 'Location' nor 'location' column found in dataframe. Available columns: " + str(list(df.columns)))
+
+
 def overlay_tracks_with_movie(tracks_df, movie_path, colormap=None):
     # Load the raw movie
     frames = pims.open(movie_path)
@@ -73,17 +101,17 @@ def overlay_tracks_with_movie(tracks_df, movie_path, colormap=None):
     if colormap:
         # Get the colormap if specified
         cmap = cm.get_cmap(colormap)
-        # Get unique particle IDs and assign colors from the colormap
-        unique_particles = tracks_df['particle'].unique()
-        colors = {particle: cmap(i / len(unique_particles)) for i, particle in enumerate(unique_particles)}
+        # Get unique track IDs and assign colors from the colormap
+        unique_tracks = tracks_df['unique_id'].unique()
+        colors = {track_id: cmap(i / len(unique_tracks)) for i, track_id in enumerate(unique_tracks)}
     else:
         # Use the default color cycle
         color_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
-        unique_particles = tracks_df['particle'].unique()
-        colors = {particle: color_cycle[i % len(color_cycle)] for i, particle in enumerate(unique_particles)}
+        unique_tracks = tracks_df['unique_id'].unique()
+        colors = {track_id: color_cycle[i % len(color_cycle)] for i, track_id in enumerate(unique_tracks)}
     
-    # Get the last frame for each particle
-    last_frame = tracks_df.groupby('particle')['frame'].max()
+    # Get the last frame for each track
+    last_frame = tracks_df.groupby('unique_id')['frame'].max()
     
     # Iterate over each frame in the movie
     for frame_index, frame in enumerate(frames):
@@ -101,15 +129,15 @@ def overlay_tracks_with_movie(tracks_df, movie_path, colormap=None):
         ax.set_ylim(frame.shape[0], 0)
         
         # Iterate over each track in the DataFrame
-        for particle_id, track in tracks_df.groupby('particle'):
-            # Only plot the track if the current frame is less than or equal to the last frame of the particle
-            if frame_index <= last_frame[particle_id]:
+        for track_id, track in tracks_df.groupby('unique_id'):
+            # Only plot the track if the current frame is less than or equal to the last frame of the track
+            if frame_index <= last_frame[track_id]:
                 # Get the x and y coordinates of the track for the current frame
                 x = track.loc[track['frame'] <= frame_index, 'x']
                 y = track.loc[track['frame'] <= frame_index, 'y']
                 
                 # Plot the track as a line with slightly thicker lines and consistent color
-                ax.plot(x, y, label=f'Track {particle_id}', linewidth=2.0, color=colors[particle_id])
+                ax.plot(x, y, label=f'Track {track_id}', linewidth=2.0, color=colors[track_id])
         
         # Remove the axis labels, ticks, and grid
         ax.axis('off')
@@ -942,7 +970,8 @@ def napari_visualize_image_with_tracksdev(tracks_df, master_dir=config.MASTER, c
         print('The movie directory is:', movie_dir)
     
     # Handle location input
-    locationlist = tracks_df['Location'].unique()
+    location_col = _get_location_column(tracks_df)
+    locationlist = tracks_df[location_col].unique()
     if isinstance(location, int):
         location = locationlist[location]
     elif isinstance(location, str):
@@ -954,7 +983,7 @@ def napari_visualize_image_with_tracksdev(tracks_df, master_dir=config.MASTER, c
         raise ValueError("Location must be a string, integer, or None.")
     
     # Filter the dataframe by the selected location
-    filtered_tracks_df = tracks_df[tracks_df['Location'] == location]
+    filtered_tracks_df = tracks_df[tracks_df[location_col] == location]
     
     # Handle condition input
     conditionlist = filtered_tracks_df['condition'].unique()
@@ -1028,7 +1057,8 @@ def napari_visualize_image_with_tracksdev2(tracks_df, master_dir=config.MASTER, 
         print('The movie directory is:', movie_dir)
     
     # Handle location input
-    locationlist = tracks_df['Location'].unique()
+    location_col = _get_location_column(tracks_df)
+    locationlist = tracks_df[location_col].unique()
     if isinstance(location, int):
         location = locationlist[location]
     elif isinstance(location, str):
@@ -1046,7 +1076,7 @@ def napari_visualize_image_with_tracksdev2(tracks_df, master_dir=config.MASTER, 
         raise ValueError("Location must be a string, integer, or None.")
     
     # Filter the dataframe by the selected location
-    filtered_tracks_df = tracks_df[tracks_df['Location'] == location]
+    filtered_tracks_df = tracks_df[tracks_df[location_col] == location]
     
     # Handle condition input
     conditionlist = filtered_tracks_df['condition'].unique()
@@ -1615,7 +1645,11 @@ def get_color(motion_class):
 
 
 
-def plot_classification_pie_charts(df, group_by='Location', colormap_name='Dark2', order=None, figsize=(15, 10), font_size=12, label_font_size=8):
+def plot_classification_pie_charts(df, group_by=None, colormap_name='Dark2', order=None, figsize=(15, 10), font_size=12, label_font_size=8):
+    # Handle group_by parameter with location column detection
+    if group_by is None:
+        group_by = _get_location_column(df)
+    
     # Get unique categories for grouping
     categories = df[group_by].unique()
     
@@ -3019,8 +3053,11 @@ def plot_tracks_static(
 
     # Filter by location
     if location is None:
-        location = np.random.choice(tracks_df['Location'].unique())
-    tracks_df = tracks_df[tracks_df['Location'] == location]
+        location_col = _get_location_column(tracks_df)
+        location = np.random.choice(tracks_df[location_col].unique())
+    else:
+        location_col = _get_location_column(tracks_df)
+    tracks_df = tracks_df[tracks_df[location_col] == location]
 
     # Filter by condition
     if condition is None:
@@ -3333,15 +3370,32 @@ def plot_tracks_static_svg(
         'ytick.labelsize': default_font,
     })
     
+    # Make a copy to avoid SettingWithCopyWarning
+    tracks_df = tracks_df.copy()
+    
     # Ensure 'frame' is numeric for proper filtering.
     tracks_df['frame'] = pd.to_numeric(tracks_df['frame'], errors='coerce')
     
     # Map `color_by` to numeric if it contains strings or is categorical.
-    if tracks_df[color_by].dtype == object or pd.api.types.is_categorical_dtype(tracks_df[color_by]):
+    # Use consistent cluster ordering logic across all functions
+    is_cluster_column = (color_by in ['cluster', 'cluster_id'] or 'cluster' in color_by.lower())
+    is_categorical = (tracks_df[color_by].dtype == object or 
+                     pd.api.types.is_categorical_dtype(tracks_df[color_by]) or 
+                     is_cluster_column)
+    
+    if is_categorical:
+        # Get unique values and sort them for consistent ordering
+        all_unique_values = sorted([v for v in tracks_df[color_by].unique() if pd.notna(v)])
+        
         if order is None:
-            unique_classes = tracks_df[color_by].unique()
+            unique_classes = all_unique_values
         else:
-            unique_classes = order
+            # Use provided order, but only include values that exist in data
+            unique_classes = [c for c in order if c in all_unique_values]
+            # Add any remaining values not in the provided order
+            remaining_values = [c for c in all_unique_values if c not in unique_classes]
+            unique_classes.extend(remaining_values)
+        
         class_to_int = {cls: i for i, cls in enumerate(unique_classes)}
         tracks_df['segment_color'] = tracks_df[color_by].map(class_to_int)
     else:
@@ -3375,8 +3429,11 @@ def plot_tracks_static_svg(
     
     # Filter by location.
     if location is None:
-        location = np.random.choice(tracks_df['Location'].unique())
-    tracks_df = tracks_df[tracks_df['Location'] == location]
+        location_col = _get_location_column(tracks_df)
+        location = np.random.choice(tracks_df[location_col].unique())
+    else:
+        location_col = _get_location_column(tracks_df)
+    tracks_df = tracks_df[tracks_df[location_col] == location]
     
     # Filter by condition.
     if condition is None:
@@ -3442,28 +3499,67 @@ def plot_tracks_static_svg(
         extent = [0, width * pixel_size_um, 0, height * pixel_size_um]
         ax.imshow(overlay_data, cmap='gray', origin='lower', extent=extent)
     
-    # --- Plot Tracks as Single Polylines ---
-    unique_ids = tracks_df['particle'].unique()
+    # --- Plot Tracks with Segment-by-Segment Coloring ---
+    unique_ids = tracks_df['unique_id'].unique()
+    plotted_unique_ids = []  # Track which unique_ids were actually plotted
+    
     for uid in unique_ids:
-        track = tracks_df[tracks_df['particle'] == uid]
-        # Choose a color for the whole track.
-        if color_by == 'motion_class':
-            line_color_plot = track['motion_color'].iloc[0]
-        else:
-            if tracks_df[color_by].dtype == object or pd.api.types.is_categorical_dtype(tracks_df[color_by]):
-                num_classes = max(len(unique_classes) - 1, 1)
+        track = tracks_df[tracks_df['unique_id'] == uid].sort_values('frame')
+        
+        # For cluster-based coloring, we need to handle segments that might change cluster
+        if color_by in ['cluster', 'cluster_id'] or 'cluster' in color_by.lower():
+            # Plot track segment by segment based on cluster changes
+            cluster_changes = track[color_by].ne(track[color_by].shift()).cumsum()
+            
+            for segment_id in cluster_changes.unique():
+                segment = track[cluster_changes == segment_id]
+                if len(segment) < 2:  # Skip single-point segments
+                    continue
+                
+                # Get color for this segment's cluster
+                if color_by == 'motion_class':
+                    line_color_plot = segment['motion_color'].iloc[0]
+                else:
+                    if is_categorical:
+                        cluster_value = segment[color_by].iloc[0]
+                        if cluster_value in unique_classes:
+                            color_idx = list(unique_classes).index(cluster_value)
+                            line_color_plot = plt.cm.get_cmap(colorway)(color_idx / max(len(unique_classes) - 1, 1))
+                        else:
+                            line_color_plot = 'gray'  # Default for unknown clusters
+                    else:
+                        num_classes = max(tracks_df['segment_color'].max() - tracks_df['segment_color'].min(), 1)
+                        normalized_color = (segment['segment_color'].iloc[0] - tracks_df['segment_color'].min()) / num_classes
+                        line_color_plot = plt.cm.get_cmap(colorway)(normalized_color)
+                
+                # Plot this segment
+                line_obj = ax.plot(
+                    segment['x_um'], segment['y_um'],
+                    color=line_color_plot,
+                    linewidth=line_thickness
+                )[0]
+                line_obj.set_gid(f"track_{uid}_segment_{segment_id}")
+                
+                # else:
+            # For non-cluster coloring, plot entire track as one polyline
+            if color_by == 'motion_class':
+                line_color_plot = track['motion_color'].iloc[0]
             else:
-                num_classes = max(tracks_df['segment_color'].max() - tracks_df['segment_color'].min(), 1)
-            normalized_color = (track['segment_color'].iloc[0] - tracks_df['segment_color'].min()) / num_classes
-            line_color_plot = plt.cm.get_cmap(colorway)(normalized_color)
-        # Plot the entire track as one polyline.
-        line_obj = ax.plot(
-            track['x_um'], track['y_um'],
-            color=line_color_plot,
-            linewidth=line_thickness
-        )[0]
-        # Set the group id so that in the SVG this appears as a single object.
-        line_obj.set_gid(f"particle_{uid}")
+                if is_categorical:
+                    num_classes = max(len(unique_classes) - 1, 1)
+                else:
+                    num_classes = max(tracks_df['segment_color'].max() - tracks_df['segment_color'].min(), 1)
+                normalized_color = (track['segment_color'].iloc[0] - tracks_df['segment_color'].min()) / num_classes
+                line_color_plot = plt.cm.get_cmap(colorway)(normalized_color)
+            
+            line_obj = ax.plot(
+                track['x_um'], track['y_um'],
+                color=line_color_plot,
+                linewidth=line_thickness
+            )[0]
+            line_obj.set_gid(f"track_{uid}")
+        
+        plotted_unique_ids.append(uid)
     
     # Remove axes if no overlay image.
     if not overlay_image:
@@ -3493,15 +3589,26 @@ def plot_tracks_static_svg(
     )
     
     # --- Add Legend / Colorbar ---
-    if tracks_df[color_by].dtype == object or pd.api.types.is_categorical_dtype(tracks_df[color_by]):
-        handles = [plt.Line2D([0], [0],
-                              color=plt.cm.get_cmap(colorway)(i / max(len(unique_classes) - 1, 1)),
-                              lw=2, label=cls)
-                   for i, cls in enumerate(unique_classes)]
+    # Treat cluster columns as categorical even if they're numeric
+    is_cluster_column = (color_by in ['cluster', 'cluster_id'] or 'cluster' in color_by.lower())
+    is_categorical = (tracks_df[color_by].dtype == object or 
+                     pd.api.types.is_categorical_dtype(tracks_df[color_by]) or 
+                     is_cluster_column)
+    
+    if is_categorical:
+        # Only show colors for classes actually present in the filtered data
+        present_classes = [cls for cls in unique_classes if cls in tracks_df[color_by].unique()]
+        handles = []
+        for cls in present_classes:
+            color_idx = list(unique_classes).index(cls)
+            color = plt.cm.get_cmap(colorway)(color_idx / max(len(unique_classes) - 1, 1))
+            handles.append(plt.Line2D([0], [0], color=color, lw=2, label=f'{cls}'))
+        
         ax.legend(handles=handles, loc='upper left', bbox_to_anchor=(1.05, 1),
                   borderaxespad=0., title=f"Legend: {color_by}",
                   fontsize=default_font, title_fontsize=default_font)
     else:
+        # Only show colorbar range for actual data in the plot
         color_min = tracks_df[color_by].min()
         color_max = tracks_df[color_by].max()
         sm = plt.cm.ScalarMappable(cmap=colorway, norm=plt.Normalize(vmin=color_min, vmax=color_max))
@@ -3548,16 +3655,668 @@ def plot_tracks_static_svg(
             plt.close()
         
         if ext == 'svg' and return_svg:
-            return svg_data
+            return {'svg_data': svg_data, 'plotted_unique_ids': plotted_unique_ids, 'tracks_df': tracks_df}
         else:
-            return tracks_df
+            return {'plotted_unique_ids': plotted_unique_ids, 'tracks_df': tracks_df}
     else:
         plt.show()
-        return tracks_df
+        return {'plotted_unique_ids': plotted_unique_ids, 'tracks_df': tracks_df}
 
 
+def plot_single_track_by_cluster(
+    tracks_df,
+    unique_id,
+    cluster_col='cluster_id',
+    filename=None,
+    file_id=None,
+    location=None,
+    condition=None,
+    time_start=None,
+    time_end=None,
+    master_dir=config.MASTER,
+    scale_bar_length=2,           # in microns
+    scale_bar_color='black',
+    scale_bar_thickness=2,        # thickness of the scale bar
+    transparent_background=True,
+    save_path=None,
+    pixel_size_um=config.PIXELSIZE_MICRONS,
+    frame_interval=config.TIME_BETWEEN_FRAMES,
+    colorway='tab20',
+    order=None,  # Order for cluster coloring
+    figsize=(4, 4),  # Consistent figure size for comparison
+    plot_size_um=10,  # Consistent plot size in microns
+    line_thickness=1.2,
+    dpi=200,
+    export_format='svg',
+    return_svg=False,
+    show_plot=True,
+    show_legend=True,
+    show_start_marker=True,
+    start_marker_size=4
+):
+    """
+    Plot a single track colored by cluster ID changes.
+    
+    This function displays one track with consistent sizing and scale bars,
+    making it easy to compare tracks across different conditions or time periods.
+    
+    Parameters:
+    -----------
+    tracks_df : pd.DataFrame
+        DataFrame containing track data with cluster assignments
+    unique_id : str
+        The unique track identifier to plot
+    cluster_col : str, default 'cluster_id'
+        Column name containing cluster IDs
+    ... (other parameters same as plot_tracks_static_svg)
+    show_legend : bool, default True
+        Whether to show the cluster legend
+    show_start_marker : bool, default True
+        Whether to show a marker at the track start
+    start_marker_size : float, default 4
+        Size of the start marker
+    
+    Returns:
+    --------
+    dict : Dictionary containing track info, cluster changes, and plot data
+    """
+    
+    # Filter to single track
+    if unique_id not in tracks_df['unique_id'].unique():
+        available_ids = tracks_df['unique_id'].unique()
+        raise ValueError(f"Unique ID '{unique_id}' not found. Available IDs: {available_ids}")
+    
+    # Apply same filtering logic as plot_tracks_static_svg
+    df = tracks_df.copy()
+    
+    # Filter by location
+    if location is not None:
+        location_col = _get_location_column(df)
+        df = df[df[location_col] == location]
+    
+    # Filter by condition
+    if condition is not None:
+        df = df[df['condition'] == condition]
+    
+    # Filter by filename
+    if filename is not None:
+        df = df[df['filename'] == filename]
+    elif file_id is not None:
+        df = df[df['file_id'] == file_id]
+    
+    # Filter by time range
+    if time_start is not None or time_end is not None:
+        df['frame'] = pd.to_numeric(df['frame'], errors='coerce')
+        min_frame = df['frame'].min()
+        max_frame = df['frame'].max()
+        
+        if time_start is not None:
+            time_start_frames = int(time_start / frame_interval)
+            time_start_frames = max(min_frame, min(time_start_frames, max_frame))
+        else:
+            time_start_frames = min_frame
+            
+        if time_end is not None:
+            time_end_frames = int(time_end / frame_interval)
+            time_end_frames = max(min_frame, min(time_end_frames, max_frame))
+        else:
+            time_end_frames = max_frame
+            
+        df = df[(df['frame'] >= time_start_frames) & (df['frame'] <= time_end_frames)]
+    
+    # Get single track data
+    track_data = df[df['unique_id'] == unique_id].sort_values('frame')
+    
+    if track_data.empty:
+        raise ValueError(f"No data found for unique ID '{unique_id}' after filtering")
+    
+    # Get unique clusters and set up colors (consistent with other functions)
+    all_unique_clusters = sorted([c for c in df[cluster_col].unique() if pd.notna(c)])
+    if order is None:
+        ordered_clusters = all_unique_clusters
+    else:
+        ordered_clusters = [c for c in order if c in all_unique_clusters]
+        remaining_clusters = [c for c in all_unique_clusters if c not in ordered_clusters]
+        ordered_clusters.extend(remaining_clusters)
+    
+    # Create cluster to color mapping
+    cluster_to_color = {}
+    for i, cluster_id in enumerate(ordered_clusters):
+        cluster_to_color[cluster_id] = plt.cm.get_cmap(colorway)(i / max(len(ordered_clusters) - 1, 1))
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    
+    # Set backgrounds
+    figure_background = 'none' if transparent_background else 'white'
+    axis_background = (0, 0, 0, 0) if transparent_background else 'white'
+    fig.patch.set_facecolor(figure_background)
+    ax.set_facecolor(axis_background)
+    
+    # Convert coordinates to microns
+    track_data = track_data.copy()
+    track_data['x_um'] = track_data['x'] * pixel_size_um
+    track_data['y_um'] = track_data['y'] * pixel_size_um
+    
+    # Center the track in the plot
+    x_center = track_data['x_um'].mean()
+    y_center = track_data['y_um'].mean()
+    track_data['x_um'] -= x_center - plot_size_um / 2
+    track_data['y_um'] -= y_center - plot_size_um / 2
+    
+    # Plot track segments by cluster
+    cluster_changes = track_data[cluster_col].ne(track_data[cluster_col].shift()).cumsum()
+    segment_info = []
+    
+    for segment_id in cluster_changes.unique():
+        segment = track_data[cluster_changes == segment_id]
+        if len(segment) < 2:  # Skip single-point segments
+            continue
+            
+        cluster_id = segment[cluster_col].iloc[0]
+        if pd.notna(cluster_id) and cluster_id in cluster_to_color:
+            color = cluster_to_color[cluster_id]
+        else:
+            color = 'gray'
+        
+        # Plot segment
+        ax.plot(segment['x_um'], segment['y_um'], 
+                color=color, linewidth=line_thickness, 
+                alpha=0.8, solid_capstyle='round')
+        
+        # Store segment info
+        segment_info.append({
+            'segment_id': segment_id,
+            'cluster_id': cluster_id,
+            'start_frame': segment['frame'].min(),
+            'end_frame': segment['frame'].max(),
+            'n_points': len(segment),
+            'color': color
+        })
+    
+    # Add start marker
+    if show_start_marker and len(track_data) > 0:
+        start_point = track_data.iloc[0]
+        ax.plot(start_point['x_um'], start_point['y_um'], 
+                'o', color='red', markersize=start_marker_size, 
+                markeredgecolor='white', markeredgewidth=0.5, 
+                zorder=10, alpha=0.9)
+    
+    # Set axis properties
+    ax.set_xlim(0, plot_size_um)
+    ax.set_ylim(0, plot_size_um)
+    ax.set_aspect('equal')
+    ax.axis('off')
+    
+    # Add scale bar
+    margin = plot_size_um * 0.05
+    x_end = plot_size_um - margin
+    x_start = x_end - scale_bar_length
+    y_bar = margin
+    ax.plot([x_start, x_end], [y_bar, y_bar], 
+            color=scale_bar_color, lw=scale_bar_thickness, solid_capstyle='butt')
+    ax.text((x_start + x_end) / 2, y_bar - margin * 0.3, f'{scale_bar_length} µm',
+            ha='center', va='top', fontsize=10, color=scale_bar_color)
+    
+    # Add title
+    title_parts = [f"Track {unique_id}"]
+    if condition: title_parts.append(f"Condition: {condition}")
+    if location: title_parts.append(f"Location: {location}")
+    if filename: title_parts.append(f"File: {filename}")
+    
+    ax.set_title(" | ".join(title_parts), pad=20, fontsize=12)
+    
+    # Add legend
+    used_clusters = [info['cluster_id'] for info in segment_info if pd.notna(info['cluster_id'])]
+    unique_used_clusters = sorted(set(used_clusters))
+    
+    if show_legend and unique_used_clusters:
+        handles = []
+        for cluster_id in unique_used_clusters:
+            color = cluster_to_color.get(cluster_id, 'gray')
+            handles.append(plt.Line2D([0], [0], color=color, lw=2, label=f'Cluster {cluster_id}'))
+        
+        ax.legend(handles=handles, loc='upper left', bbox_to_anchor=(1.05, 1),
+                  borderaxespad=0., title=f"Clusters", fontsize=10, title_fontsize=10)
+    
+    plt.tight_layout()
+    
+    # Save or show
+    if save_path:
+        save_dir = os.path.dirname(save_path)
+        if save_dir and not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        
+        ext = export_format.lower()
+        if ext not in ['png', 'svg']:
+            ext = 'png'
+        
+        out_filename = f"track_{unique_id}_{cluster_col}.{ext}"
+        if condition: out_filename = f"track_{unique_id}_{condition}_{cluster_col}.{ext}"
+        
+        full_save_path = os.path.join(save_path, out_filename)
+        plt.savefig(full_save_path, transparent=transparent_background, dpi=dpi, format=ext)
+        
+        svg_data = None
+        if ext == 'svg':
+            with open(full_save_path, 'r', encoding='utf-8') as f:
+                svg_data = f.read()
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        result = {
+            'unique_id': unique_id,
+            'track_data': track_data,
+            'segment_info': segment_info,
+            'cluster_changes': len(segment_info),
+            'clusters_used': unique_used_clusters,
+            'save_path': full_save_path
+        }
+        
+        if ext == 'svg' and return_svg:
+            result['svg_data'] = svg_data
+        
+        return result
+    else:
+        plt.show()
+        return {
+            'unique_id': unique_id,
+            'track_data': track_data,
+            'segment_info': segment_info,
+            'cluster_changes': len(segment_info),
+            'clusters_used': unique_used_clusters
+        }
 
 
+def plot_tracks_grid_by_cluster(
+    tracks_df,
+    cluster_col='cluster_id',
+    segments_per_cluster=5,
+    window_size=config.OVERLAP,  # Number of frames per window segment
+    filename=None,
+    file_id=None,
+    location=None,
+    condition=None,
+    time_start=None,
+    time_end=None,
+    motion_type=None,
+    master_dir=config.MASTER,
+    transparent_background=True,
+    save_path=None,
+    pixel_size_um=config.PIXELSIZE_MICRONS,
+    frame_interval=config.TIME_BETWEEN_FRAMES,
+    colorway='tab20',
+    order=None,  # Order for cluster coloring, defaults to low-to-high cluster numbers
+    figsize=(12, 8),
+    track_size_um=5,  # Size of each track's bounding box in microns
+    line_thickness=0.6,
+    dpi=200,
+    export_format='svg',
+    return_svg=False,
+    show_plot=True,
+    grid_spacing_um=2,  # Spacing between columns in microns
+    track_spacing_um=1,  # Spacing between tracks within a column
+    random_seed=42,
+    show_cluster_labels=True,
+    label_fontsize=12
+):
+    """
+    Create a grid visualization of track window segments organized by cluster ID.
+    
+    Each column represents a different cluster, with multiple window segments from that cluster
+    displayed in a vertical arrangement. Each segment shows a fixed number of frames (window_size)
+    to ensure consistent cluster ID throughout the segment. Segments are centered and normalized 
+    rather than showing absolute spatial positions.
+    
+    Parameters:
+    -----------
+    tracks_df : pd.DataFrame
+        DataFrame containing track data with cluster assignments
+    cluster_col : str, default 'cluster_id'
+        Column name containing cluster IDs
+    segments_per_cluster : int, default 5
+        Number of window segments to display per cluster
+    window_size : int, default 30
+        Number of consecutive frames per window segment (ensures consistent cluster ID)
+    filename, file_id, location, condition : str, optional
+        Filters for selecting specific data
+    time_start, time_end : float, optional
+        Time range to display (in seconds)
+    motion_type : str, optional
+        Filter by motion type if specified
+    track_size_um : float, default 5
+        Size of each track segment's display area in microns
+    grid_spacing_um : float, default 2
+        Horizontal spacing between cluster columns in microns
+    track_spacing_um : float, default 1
+        Vertical spacing between segments within a column in microns
+    random_seed : int, default 42
+        Seed for reproducible segment selection
+    show_cluster_labels : bool, default True
+        Whether to show cluster labels at the top of each column
+    label_fontsize : int, default 12
+        Font size for cluster labels
+    order : list, optional
+        Custom order for cluster coloring. If None, uses low-to-high cluster numbers
+    ... (other parameters same as plot_tracks_static_svg)
+    
+    Returns:
+    --------
+    dict : Dictionary containing segment information and layout details
+    """
+    
+    # Set random seed for reproducible results
+    np.random.seed(random_seed)
+    
+    # Apply same filtering logic as plot_tracks_static_svg
+    df = tracks_df.copy()
+    
+    # Filter by location
+    if location is not None:
+        location_col = _get_location_column(df)
+        if location not in df[location_col].unique():
+            available_locations = df[location_col].unique()
+            raise ValueError(f"Location '{location}' not found. Available: {available_locations}")
+        df = df[df[location_col] == location]
+    
+    # Filter by condition
+    if condition is not None:
+        if condition not in df['condition'].unique():
+            available_conditions = df['condition'].unique()
+            raise ValueError(f"Condition '{condition}' not found. Available: {available_conditions}")
+        df = df[df['condition'] == condition]
+    
+    # Filter by filename
+    if filename is not None:
+        if filename not in df['filename'].unique():
+            available_files = df['filename'].unique()
+            raise ValueError(f"Filename '{filename}' not found. Available: {available_files}")
+        df = df[df['filename'] == filename]
+    
+    # Filter by file_id
+    if file_id is not None:
+        if 'file_id' in df.columns:
+            df = df[df['file_id'] == file_id]
+    
+    # Filter by motion type
+    if motion_type is not None:
+        if 'motion_class' in df.columns:
+            df = df[df['motion_class'] == motion_type]
+    
+    # Time filtering
+    if time_start is not None or time_end is not None:
+        if 'time_s' not in df.columns:
+            df['time_s'] = df['frame'] * frame_interval
+        
+        if time_start is not None:
+            df = df[df['time_s'] >= time_start]
+        if time_end is not None:
+            df = df[df['time_s'] <= time_end]
+    
+    # Check if cluster column exists
+    if cluster_col not in df.columns:
+        raise ValueError(f"Cluster column '{cluster_col}' not found in dataframe. Available columns: {list(df.columns)}")
+    
+    # Get unique clusters, excluding NaN values (use same logic as other functions)
+    all_unique_clusters = sorted([c for c in df[cluster_col].unique() if pd.notna(c)])
+    n_clusters = len(all_unique_clusters)
+    
+    if n_clusters == 0:
+        raise ValueError("No valid clusters found after filtering (all values are NaN or missing)")
+    
+    # Set up cluster ordering for left-to-right positioning (consistent with other functions)
+    if order is None:
+        ordered_clusters = all_unique_clusters  # Low to high cluster numbers
+    else:
+        # Use provided order, but only include clusters that exist in data
+        ordered_clusters = [c for c in order if c in all_unique_clusters]
+        # Add any remaining clusters not in the provided order
+        remaining_clusters = [c for c in all_unique_clusters if c not in ordered_clusters]
+        ordered_clusters.extend(remaining_clusters)
+    
+    # Find valid window segments for each cluster
+    selected_segments = {}
+    segment_info = []
+    
+    for cluster_id in all_unique_clusters:
+        cluster_df = df[(df[cluster_col] == cluster_id) & pd.notna(df[cluster_col])]
+        
+        # Find valid window segments within this cluster
+        segment_candidates = []
+        for track_id in cluster_df['unique_id'].unique():
+            track_data = cluster_df[cluster_df['unique_id'] == track_id].sort_values('frame')
+            frames = track_data['frame'].values
+            
+            # Find consecutive frame runs of at least window_size length
+            if len(frames) < window_size:
+                continue
+                
+            # Check for consecutive frames
+            frame_diffs = np.diff(frames)
+            split_points = np.where(frame_diffs != 1)[0] + 1
+            frame_runs = np.split(frames, split_points)
+            
+            for run in frame_runs:
+                if len(run) >= window_size:
+                    # Find all possible window starts in this run
+                    for start_idx in range(len(run) - window_size + 1):
+                        start_frame = run[start_idx]
+                        end_frame = run[start_idx + window_size - 1]
+                        
+                        # Verify all frames in window have the same cluster ID
+                        window_data = track_data[(track_data['frame'] >= start_frame) & 
+                                               (track_data['frame'] <= end_frame)]
+                        if len(window_data) == window_size and len(window_data[cluster_col].unique()) == 1:
+                            segment_candidates.append({
+                                'track_id': track_id,
+                                'start_frame': start_frame,
+                                'end_frame': end_frame,
+                                'cluster_id': cluster_id
+                            })
+        
+        # Sample segments for this cluster
+        n_available = len(segment_candidates)
+        if n_available == 0:
+            selected_segments[cluster_id] = []
+            continue
+            
+        if n_available >= segments_per_cluster:
+            sampled_indices = np.random.choice(n_available, segments_per_cluster, replace=False)
+        else:
+            # Use all available and pad with repeats if needed
+            sampled_indices = list(range(n_available))
+            while len(sampled_indices) < segments_per_cluster:
+                additional_needed = min(segments_per_cluster - len(sampled_indices), n_available)
+                sampled_indices.extend(np.random.choice(n_available, additional_needed, replace=False))
+        
+        selected_segments[cluster_id] = [segment_candidates[i] for i in sampled_indices[:segments_per_cluster]]
+        
+        # Store segment info
+        for i, segment in enumerate(selected_segments[cluster_id]):
+            segment_info.append({
+                'cluster_id': cluster_id,
+                'track_id': segment['track_id'],
+                'segment_index': i,
+                'start_frame': segment['start_frame'],
+                'end_frame': segment['end_frame'],
+                'n_frames': window_size
+            })
+    
+    # Set up the plot
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    
+    # Calculate grid layout using ordered clusters
+    max_segments = max(len(segments) for segments in selected_segments.values()) if selected_segments else 0
+    if max_segments == 0:
+        raise ValueError("No valid segments found for any cluster")
+    
+    # Use ordered clusters for width calculation    
+    n_ordered_clusters = len(ordered_clusters)
+    total_width = n_ordered_clusters * track_size_um + (n_ordered_clusters - 1) * grid_spacing_um
+    total_height = max_segments * track_size_um + (max_segments - 1) * track_spacing_um
+    
+    # Set up cluster-based coloring (same logic as plot_tracks_static_svg)
+    
+    cluster_to_color = {}
+    for i, cluster_id in enumerate(ordered_clusters):
+        cluster_to_color[cluster_id] = plt.cm.get_cmap(colorway)(i / max(len(ordered_clusters) - 1, 1))
+    
+    # FIRST PASS: Calculate global coordinate range for consistent scaling
+    all_coord_ranges = []
+    all_segments_data = []
+    
+    for cluster_id in ordered_clusters:
+        if cluster_id not in selected_segments or len(selected_segments[cluster_id]) == 0:
+            continue
+            
+        for segment in selected_segments[cluster_id]:
+            # Get segment data (window frames only)
+            segment_data = df[
+                (df['unique_id'] == segment['track_id']) & 
+                (df['frame'] >= segment['start_frame']) & 
+                (df['frame'] <= segment['end_frame'])
+            ].sort_values('frame')
+            
+            if len(segment_data) == 0:
+                continue
+            
+            # Convert to microns and center
+            x_coords = segment_data['x'].values * pixel_size_um
+            y_coords = segment_data['y'].values * pixel_size_um
+            
+            # Center the segment
+            x_coords = x_coords - np.mean(x_coords)
+            y_coords = y_coords - np.mean(y_coords)
+            
+            # Store data for second pass
+            all_segments_data.append({
+                'cluster_id': cluster_id,
+                'segment': segment,
+                'x_coords': x_coords,
+                'y_coords': y_coords
+            })
+            
+            # Calculate range for this segment
+            coord_range = max(np.ptp(x_coords), np.ptp(y_coords))
+            if coord_range > 0:
+                all_coord_ranges.append(coord_range)
+    
+    # Calculate global scale factor
+    if all_coord_ranges:
+        global_max_range = max(all_coord_ranges)
+        global_scale_factor = (track_size_um * 0.8) / global_max_range  # Use 80% of available space
+    else:
+        global_scale_factor = 1.0
+    
+    # SECOND PASS: Plot segments using global scale
+    for segment_data in all_segments_data:
+        cluster_id = segment_data['cluster_id']
+        segment = segment_data['segment']
+        x_coords = segment_data['x_coords'].copy()
+        y_coords = segment_data['y_coords'].copy()
+        
+        # Find this segment's position in the grid
+        cluster_idx = ordered_clusters.index(cluster_id)
+        segment_idx = selected_segments[cluster_id].index(segment)
+        
+        cluster_x_center = cluster_idx * (track_size_um + grid_spacing_um) + track_size_um / 2
+        segment_y_center = segment_idx * (track_size_um + track_spacing_um) + track_size_um / 2
+        cluster_color = cluster_to_color[cluster_id]
+        
+        # Apply global scale factor
+        x_coords = x_coords * global_scale_factor
+        y_coords = y_coords * global_scale_factor
+        
+        # Position in grid
+        x_coords = x_coords + cluster_x_center
+        y_coords = y_coords + segment_y_center
+        
+        # Plot segment with cluster color
+        ax.plot(x_coords, y_coords, color=cluster_color, linewidth=line_thickness, alpha=0.8)
+        
+        # Add a small dot at the start
+        ax.plot(x_coords[0], y_coords[0], 'o', color=cluster_color, markersize=line_thickness*2, alpha=0.6)
+    
+    # Add cluster labels using ordered clusters
+    if show_cluster_labels:
+        for cluster_idx, cluster_id in enumerate(ordered_clusters):
+            cluster_x_center = cluster_idx * (track_size_um + grid_spacing_um) + track_size_um / 2
+            label_y = total_height + 0.5
+            ax.text(cluster_x_center, label_y, f'Cluster {cluster_id}', 
+                   ha='center', va='bottom', fontsize=label_fontsize, fontweight='bold')
+    
+    # Set axis properties
+    ax.set_xlim(-0.5, total_width + 0.5)
+    ax.set_ylim(-0.5, total_height + (1 if show_cluster_labels else 0.5))
+    ax.set_aspect('equal')
+    ax.axis('off')
+    
+    # Add title
+    title_parts = []
+    if condition: title_parts.append(f"Condition: {condition}")
+    if location: title_parts.append(f"Location: {location}")
+    if filename: title_parts.append(f"File: {filename}")
+    if time_start is not None or time_end is not None:
+        time_str = f"Time: {time_start or 0:.1f}-{time_end or 'end':.1f}s"
+        title_parts.append(time_str)
+    
+    if title_parts:
+        ax.set_title(" | ".join(title_parts), pad=20, fontsize=label_fontsize)
+    
+    # Set background
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
+    
+    # Save or show
+    if save_path:
+        save_dir = os.path.dirname(save_path)
+        if save_dir and not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        
+        # Create filename
+        save_filename = f"segment_grid_{cluster_col}"
+        if condition: save_filename += f"_{condition}"
+        if location: save_filename += f"_{location}"
+        if filename: save_filename += f"_{filename}"
+        save_filename += f".{export_format}"
+        
+        full_path = os.path.join(save_path, save_filename)
+        
+        if export_format.lower() == 'svg':
+            plt.savefig(full_path, format='svg', bbox_inches='tight', 
+                       transparent=transparent_background, dpi=dpi)
+            if return_svg:
+                with open(full_path, 'r') as f:
+                    svg_content = f.read()
+        else:
+            plt.savefig(full_path, format=export_format, bbox_inches='tight', 
+                       transparent=transparent_background, dpi=dpi)
+    
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+    
+    # Return information
+    result = {
+        'segment_info': segment_info,
+        'clusters': all_unique_clusters,
+        'ordered_clusters': ordered_clusters,  # The actual left-to-right order used
+        'selected_segments': selected_segments,
+        'n_clusters': n_clusters,
+        'segments_per_cluster': segments_per_cluster,
+        'window_size': window_size,
+        'grid_dimensions': (total_width, total_height)
+    }
+    
+    if save_path and export_format.lower() == 'svg' and return_svg:
+        result['svg_content'] = svg_content
+    
+    return result
 
 
 
@@ -3962,7 +4721,8 @@ def napari_visualizer(
     """
 
     # --- Step 1: Filter by location, condition, and cell ---
-    locationlist = tracks_df['Location'].unique()
+    location_col = _get_location_column(tracks_df)
+    locationlist = tracks_df[location_col].unique()
     if isinstance(location, int):
         location = locationlist[location]
     elif isinstance(location, str):
@@ -3974,7 +4734,7 @@ def napari_visualizer(
     else:
         raise ValueError("Location must be a string, integer, or None.")
     
-    filtered_tracks_df = tracks_df[tracks_df['Location'] == location]
+    filtered_tracks_df = tracks_df[tracks_df[location_col] == location]
 
     conditionlist = filtered_tracks_df['condition'].unique()
     if isinstance(condition, int):

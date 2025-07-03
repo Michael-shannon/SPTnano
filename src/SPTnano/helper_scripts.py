@@ -16,6 +16,34 @@ import re
 from collections import Counter
 
 
+# Helper function to handle Location/location column case sensitivity
+def _get_location_column(df):
+    """
+    Helper function to detect whether dataframe has 'Location' or 'location' column.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        DataFrame to check for location column
+        
+    Returns:
+    --------
+    str
+        The correct column name ('Location' or 'location')
+        
+    Raises:
+    -------
+    ValueError
+        If neither 'Location' nor 'location' column is found
+    """
+    if 'Location' in df.columns:
+        return 'Location'
+    elif 'location' in df.columns:
+        return 'location'
+    else:
+        raise ValueError("Neither 'Location' nor 'location' column found in dataframe. Available columns: " + str(list(df.columns)))
+
+
 def generate_file_tree(startpath):
     tree = []
     for root, dirs, files in os.walk(startpath):
@@ -289,12 +317,13 @@ def generalized_filter(df_in, filter_col, low=None, high=None, condition=None, l
     
     # Handle the location input (can be a string or an index)
     if location is not None:
-        unique_locations = df_filtered['Location'].unique()
+        location_col = _get_location_column(df_filtered)
+        unique_locations = df_filtered[location_col].unique()
         if isinstance(location, int):
             if location >= len(unique_locations):
                 raise ValueError(f"Location index {location} is out of bounds - if you think it should be there, check whether you have it in the condition you filtered on")
             location = unique_locations[location]
-        df_filtered = df_filtered[df_filtered['Location'] == location]
+        df_filtered = df_filtered[df_filtered[location_col] == location]
 
     unique_ids = df_filtered['unique_id'].unique()
     
