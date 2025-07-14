@@ -994,23 +994,23 @@ class ParticleMetrics:
                 window_uid = f"{unique_id}_{time_window_num}_{frame_start}_{frame_end}"
 
                 # # ─── assign per-frame, either by append or overwrite ─── #im removing this for now - I just want to use most recent window
-                # if use_majority:
-                #     # append to our per-frame candidate lists
-                #     self.metrics_df.loc[window_data.index, 'e_uid_candidates'] = \
-                #         self.metrics_df.loc[window_data.index, 'e_uid_candidates'].apply(lambda lst: lst + [e_uid])
-                #     # NEW: append window_uid candidates
-                #     self.metrics_df.loc[window_data.index, 'window_uid_candidates'] = \
-                #         self.metrics_df.loc[window_data.index, 'window_uid_candidates'].apply(lambda lst: lst + [window_uid])
-                # else:
-                #     # later window simply overwrites
-                #     self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
-                #     # NEW: assign window_uid to frames
-                #     self.metrics_df.loc[window_data.index, 'window_uid'] = window_uid
+                if use_majority:
+                    # append to our per-frame candidate lists
+                    self.metrics_df.loc[window_data.index, 'e_uid_candidates'] = \
+                        self.metrics_df.loc[window_data.index, 'e_uid_candidates'].apply(lambda lst: lst + [e_uid])
+                    # NEW: append window_uid candidates
+                    self.metrics_df.loc[window_data.index, 'window_uid_candidates'] = \
+                        self.metrics_df.loc[window_data.index, 'window_uid_candidates'].apply(lambda lst: lst + [window_uid])
+                else:
+                    # later window simply overwrites
+                    self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
+                    # NEW: assign window_uid to frames
+                    self.metrics_df.loc[window_data.index, 'window_uid'] = window_uid
 
-                # NEW: map that e_uid back onto every frame in this window
-                self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
-                # NEW: map window_uid back onto every frame in this window
-                self.metrics_df.loc[window_data.index, 'window_uid'] = window_uid
+                # # NEW: map that e_uid back onto every frame in this window ################################################### NOTE THIS JUST OVERRIDES THE ABOVE!
+                # self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
+                # # NEW: map window_uid back onto every frame in this window
+                # self.metrics_df.loc[window_data.index, 'window_uid'] = window_uid
                 
                 total_time_s = window_data['time_s'].iloc[-1] - window_data['time_s'].iloc[0]
                 avg_speed = window_data['speed_um_s'].mean()
