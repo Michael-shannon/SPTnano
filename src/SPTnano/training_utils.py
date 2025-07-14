@@ -252,11 +252,7 @@ def create_training_session(trainer,
         Configured interrupt handler
     """
     if base_dir is None:
-        # Import config from parent directory
-        import sys
-        import os
-        sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-        import config
+        from . import config
         base_dir = os.path.join(config.SAVED_DATA, 'training_checkpoints')
     
     session_dir = os.path.join(base_dir, session_name)

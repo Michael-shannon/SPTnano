@@ -5,8 +5,8 @@ import os
 # Define global variables
 # MASTER = 'path/to/top/level/directory/'  # Update this path to your master directory
 # MASTER = 'D:/4_26_2025_Kinesininneurons_cort/'
-MASTER = 'D:/data_transformer_input/'
-# MASTER = 'D:/Reanalzye_April2025/FIGURE2_Neurons_WTHTTinRegionsofNeurons/2_25_2025_CorticalNeuron_20H20S_FreeHalo_20H77S_77H20S_analyze/'
+# MASTER = 'D:/data_transformer_input/'
+MASTER = 'D:/Reanalzye_April2025/FIGURE2_Neurons_WTHTTinRegionsofNeurons/2_25_2025_CorticalNeuron_20H20S_FreeHalo_20H77S_77H20S_analyze/'
 
 # MASTER = 'D:/Reanalzye_April2025/FIGURE2_Neurons_WTHTTinRegionsofNeurons/2_25_2025_CorticalNeuron_20H20S_FreeHalo_20H77S_77H20S_analyze/'
 SAVED_DATA = MASTER + 'saved_data/'
@@ -19,9 +19,9 @@ TIME_WINDOW = 60#60 #60 #6
 OVERLAP = 30#30 #30 #3
 
 # ORDEROFCONDITIONS = ['Condition_RUES2_kinesin','Condition_HTTKO_kinesin']
-ORDEROFCONDITIONS = ['Condition_mol-kinesin_geno-RUES2_type-ES_loc-ES','Condition_mol-HTT_geno-20H20S_type-ES_loc-ES', 'Condition_mol-kinesin_geno-HTTKO_type-ES_loc-ES']
+# ORDEROFCONDITIONS = ['Condition_mol-kinesin_geno-RUES2_type-ES_loc-ES','Condition_mol-HTT_geno-20H20S_type-ES_loc-ES', 'Condition_mol-kinesin_geno-HTTKO_type-ES_loc-ES']
 
-# ORDEROFCONDITIONS = ['Condition_freehalo_cort','Condition_20H20S_cort','Condition_77H20S_cort','Condition_20H77S_cort']
+ORDEROFCONDITIONS = ['Condition_freehalo_cort','Condition_20H20S_cort','Condition_77H20S_cort','Condition_20H77S_cort']
 
 # FEATURES
 

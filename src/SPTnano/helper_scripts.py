@@ -11,7 +11,7 @@ import tifffile as tiff
 # import tifffile as tiff
 from tifffile import TiffWriter
 from nd2reader import ND2Reader
-import config
+from . import config
 import re
 from collections import Counter
 

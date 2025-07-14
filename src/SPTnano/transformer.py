@@ -964,10 +964,7 @@ def train_multi_scale_transformers(
     tensorboard_base_dir = None
     if use_tensorboard:
         try:
-            # Import config from parent directory
-            import sys
-            sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-            import config
+            from . import config
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             tensorboard_base_dir = os.path.join(config.TENSORBOARD_LOGS, f"multi_scale_{timestamp}")
             os.makedirs(tensorboard_base_dir, exist_ok=True)

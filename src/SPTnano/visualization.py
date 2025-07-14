@@ -18,7 +18,7 @@ from matplotlib.collections import LineCollection
 import xml.etree.ElementTree as ET
 from scipy.stats import sem
 from matplotlib.colors import is_color_like
-import config
+from . import config
 from napari_animation import Animation
 from .helper_scripts import *
 import math

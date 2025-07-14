@@ -9,10 +9,7 @@ import time
 import threading
 from IPython.display import display, HTML
 
-# Import config from parent directory
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-import config
+from . import config
 
 def launch_tensorboard(log_dir=None, port=6006, auto_open=True):
     """

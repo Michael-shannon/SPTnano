@@ -5,7 +5,7 @@ from scipy.stats import vonmises, skew, kurtosis
 from tqdm.notebook import tqdm
 import scipy.optimize
 import re
-import config
+from . import config
 
 class ParticleMetrics:
     def __init__(self, df, time_between_frames=None, tolerance=None):
@@ -993,19 +993,19 @@ class ParticleMetrics:
                 frame_end = end_row['frame']
                 window_uid = f"{unique_id}_{time_window_num}_{frame_start}_{frame_end}"
 
-                # ─── assign per-frame, either by append or overwrite ───
-                if use_majority:
-                    # append to our per-frame candidate lists
-                    self.metrics_df.loc[window_data.index, 'e_uid_candidates'] = \
-                        self.metrics_df.loc[window_data.index, 'e_uid_candidates'].apply(lambda lst: lst + [e_uid])
-                    # NEW: append window_uid candidates
-                    self.metrics_df.loc[window_data.index, 'window_uid_candidates'] = \
-                        self.metrics_df.loc[window_data.index, 'window_uid_candidates'].apply(lambda lst: lst + [window_uid])
-                else:
-                    # later window simply overwrites
-                    self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
-                    # NEW: assign window_uid to frames
-                    self.metrics_df.loc[window_data.index, 'window_uid'] = window_uid
+                # # ─── assign per-frame, either by append or overwrite ─── #im removing this for now - I just want to use most recent window
+                # if use_majority:
+                #     # append to our per-frame candidate lists
+                #     self.metrics_df.loc[window_data.index, 'e_uid_candidates'] = \
+                #         self.metrics_df.loc[window_data.index, 'e_uid_candidates'].apply(lambda lst: lst + [e_uid])
+                #     # NEW: append window_uid candidates
+                #     self.metrics_df.loc[window_data.index, 'window_uid_candidates'] = \
+                #         self.metrics_df.loc[window_data.index, 'window_uid_candidates'].apply(lambda lst: lst + [window_uid])
+                # else:
+                #     # later window simply overwrites
+                #     self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
+                #     # NEW: assign window_uid to frames
+                #     self.metrics_df.loc[window_data.index, 'window_uid'] = window_uid
 
                 # NEW: map that e_uid back onto every frame in this window
                 self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
