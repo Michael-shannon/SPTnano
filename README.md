@@ -42,11 +42,13 @@ College London.
 ## Installation
 
 ### Quick Install (Recommended)
+
 ```bash
 pip install git+https://github.com/Michael-shannon/SPTnano.git
 ```
 
 ### For Development
+
 ```bash
 git clone https://github.com/Michael-shannon/SPTnano.git
 cd SPTnano
@@ -54,6 +56,7 @@ pip install -e .
 ```
 
 If you get dependency errors, try installing them first:
+
 ```bash
 pip install numpy pandas matplotlib seaborn scikit-learn torch trackpy
 ```
@@ -82,6 +85,7 @@ spt.plot_tracks_by_motion_class(windowed_df, metrics.get_time_averaged_df())
 ## Data Format
 
 Your CSV should have these columns:
+
 - `unique_id` - Unique identifier for each track
 - `frame` - Frame number
 - `x`, `y` - Coordinates
@@ -91,12 +95,14 @@ Your CSV should have these columns:
 ## Configuration
 
 Set your data directory:
+
 ```python
 # Edit this line in src/SPTnano/config.py
 MASTER = '/path/to/your/data/'
 ```
 
 Or change it programmatically:
+
 ```python
 import SPTnano as spt
 spt.config.MASTER = '/path/to/your/data/'
@@ -106,13 +112,12 @@ spt.config.MASTER = '/path/to/your/data/'
 
 - **Traditional Analysis**: MSD, diffusion coefficients, motion classification
 - **Transformer Models**: Deep learning on trajectory windows
-- **Visualization**: Track plotting, clustering, UMAP embeddings  
+- **Visualization**: Track plotting, clustering, UMAP embeddings
 - **TensorBoard**: Training monitoring and visualization
 
 ## Examples
 
 Check out the `notebooks/` folder for examples:
-
 
 ## Troubleshooting
 
