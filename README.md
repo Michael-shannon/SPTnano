@@ -27,11 +27,7 @@
 [license-badge]:            https://img.shields.io/badge/License-MIT-yellow.svg
 <!-- prettier-ignore-end -->
 
-Pipeline for easy single particle detection, linking/tracking, and analysis
-
-The structure for this repo was made using a cookiecutter from the
-[Centre for Advanced Research Computing](https://ucl.ac.uk/arc), University
-College London.
+Single particle tracking analysis with machine learning. This package combines traditional trajectory analysis with transformer-based deep learning to classify motion patterns.
 
 ## About
 
@@ -39,94 +35,97 @@ College London.
 
 Michael Shannon ([m.j.shannon@pm.me](mailto:m.j.shannon@pm.me))
 
-<!-- TODO: how do we have an array of collaborators ? -->
+The structure for this repo was made using a cookiecutter from the
+[Centre for Advanced Research Computing](https://ucl.ac.uk/arc), University
+College London.
 
-### Research Software Engineering Contact
+## Installation
 
-Michael Shannon ([m.j.shannon@pm.me](mailto:m.j.shannon@pm.me))
-
-## Getting Started
-
-### Prerequisites
-
-<!-- Any tools or versions of languages needed to run code. For example specific Python or Node versions. Minimum hardware requirements also go here. -->
-
-`SPTnano` requires Python 3.10&ndash;3.12.
-
-### Installation
-
-<!-- How to build or install the application. -->
-
-We recommend installing in a project specific virtual environment created using
-a environment management tool such as
-[Conda](https://docs.conda.io/projects/conda/en/stable/). To install the latest
-development version of `SPTnano` using `pip` in the currently active
-environment run
-
-```sh
+### Quick Install (Recommended)
+```bash
 pip install git+https://github.com/Michael-shannon/SPTnano.git
 ```
 
-Alternatively create a local clone of the repository with
-
-```sh
+### For Development
+```bash
 git clone https://github.com/Michael-shannon/SPTnano.git
-```
-
-and then install in editable mode by running
-
-```sh
+cd SPTnano
 pip install -e .
 ```
 
-### Running Locally
-
-How to run the application on your local system.
-
-### Running Tests
-
-<!-- How to run tests on your local system. -->
-
-Tests can be run across all compatible Python versions in isolated environments
-using [`tox`](https://tox.wiki/en/latest/) by running
-
-```sh
-tox
+If you get dependency errors, try installing them first:
+```bash
+pip install numpy pandas matplotlib seaborn scikit-learn torch trackpy
 ```
 
-To run tests manually in a Python environment with `pytest` installed run
+## Getting Started
 
-```sh
-pytest tests
+```python
+import SPTnano as spt
+import pandas as pd
+
+# Load your trajectory data
+df = pd.read_csv("your_trajectories.csv")
+
+# Calculate motion features
+metrics = spt.ParticleMetrics(df, time_between_frames=0.01)
+metrics.calculate_time_windowed_metrics(window_size=60, overlap=30)
+
+# Train a transformer model
+results = spt.train_motion_transformer(df, epochs=25, use_tensorboard=True)
+
+# Analyze results
+windowed_df = metrics.get_time_windowed_df()
+spt.plot_tracks_by_motion_class(windowed_df, metrics.get_time_averaged_df())
 ```
 
-again from the root of the repository.
+## Data Format
 
-### Building Documentation
+Your CSV should have these columns:
+- `unique_id` - Unique identifier for each track
+- `frame` - Frame number
+- `x`, `y` - Coordinates
+- `time_s` - Time in seconds
+- `condition` - Experimental condition (optional)
 
-The MkDocs HTML documentation can be built locally by running
+## Configuration
 
-```sh
-tox -e docs
+Set your data directory:
+```python
+# Edit this line in src/SPTnano/config.py
+MASTER = '/path/to/your/data/'
 ```
 
-from the root of the repository. The built documentation will be written to
-`site`.
-
-Alternatively to build and preview the documentation locally, in a Python
-environment with the optional `docs` dependencies installed, run
-
-```sh
-mkdocs serve
+Or change it programmatically:
+```python
+import SPTnano as spt
+spt.config.MASTER = '/path/to/your/data/'
 ```
 
-## Roadmap
+## Features
 
-- [x] Initial Research
-- [ ] Minimum viable product <-- You are Here
-- [ ] Alpha Release
-- [ ] Feature-Complete Release
+- **Traditional Analysis**: MSD, diffusion coefficients, motion classification
+- **Transformer Models**: Deep learning on trajectory windows
+- **Visualization**: Track plotting, clustering, UMAP embeddings  
+- **TensorBoard**: Training monitoring and visualization
 
-## Acknowledgements
+## Examples
 
-This work was funded by Cure Huntingtons Disease Initiative (CHDI) and The Rockefeller University.
+Check out the `notebooks/` folder for examples:
+
+
+## Troubleshooting
+
+**Import errors?** Make sure you installed the package: `pip install -e .`
+
+**Missing dependencies?** Install them: `pip install torch numpy pandas matplotlib`
+
+**Path issues?** Check your config: `print(spt.config.MASTER)`
+
+## Contributing
+
+This is research software - expect rough edges. Pull requests welcome.
+
+## License
+
+MIT License
