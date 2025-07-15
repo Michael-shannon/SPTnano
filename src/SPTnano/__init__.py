@@ -1,19 +1,13 @@
 """SPTnano package."""
 
-# from ._version import __version__  # noqa: F401
+# from ._version import __version__
 
+from . import augmentations, config, tensorboard_utils, training_utils
 from .batch_roi_selector import ROISelector, process_directory
-
-from .helper_scripts import *
-
 from .features import ParticleMetrics
-
+from .helper_scripts import *
 from .visualization import *
 
-from . import tensorboard_utils
-from . import augmentations
-from . import training_utils
-from . import config
 
 def example_function(argument: str, keyword_argument: str = "default") -> str:
     """

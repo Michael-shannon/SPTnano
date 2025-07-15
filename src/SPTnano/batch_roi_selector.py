@@ -1,23 +1,38 @@
-from PIL import Image, ImageSequence
-import os
-import matplotlib.pyplot as plt
-import ipywidgets as widgets
-from ipywidgets import interact
-from IPython.display import display, clear_output
-from nd2reader import ND2Reader
-import numpy as np
-from skimage import exposure
-import pandas as pd
-from tqdm.notebook import tqdm
-from concurrent.futures import ThreadPoolExecutor
-import tifffile as tiff
-from tifffile import TiffWriter
 import gc
+import os
+from concurrent.futures import ThreadPoolExecutor
+
+import ipywidgets as widgets
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import tifffile as tiff
+from IPython.display import clear_output, display
+from ipywidgets import interact
+from nd2reader import ND2Reader
+from PIL import Image, ImageSequence
+from skimage import exposure
+from tifffile import TiffWriter
+from tqdm.notebook import tqdm
+
 
 class ROISelector:
-    def __init__(self, input_directory, output_directory, roi_width, roi_height, split_tiff=False,
-                 dark_frame_subtraction=False, dark_frame_directory=None, save_dark_corrected=False,
-                 ROI_from_metadata=False, metadata_path=None, percentile_correction=False, pmin=1, pmax=100):# PERSIMMON 
+    def __init__(
+        self,
+        input_directory,
+        output_directory,
+        roi_width,
+        roi_height,
+        split_tiff=False,
+        dark_frame_subtraction=False,
+        dark_frame_directory=None,
+        save_dark_corrected=False,
+        ROI_from_metadata=False,
+        metadata_path=None,
+        percentile_correction=False,
+        pmin=1,
+        pmax=100,
+    ):  # PERSIMMON
         self.input_directory = input_directory
         self.output_directory = output_directory
         self.roi_width = roi_width
@@ -26,13 +41,15 @@ class ROISelector:
         self.dark_frame_subtraction = dark_frame_subtraction
         self.dark_frame_directory = dark_frame_directory
         self.save_dark_corrected = save_dark_corrected
-        self.ROI_from_metadata = ROI_from_metadata  # Boolean to enable ROI selection from metadata
+        self.ROI_from_metadata = (
+            ROI_from_metadata  # Boolean to enable ROI selection from metadata
+        )
         self.metadata_path = metadata_path  # Path to metadata CSV
         self.metadata_df = None  # DataFrame to hold metadata for ROI selection
         self.percentile_correction = percentile_correction
         self.pmin = pmin
         self.pmax = pmax
-        
+
         # Load metadata if ROI_from_metadata is enabled
         if self.ROI_from_metadata and self.metadata_path:
             self.metadata_df = pd.read_csv(self.metadata_path)
@@ -46,14 +63,19 @@ class ROISelector:
         self.condition_index = 0
         self.median_dark_frame = None  # Cache for the median dark frame
 
-
     def prepare_output_folders(self):
-        self.conditions = [d for d in os.listdir(self.input_directory) if os.path.isdir(os.path.join(self.input_directory, d))]
+        self.conditions = [
+            d
+            for d in os.listdir(self.input_directory)
+            if os.path.isdir(os.path.join(self.input_directory, d))
+        ]
         for condition in self.conditions:
-            condition_output_directory = os.path.join(self.output_directory, 'data', f'Condition_{condition}')
+            condition_output_directory = os.path.join(
+                self.output_directory, "data", f"Condition_{condition}"
+            )
             os.makedirs(condition_output_directory, exist_ok=True)
-        os.makedirs(os.path.join(self.output_directory, 'saved_data'), exist_ok=True)
-    
+        os.makedirs(os.path.join(self.output_directory, "saved_data"), exist_ok=True)
+
     def subtract_dark_frame(self, image_stack):
         if self.median_dark_frame is None:
             self.extract_median_dark_frame()  # Extract and cache the median dark frame
@@ -63,23 +85,28 @@ class ROISelector:
         corrected_stack[corrected_stack < 0] = 0  # Ensure no negative values
         return corrected_stack
 
-    
     def extract_median_dark_frame(self):
         # Load the dark frame stack (ND2 or TIFF)
         if self.dark_frame_directory is None:
             raise ValueError("Dark frame directory is not provided.")
-        
-        dark_frame_files = [f for f in os.listdir(self.dark_frame_directory) if f.lower().endswith(('nd2', 'tif', 'tiff'))]
+
+        dark_frame_files = [
+            f
+            for f in os.listdir(self.dark_frame_directory)
+            if f.lower().endswith(("nd2", "tif", "tiff"))
+        ]
         if not dark_frame_files:
-            raise FileNotFoundError("No ND2 or TIFF files found in the dark frame directory.")
+            raise FileNotFoundError(
+                "No ND2 or TIFF files found in the dark frame directory."
+            )
 
         dark_frame_path = os.path.join(self.dark_frame_directory, dark_frame_files[0])
 
         # Read the dark frame stack
-        if dark_frame_path.lower().endswith('nd2'):
+        if dark_frame_path.lower().endswith("nd2"):
             with ND2Reader(dark_frame_path) as nd2_dark:
                 dark_frames = [np.array(frame) for frame in nd2_dark]
-        elif dark_frame_path.lower().endswith(('tif', 'tiff')):
+        elif dark_frame_path.lower().endswith(("tif", "tiff")):
             with tiff.TiffFile(dark_frame_path) as tif:
                 dark_frames = [page.asarray() for page in tif.pages]
 
@@ -87,14 +114,17 @@ class ROISelector:
         median_dark_frame = np.median(np.array(dark_frames), axis=0)
 
         # Cache the median dark frame for later use
-        self.median_dark_frame = median_dark_frame    
-    
+        self.median_dark_frame = median_dark_frame
 
     def process_conditions(self):
         if self.condition_index < len(self.conditions):
             self.current_condition = self.conditions[self.condition_index]
             condition_path = os.path.join(self.input_directory, self.current_condition)
-            self.files = [f for f in os.listdir(condition_path) if f.lower().endswith(('tif', 'tiff', 'nd2'))]
+            self.files = [
+                f
+                for f in os.listdir(condition_path)
+                if f.lower().endswith(("tif", "tiff", "nd2"))
+            ]
             self.file_index = 0
             self.process_next_file()
         else:
@@ -108,125 +138,168 @@ class ROISelector:
             self.condition_index += 1
             self.process_conditions()
 
-
     def process_file(self, file):
         self.current_file = file
-        input_filepath = os.path.join(self.input_directory, self.current_condition, file)
-        condition_output_directory = os.path.join(self.output_directory, 'data', f'Condition_{self.current_condition}')
-        output_filepath = os.path.join(condition_output_directory, os.path.splitext(file)[0] + '_cropped.tif')
+        input_filepath = os.path.join(
+            self.input_directory, self.current_condition, file
+        )
+        condition_output_directory = os.path.join(
+            self.output_directory, "data", f"Condition_{self.current_condition}"
+        )
+        output_filepath = os.path.join(
+            condition_output_directory, os.path.splitext(file)[0] + "_cropped.tif"
+        )
         print(f"Processing file: {input_filepath}")
 
         metadata_info = {
-            'date': '',
-            'channels': '',
-            'pixel_microns': '',
-            'num_frames': ''
+            "date": "",
+            "channels": "",
+            "pixel_microns": "",
+            "num_frames": "",
         }
-        
 
         # Determine file type and read the image
-        if file.lower().endswith(('tif', 'tiff')):
-            with Image.open(input_filepath) as im: #calamansi
-            # im = Image.open(input_filepath)
-                frames = [frame.copy() for frame in ImageSequence.Iterator(im)] #calamansi
+        if file.lower().endswith(("tif", "tiff")):
+            with Image.open(input_filepath) as im:  # calamansi
+                # im = Image.open(input_filepath)
+                frames = [
+                    frame.copy() for frame in ImageSequence.Iterator(im)
+                ]  # calamansi
             first_frame = frames[0]
             num_frames = len(frames)
-            metadata_info['num_frames'] = num_frames
-        elif file.lower().endswith('nd2'):
+            metadata_info["num_frames"] = num_frames
+        elif file.lower().endswith("nd2"):
             with ND2Reader(input_filepath) as nd2_file:
-            
                 first_frame = np.array(nd2_file[0])
                 first_frame = Image.fromarray(first_frame)
                 frames = [np.array(frame) for frame in nd2_file]
-                num_frames = nd2_file.sizes.get('t', 0)
+                num_frames = nd2_file.sizes.get("t", 0)
                 # Extract relevant metadata from ND2 file
                 nd2_metadata = nd2_file.metadata
-                    
-                # Format date and channels
-                if 'date' in nd2_metadata:
-                    formatted_date = nd2_metadata['date'].strftime('%Y-%m-%d')
-                else:
-                    formatted_date = 'No date available'
 
-                channels_str = ', '.join(nd2_metadata.get('channels', []))
+                # Format date and channels
+                if "date" in nd2_metadata:
+                    formatted_date = nd2_metadata["date"].strftime("%Y-%m-%d")
+                else:
+                    formatted_date = "No date available"
+
+                channels_str = ", ".join(nd2_metadata.get("channels", []))
 
                 metadata_info = {
-                    'date': formatted_date,
-                    'channels': channels_str,
-                    'pixel_microns': nd2_metadata.get('pixel_microns', 'No pixel size available'),
-                    'num_frames': num_frames
+                    "date": formatted_date,
+                    "channels": channels_str,
+                    "pixel_microns": nd2_metadata.get(
+                        "pixel_microns", "No pixel size available"
+                    ),
+                    "num_frames": num_frames,
                 }
-        original_min = np.min(frames) #persimmon
-        original_max = np.max(frames) #persimmon
+        original_min = np.min(frames)  # persimmon
+        original_max = np.max(frames)  # persimmon
         # Apply dark frame subtraction if enabled
         if self.dark_frame_subtraction:
             frames = self.subtract_dark_frame(np.array(frames))
             print("Dark frame subtraction applied.")
             # Optionally save the dark-corrected file before cropping
             if self.save_dark_corrected:
-                dark_corrected_output = os.path.splitext(input_filepath)[0] + '_dark_corrected.tif'
-                tiff.imwrite(dark_corrected_output, frames, photometric='minisblack')
+                dark_corrected_output = (
+                    os.path.splitext(input_filepath)[0] + "_dark_corrected.tif"
+                )
+                tiff.imwrite(dark_corrected_output, frames, photometric="minisblack")
                 print(f"Dark-corrected file saved to: {dark_corrected_output}")
             # if self.percentile_correction: #persimmon
             #     frames = np.array([self.apply_percentile_correction(frame) for frame in frames]) #persimmon
             #     print("Percentile correction applied after dark correction.") #persimmon
-        gc.collect() #persimmon
+        gc.collect()  # persimmon
 
         # If ROI selection from metadata is enabled
         if self.ROI_from_metadata and self.metadata_df is not None:
             # Find the metadata entry for the current file
-            row = self.metadata_df[(self.metadata_df['Filename'] == file) & 
-                                (self.metadata_df['Condition'] == self.current_condition)]
-            
+            row = self.metadata_df[
+                (self.metadata_df["Filename"] == file)
+                & (self.metadata_df["Condition"] == self.current_condition)
+            ]
+
             if not row.empty:
-                center_x = int(row['ROI_Center_X'].values[0])
-                center_y = int(row['ROI_Center_Y'].values[0])
-                roi_width = int(row['ROI_Width'].values[0])
-                roi_height = int(row['ROI_Height'].values[0])
-                print(f"Using ROI from metadata for file {file}: Center ({center_x}, {center_y}), Size ({roi_width}, {roi_height})")
-                
+                center_x = int(row["ROI_Center_X"].values[0])
+                center_y = int(row["ROI_Center_Y"].values[0])
+                roi_width = int(row["ROI_Width"].values[0])
+                roi_height = int(row["ROI_Height"].values[0])
+                print(
+                    f"Using ROI from metadata for file {file}: Center ({center_x}, {center_y}), Size ({roi_width}, {roi_height})"
+                )
+
                 # Calculate cropping box
-                box = (center_x - roi_width // 2, center_y - roi_height // 2, center_x + roi_width // 2, center_y + roi_height // 2)
+                box = (
+                    center_x - roi_width // 2,
+                    center_y - roi_height // 2,
+                    center_x + roi_width // 2,
+                    center_y + roi_height // 2,
+                )
 
                 # Process and save frames
-                if file.lower().endswith(('tif', 'tiff')):
+                if file.lower().endswith(("tif", "tiff")):
                     cropped_ims = [Image.fromarray(frame).crop(box) for frame in frames]
-                    tiff.imwrite(output_filepath, [np.array(im_frame) for im_frame in cropped_ims], photometric='minisblack')
+                    tiff.imwrite(
+                        output_filepath,
+                        [np.array(im_frame) for im_frame in cropped_ims],
+                        photometric="minisblack",
+                    )
                     cropped_ims.clear()
-                elif file.lower().endswith('nd2'):
+                elif file.lower().endswith("nd2"):
                     cropped_frames = []
                     with ThreadPoolExecutor() as executor:
-                        cropped_frames = list(tqdm(executor.map(lambda frame: Image.fromarray(frame).crop(box), frames), desc="Processing ND2 frames", total=num_frames))
-                        if self.percentile_correction: #persimmon
-                            cropped_frames = [self.apply_percentile_correction(np.array(frame)) for frame in cropped_frames]
+                        cropped_frames = list(
+                            tqdm(
+                                executor.map(
+                                    lambda frame: Image.fromarray(frame).crop(box),
+                                    frames,
+                                ),
+                                desc="Processing ND2 frames",
+                                total=num_frames,
+                            )
+                        )
+                        if self.percentile_correction:  # persimmon
+                            cropped_frames = [
+                                self.apply_percentile_correction(np.array(frame))
+                                for frame in cropped_frames
+                            ]
                             print("Percentile correction applied to cropped frames.")
 
                             # cropped_frames = [self.apply_percentile_correction(np.array(frame)) for frame in cropped_frames]
                             # print("Percentile correction applied to cropped frames.")
 
-                            cropped_frames = [(frame * (original_max - original_min) + original_min).astype(frames[0].dtype)
-                                                for frame in cropped_frames] #persimmon
+                            cropped_frames = [
+                                (
+                                    frame * (original_max - original_min) + original_min
+                                ).astype(frames[0].dtype)
+                                for frame in cropped_frames
+                            ]  # persimmon
 
-
-                    tiff.imwrite(output_filepath, [np.array(frame) for frame in cropped_frames], photometric='minisblack')
+                    tiff.imwrite(
+                        output_filepath,
+                        [np.array(frame) for frame in cropped_frames],
+                        photometric="minisblack",
+                    )
 
                     cropped_frames.clear()
-                    del cropped_frames #persimmon   
-                    gc.collect() #persimmon
-                
+                    del cropped_frames  # persimmon
+                    gc.collect()  # persimmon
+
                 # Append to metadata list
-                self.metadata.append({
-                    'Condition': self.current_condition,
-                    'Filename': file,
-                    'ROI_Center_X': center_x,
-                    'ROI_Center_Y': center_y,
-                    'ROI_Width': roi_width,
-                    'ROI_Height': roi_height,
-                    'Date': metadata_info['date'],
-                    'Channels': metadata_info['channels'],
-                    'Pixel_Microns': metadata_info['pixel_microns'],
-                    'Num_Frames': metadata_info['num_frames']
-                })
+                self.metadata.append(
+                    {
+                        "Condition": self.current_condition,
+                        "Filename": file,
+                        "ROI_Center_X": center_x,
+                        "ROI_Center_Y": center_y,
+                        "ROI_Width": roi_width,
+                        "ROI_Height": roi_height,
+                        "Date": metadata_info["date"],
+                        "Channels": metadata_info["channels"],
+                        "Pixel_Microns": metadata_info["pixel_microns"],
+                        "Num_Frames": metadata_info["num_frames"],
+                    }
+                )
                 self.save_metadata()
                 self.file_index += 1
                 self.process_next_file()
@@ -237,14 +310,18 @@ class ROISelector:
 
         else:
             # Fallback to the interactive ROI selection method (if not using metadata)
-            print("No metadata file found or ROI_from_metadata is False. Using interactive ROI selection.")
-            
+            print(
+                "No metadata file found or ROI_from_metadata is False. Using interactive ROI selection."
+            )
+
             # Convert first frame to numpy array for processing
             first_frame_array = np.array(first_frame)
 
             # Autoscale and invert the image
             p2, p98 = np.percentile(first_frame_array, (2, 98))
-            first_frame_array = exposure.rescale_intensity(first_frame_array, in_range=(p2, p98))
+            first_frame_array = exposure.rescale_intensity(
+                first_frame_array, in_range=(p2, p98)
+            )
             first_frame_array = np.invert(first_frame_array)
 
             # Convert back to PIL Image
@@ -256,71 +333,113 @@ class ROISelector:
             # Function to display the image and the ROI
             def display_image_with_roi(x, y):
                 fig, ax = plt.subplots(figsize=(8, 8))
-                ax.imshow(first_frame, cmap='gray')
-                ax.set_title(f'Select a central point for ROI - {file}')
-                ax.set_xlabel('X')
-                ax.set_ylabel('Y')
+                ax.imshow(first_frame, cmap="gray")
+                ax.set_title(f"Select a central point for ROI - {file}")
+                ax.set_xlabel("X")
+                ax.set_ylabel("Y")
 
                 # Draw ROI
-                roi = plt.Rectangle((x - self.roi_width // 2, y - self.roi_height // 2), self.roi_width, self.roi_height, edgecolor='r', facecolor='none')
+                roi = plt.Rectangle(
+                    (x - self.roi_width // 2, y - self.roi_height // 2),
+                    self.roi_width,
+                    self.roi_height,
+                    edgecolor="r",
+                    facecolor="none",
+                )
                 ax.add_patch(roi)
                 plt.show()
 
             # Create interactive widgets for selecting the ROI center
-            x_widget = widgets.IntSlider(value=width // 2, min=0, max=width, step=1, description='X Center:')
-            y_widget = widgets.IntSlider(value=height // 2, min=0, max=height, step=1, description='Y Center:')
-            
+            x_widget = widgets.IntSlider(
+                value=width // 2, min=0, max=width, step=1, description="X Center:"
+            )
+            y_widget = widgets.IntSlider(
+                value=height // 2, min=0, max=height, step=1, description="Y Center:"
+            )
+
             # Use the interact function to update the plot based on the widget values
             interact(display_image_with_roi, x=x_widget, y=y_widget)
-
-
 
         def on_button_clicked(b):
             center_x = x_widget.value
             center_y = y_widget.value
             clear_output(wait=True)
-            print(f"ROI center set to: ({center_x}, {center_y}), size: ({self.roi_width}, {self.roi_height}) for file: {file}")
+            print(
+                f"ROI center set to: ({center_x}, {center_y}), size: ({self.roi_width}, {self.roi_height}) for file: {file}"
+            )
 
             # Calculate the cropping box based on the selected central point and size
-            box = (center_x - self.roi_width // 2, center_y - self.roi_height // 2, center_x + self.roi_width // 2, center_y + self.roi_height // 2)
+            box = (
+                center_x - self.roi_width // 2,
+                center_y - self.roi_height // 2,
+                center_x + self.roi_width // 2,
+                center_y + self.roi_height // 2,
+            )
 
             # Process and save frames individually
-            if file.lower().endswith(('tif', 'tiff')):
+            if file.lower().endswith(("tif", "tiff")):
                 cropped_ims = []
                 for im_frame in tqdm(frames, desc="Processing TIFF frames"):
                     im_frame = Image.fromarray(im_frame).crop(box)
                     cropped_ims.append(im_frame)
-                tiff.imwrite(output_filepath, [np.array(im_frame) for im_frame in cropped_ims], photometric='minisblack')
+                tiff.imwrite(
+                    output_filepath,
+                    [np.array(im_frame) for im_frame in cropped_ims],
+                    photometric="minisblack",
+                )
                 cropped_ims.clear()  # Clear the list to free memory
 
-            elif file.lower().endswith('nd2'):
+            elif file.lower().endswith("nd2"):
                 cropped_frames = []
                 with ThreadPoolExecutor() as executor:
-                    cropped_frames = list(tqdm(executor.map(lambda frame: Image.fromarray(frame).crop(box), frames), desc="Processing ND2 frames", total=num_frames))
+                    cropped_frames = list(
+                        tqdm(
+                            executor.map(
+                                lambda frame: Image.fromarray(frame).crop(box), frames
+                            ),
+                            desc="Processing ND2 frames",
+                            total=num_frames,
+                        )
+                    )
                     if self.percentile_correction:
-                        cropped_frames = [self.apply_percentile_correction(np.array(frame)) for frame in cropped_frames] #persimmon
-                        print("Percentile correction applied to cropped frames.") #persimmon
+                        cropped_frames = [
+                            self.apply_percentile_correction(np.array(frame))
+                            for frame in cropped_frames
+                        ]  # persimmon
+                        print(
+                            "Percentile correction applied to cropped frames."
+                        )  # persimmon
                         # Rescale back to the original intensity range
-                        cropped_frames = [(frame * (original_max - original_min) + original_min).astype(frames[0].dtype)
-                                        for frame in cropped_frames] #persimmon
+                        cropped_frames = [
+                            (
+                                frame * (original_max - original_min) + original_min
+                            ).astype(frames[0].dtype)
+                            for frame in cropped_frames
+                        ]  # persimmon
 
-                tiff.imwrite(output_filepath, [np.array(frame) for frame in cropped_frames], photometric='minisblack')
+                tiff.imwrite(
+                    output_filepath,
+                    [np.array(frame) for frame in cropped_frames],
+                    photometric="minisblack",
+                )
                 cropped_frames.clear()  # Clear the list to free memory
                 print(f"Finished saving {output_filepath}.")
 
             # Append metadata
-            self.metadata.append({
-                'Condition': self.current_condition,
-                'Filename': file,
-                'ROI_Center_X': center_x,
-                'ROI_Center_Y': center_y,
-                'ROI_Width': self.roi_width,
-                'ROI_Height': self.roi_height,
-                'Date': metadata_info['date'],
-                'Channels': metadata_info['channels'],
-                'Pixel_Microns': metadata_info['pixel_microns'],
-                'Num_Frames': metadata_info['num_frames']
-            })
+            self.metadata.append(
+                {
+                    "Condition": self.current_condition,
+                    "Filename": file,
+                    "ROI_Center_X": center_x,
+                    "ROI_Center_Y": center_y,
+                    "ROI_Width": self.roi_width,
+                    "ROI_Height": self.roi_height,
+                    "Date": metadata_info["date"],
+                    "Channels": metadata_info["channels"],
+                    "Pixel_Microns": metadata_info["pixel_microns"],
+                    "Num_Frames": metadata_info["num_frames"],
+                }
+            )
 
             # Save metadata after each file
             self.save_metadata()
@@ -329,7 +448,7 @@ class ROISelector:
             self.process_next_file()
 
         if not self.ROI_from_metadata:
-            button = widgets.Button(description=f"Set ROI")
+            button = widgets.Button(description="Set ROI")
             button.on_click(on_button_clicked)
 
             # Display the button
@@ -345,7 +464,7 @@ class ROISelector:
     def _save_large_tiff(self, filepath, frames):
         with TiffWriter(filepath, bigtiff=True) as tif_writer:
             for frame in frames:
-                tif_writer.write(frame, photometric='minisblack')
+                tif_writer.write(frame, photometric="minisblack")
 
     def normalize_mi_ma(self, x, mi, ma, clip=False, eps=1e-20, dtype=np.float32):
         """Normalize an array to the range [0, 1] using specified minimum and maximum values."""
@@ -356,6 +475,7 @@ class ROISelector:
             eps = dtype(eps)
         try:
             import numexpr
+
             x = numexpr.evaluate("(x - mi) / (ma - mi + eps)")
         except ImportError:
             x = (x - mi) / (ma - mi + eps)
@@ -363,18 +483,27 @@ class ROISelector:
             x = np.clip(x, 0, 1)
         return x
 
-
     def save_metadata(self):
-        saved_data_dir = os.path.join(self.output_directory, 'saved_data')
+        saved_data_dir = os.path.join(self.output_directory, "saved_data")
         os.makedirs(saved_data_dir, exist_ok=True)
         metadata_df = pd.DataFrame(self.metadata)
-        metadata_df.to_csv(os.path.join(saved_data_dir, 'metadata_summary.csv'), index=False)
+        metadata_df.to_csv(
+            os.path.join(saved_data_dir, "metadata_summary.csv"), index=False
+        )
         print("Metadata saved to CSV.")
 
-    def apply_percentile_correction(self, image_data): #persimmon
-        global_min = np.percentile(image_data, self.pmin) #persimmon
-        global_max = np.percentile(image_data, self.pmax) #persimmon
-        return self.normalize_mi_ma(x=image_data, mi=global_min, ma=global_max, clip=True, eps=1e-20, dtype=np.float32) #persimmon
+    def apply_percentile_correction(self, image_data):  # persimmon
+        global_min = np.percentile(image_data, self.pmin)  # persimmon
+        global_max = np.percentile(image_data, self.pmax)  # persimmon
+        return self.normalize_mi_ma(
+            x=image_data,
+            mi=global_min,
+            ma=global_max,
+            clip=True,
+            eps=1e-20,
+            dtype=np.float32,
+        )  # persimmon
+
 
 def process_directory(input_directory, output_directory, roi_width, roi_height):
     if not os.path.exists(output_directory):
@@ -383,5 +512,3 @@ def process_directory(input_directory, output_directory, roi_width, roi_height):
     selector = ROISelector(input_directory, output_directory, roi_width, roi_height)
     selector.prepare_output_folders()
     selector.process_conditions()
-
-
