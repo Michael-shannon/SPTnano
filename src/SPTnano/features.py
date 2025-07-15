@@ -1140,9 +1140,6 @@ class ParticleMetrics:
         print(
             "Note: Partial windows (below the window size) are not included in the time-windowed metrics."
         )
-        self.metrics_df["e_uid"] = None  # NEW FOR MAPPING
-        # NEW: Initialize window_uid column for mapping
-        self.metrics_df["window_uid"] = None
         windowed_list = []
         included_frames = set()
 
@@ -1234,11 +1231,6 @@ class ParticleMetrics:
                     self.metrics_df.loc[window_data.index, "e_uid"] = e_uid
                     # NEW: assign window_uid to frames
                     self.metrics_df.loc[window_data.index, "window_uid"] = window_uid
-
-                # # NEW: map that e_uid back onto every frame in this window ################################################### NOTE THIS JUST OVERRIDES THE ABOVE!
-                # self.metrics_df.loc[window_data.index, 'e_uid'] = e_uid
-                # # NEW: map window_uid back onto every frame in this window
-                # self.metrics_df.loc[window_data.index, 'window_uid'] = window_uid
 
                 total_time_s = (
                     window_data["time_s"].iloc[-1] - window_data["time_s"].iloc[0]
@@ -1386,6 +1378,7 @@ class ParticleMetrics:
             self.metrics_df["window_uid"] = self.metrics_df[
                 "window_uid_candidates"
             ].apply(pick_majority)
+            
             self.metrics_df.drop(
                 columns=["e_uid_candidates", "window_uid_candidates"], inplace=True
             )
