@@ -19,7 +19,7 @@ import pims
 import seaborn as sns
 import skimage.io as skio
 import xarray as xr  # for converting arrays to DataArray
-from config import FEATURES2  # import additional features from your config
+from .config import FEATURES2  # import additional features from your config
 from datashader.reductions import mean
 from matplotlib import cm
 from matplotlib.collections import LineCollection
