@@ -38,6 +38,40 @@ python -m SPTnano.HPC \
 sbatch slurm_job.sh
 ```
 
+## Environment Setup
+
+### HPC Environment File
+
+Use the dedicated HPC environment for cluster deployment:
+
+```bash
+# Create the HPC environment
+conda env create -f environment_HPC.yml
+
+# Activate the environment  
+conda activate SPTnano_HPC
+
+# Install SPTnano in development mode
+pip install -e .
+```
+
+The `environment_HPC.yml` file provides:
+- **Minimal dependencies**: Only packages needed for SPTnano.HPC
+- **Optimized for clusters**: Excludes GUI packages and development tools
+- **All core functionality**: Scientific computing, machine learning, parallel processing
+- **Optional Jupyter**: For testing on login nodes
+
+### Environment Testing
+
+Verify your environment setup with the test script:
+
+```bash
+# Test the environment
+python test_hpc_environment.py
+```
+
+This will check all dependencies and confirm SPTnano.HPC is working correctly.
+
 ## How It Works
 
 ### Chunking Strategy

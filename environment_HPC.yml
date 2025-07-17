@@ -1,0 +1,60 @@
+name: SPTnano_HPC
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  # Python
+  - python=3.9
+  
+  # Core scientific computing
+  - numpy>=1.24.0
+  - pandas>=2.0.0
+  - scipy>=1.10.0
+  - matplotlib>=3.7.0
+  - seaborn>=0.13.0
+  
+  # Machine learning and data processing
+  - scikit-learn>=1.3.0
+  - scikit-image>=0.21.0
+  - pytorch>=2.0.0
+  - tensorboard>=2.12.0
+  
+  # Parallel processing
+  - joblib>=1.3.0
+  
+  # Tracking and image processing
+  - trackpy>=0.6.0
+  - tifffile>=2023.7.0
+  - pims>=0.6.0
+  
+  # Configuration and utilities
+  - pyyaml>=6.0.0
+  - tqdm>=4.62.0
+  - requests>=2.32.0
+  
+  # Data validation
+  - pydantic>=2.0.0
+  
+  # Optional: Basic Jupyter support for login node testing
+  - jupyter-core
+  - ipykernel
+  
+  # Pip packages (packages not available or better via pip)
+  - pip
+  - pip:
+      - nd2>=0.10.0  # Microscopy file format
+      - umap-learn>=0.5.0  # Dimensionality reduction
+      - hdbscan>=0.8.29  # Clustering
+      - colorcet>=3.0.0  # Color palettes
+      
+# Notes:
+# - This is a minimal environment optimized for HPC cluster usage
+# - Excludes heavy GUI packages and development tools  
+# - Includes all dependencies needed for SPTnano.HPC parallel processing
+# - PyTorch included for transformer models
+# - Optional Jupyter for testing on login nodes
+#
+# Usage:
+#   conda env create -f environment_HPC.yml
+#   conda activate SPTnano_HPC
+#   pip install -e .  # Install SPTnano package itself 

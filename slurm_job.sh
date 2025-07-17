@@ -24,8 +24,8 @@ echo "Start Time: $(date)"
 module load python/3.12
 module load gcc/11.2.0
 
-# Activate your conda environment
-source activate nanoSPT
+# Activate your conda environment (created from environment_HPC.yml)
+source activate SPTnano_HPC
 
 # Set up paths
 WORK_DIR="/path/to/your/SPTnano"
