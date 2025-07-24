@@ -145,6 +145,7 @@ def parallel_time_windowed_metrics(input_file: str,
                                    n_jobs: int = -1,
                                    chunk_size: int = None,
                                    time_between_frames: float = 0.01,
+                                   stream_to_disk: bool = False,
                                    **metric_params) -> Tuple[str, str]:
     """
     Calculate time-windowed metrics in parallel across multiple CPU cores.
@@ -155,6 +156,8 @@ def parallel_time_windowed_metrics(input_file: str,
         n_jobs: Number of parallel jobs (-1 for all cores)
         chunk_size: Number of tracks per chunk (auto-estimated if None)
         time_between_frames: Time between frames in seconds
+        stream_to_disk: If True, write chunk results to disk first to reduce memory usage.
+                        If False, concatenate chunks in memory (default, faster but uses more RAM).
         **metric_params: Parameters for calculate_time_windowed_metrics
         
     Returns:
@@ -167,6 +170,11 @@ def parallel_time_windowed_metrics(input_file: str,
     print("=" * 60)
     print("SPTnano Parallel Time-Windowed Metrics Calculator")
     print("=" * 60)
+    
+    if stream_to_disk:
+        print("🔄 Streaming mode enabled - lower memory usage but slower I/O")
+    else:
+        print("⚡ In-memory mode - faster but higher RAM requirements")
     
     # Load data
     print(f"Loading data from: {input_file}")
@@ -227,19 +235,61 @@ def parallel_time_windowed_metrics(input_file: str,
     
     # Concatenate results
     print("Concatenating results...")
-    instant_dfs = []
-    time_windowed_dfs = []
     
-    for instant_chunk, time_windowed_chunk, chunk_id in results:
-        if instant_chunk is not None and time_windowed_chunk is not None:
-            instant_dfs.append(instant_chunk)
-            time_windowed_dfs.append(time_windowed_chunk)
-        else:
-            print(f"⚠️  Chunk {chunk_id} failed - skipping")
-    
-    # Combine all results
-    final_instant_df = pd.concat(instant_dfs, ignore_index=True)
-    final_time_windowed_df = pd.concat(time_windowed_dfs, ignore_index=True)
+    if stream_to_disk:
+        # Stream to disk approach - lower memory usage
+        print("Using streaming reassembly (writing chunks to disk first)...")
+        
+        # Create temporary directory for chunk files
+        temp_dir = os.path.join(output_dir, 'temp_chunks')
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # Write each chunk to disk
+        instant_files = []
+        windowed_files = []
+        
+        for instant_chunk, time_windowed_chunk, chunk_id in results:
+            if instant_chunk is not None and time_windowed_chunk is not None:
+                instant_file = os.path.join(temp_dir, f'instant_chunk_{chunk_id}.csv')
+                windowed_file = os.path.join(temp_dir, f'windowed_chunk_{chunk_id}.csv')
+                
+                instant_chunk.to_csv(instant_file, index=False)
+                time_windowed_chunk.to_csv(windowed_file, index=False)
+                
+                instant_files.append(instant_file)
+                windowed_files.append(windowed_file)
+            else:
+                print(f"⚠️  Chunk {chunk_id} failed - skipping")
+        
+        # Read and concatenate from disk
+        print(f"Reading and concatenating {len(instant_files)} chunk files...")
+        instant_dfs = [pd.read_csv(f) for f in instant_files]
+        time_windowed_dfs = [pd.read_csv(f) for f in windowed_files]
+        
+        final_instant_df = pd.concat(instant_dfs, ignore_index=True)
+        final_time_windowed_df = pd.concat(time_windowed_dfs, ignore_index=True)
+        
+        # Clean up temporary files
+        import shutil
+        shutil.rmtree(temp_dir)
+        print("✓ Temporary chunk files cleaned up")
+        
+    else:
+        # Original in-memory approach - faster but uses more RAM
+        print("Using in-memory reassembly...")
+        instant_dfs = []
+        time_windowed_dfs = []
+        
+        for instant_chunk, time_windowed_chunk, chunk_id in results:
+            if instant_chunk is not None and time_windowed_chunk is not None:
+                instant_dfs.append(instant_chunk)
+                time_windowed_dfs.append(time_windowed_chunk)
+            else:
+                print(f"⚠️  Chunk {chunk_id} failed - skipping")
+        
+        # Combine all results
+        final_instant_df = pd.concat(instant_dfs, ignore_index=True)
+        final_time_windowed_df = pd.concat(time_windowed_dfs, ignore_index=True)
     
     print(f"✓ Final instant_df: {len(final_instant_df):,} points")
     print(f"✓ Final time_windowed_df: {len(final_time_windowed_df):,} windows")
@@ -296,7 +346,8 @@ def test_local_with_data(df: pd.DataFrame,
         output_dir=output_dir,
         n_jobs=n_jobs,
         chunk_size=25,  # Very small chunks for testing
-        time_between_frames=0.01
+        time_between_frames=0.01,
+        stream_to_disk=False  # Use in-memory for testing (faster)
     )
     
     print("✓ Local test completed successfully!")
@@ -343,6 +394,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_jobs", type=int, default=-1, help="Number of parallel jobs (-1 for all cores)")
     parser.add_argument("--chunk_size", type=int, default=None, help="Number of tracks per chunk")
     parser.add_argument("--time_between_frames", type=float, default=0.01, help="Time between frames in seconds")
+    parser.add_argument("--stream_to_disk", action="store_true", help="Use streaming reassembly to reduce memory usage")
     
     # Processing parameters
     parser.add_argument("--window_size", type=int, default=60, help="Window size in frames")
@@ -376,5 +428,6 @@ if __name__ == "__main__":
             n_jobs=args.n_jobs,
             chunk_size=args.chunk_size,
             time_between_frames=args.time_between_frames,
+            stream_to_disk=args.stream_to_disk,
             **metric_params
         ) 
