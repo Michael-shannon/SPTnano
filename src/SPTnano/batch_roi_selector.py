@@ -10,6 +10,26 @@ import tifffile as tiff
 from IPython.display import clear_output, display
 from ipywidgets import interact
 from nd2reader import ND2Reader
+
+
+class FlexibleND2Reader:
+    """A wrapper around ND2Reader that accepts both .nd2 and .ND2 extensions."""
+    
+    def __init__(self, filepath):
+        self.filepath = filepath
+        self._reader = None
+        
+    def __enter__(self):
+        # Open file handle directly to bypass extension check
+        file_handle = open(self.filepath, "rb")
+        self._reader = ND2Reader(file_handle)
+        # Set filename for metadata access
+        self._reader.filename = self.filepath
+        return self._reader
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._reader:
+            self._reader.close()
 from PIL import Image, ImageSequence
 from skimage import exposure
 from tifffile import TiffWriter
@@ -104,7 +124,7 @@ class ROISelector:
 
         # Read the dark frame stack
         if dark_frame_path.lower().endswith("nd2"):
-            with ND2Reader(dark_frame_path) as nd2_dark:
+            with FlexibleND2Reader(dark_frame_path) as nd2_dark:
                 dark_frames = [np.array(frame) for frame in nd2_dark]
         elif dark_frame_path.lower().endswith(("tif", "tiff")):
             with tiff.TiffFile(dark_frame_path) as tif:
@@ -169,7 +189,7 @@ class ROISelector:
             num_frames = len(frames)
             metadata_info["num_frames"] = num_frames
         elif file.lower().endswith("nd2"):
-            with ND2Reader(input_filepath) as nd2_file:
+            with FlexibleND2Reader(input_filepath) as nd2_file:
                 first_frame = np.array(nd2_file[0])
                 first_frame = Image.fromarray(first_frame)
                 frames = [np.array(frame) for frame in nd2_file]
