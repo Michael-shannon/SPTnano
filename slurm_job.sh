@@ -1,16 +1,16 @@
 #!/bin/bash
 #SBATCH --job-name=sptnano_parallel
-#SBATCH --account=your_account_name
-#SBATCH --partition=your_partition
+#SBATCH --account=briv_hotel_bank
+#SBATCH --partition=hpc_bigmem_a
+#SBATCH --ntasks=2
+#SBATCH --cpus-per-task=16
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=128G
-#SBATCH --time=24:00:00
+#SBATCH --mem=512G
+#SBATCH --time=1-0:0:0
 #SBATCH --output=sptnano_parallel_%j.out
 #SBATCH --error=sptnano_parallel_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --mail-user=your_email@institution.edu
+#SBATCH --mail-user=mshannon@rockefeller.edu
 
 # Print job information
 echo "Job ID: $SLURM_JOB_ID"
@@ -20,17 +20,18 @@ echo "CPUs: $SLURM_CPUS_PER_TASK"
 echo "Memory: $SLURM_MEM_PER_NODE MB"
 echo "Start Time: $(date)"
 
-# Load necessary modules (adjust for your cluster)
-module load python/3.12
-module load gcc/11.2.0
-
 # Activate your conda environment (created from environment_HPC.yml)
-source activate SPTnano_HPC
+
+
+source "/ru-auth/local/home/mshannon/miniforge3/etc/profile.d/conda.sh"
+eval "$(mamba shell hook --shell bash)"
+mamba activate SPTnano_HPC
+
 
 # Set up paths
-WORK_DIR="/path/to/your/SPTnano"
-INPUT_FILE="/path/to/your/instant_df.csv"
-OUTPUT_DIR="/path/to/your/output"
+export WORK_DIR="/lustre/fs4/briv_lab/store/mshannon/SPTnano"
+export INPUT_FILE="/lustre/fs4/briv_lab/scratch/mshannon/2_25_2025_CorticalNeuron_20H20S_FreeHalo_20H77S_77H20S_analyze/saved_data/instant_df.csv"
+export OUTPUT_DIR="/lustre/fs4/briv_lab/scratch/mshannon/2_25_2025_CorticalNeuron_20H20S_FreeHalo_20H77S_77H20S_analyze/saved_data/HPC_output"
 
 # Change to working directory
 cd $WORK_DIR
