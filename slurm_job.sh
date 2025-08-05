@@ -3,7 +3,7 @@
 #SBATCH --account=briv_hotel_bank
 #SBATCH --partition=hpc_bigmem_a
 #SBATCH --ntasks=2
-#SBATCH --cpus-per-task=96
+#SBATCH --cpus-per-task=16
 #SBATCH --nodes=1
 #SBATCH --mem=512G
 #SBATCH --time=1-0:0:0
@@ -56,7 +56,7 @@ echo "Starting parallel processing..."
 python -m SPTnano.HPC \
     --input_file "$INPUT_FILE" \
     --output_dir "$OUTPUT_DIR" \
-    --n_jobs $SLURM_NTASKS \
+    --n_jobs $SLURM_CPUS_PER_TASK \
     --chunk_size 2000 \
     --time_between_frames 0.01 \
     --window_size 60 \
