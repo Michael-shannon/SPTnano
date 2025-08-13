@@ -18,7 +18,7 @@ class ParticleMetrics:
         # self.df['molecule'] = self.df['filename'].apply(self.extract_molecule)  # Add Molecule column
         # self.df['genotype'] = self.df['filename'].apply(self.extract_genotype)  # Add Genotype column
         # self.df['cell_type'] = self.df['filename'].apply(self.extract_cell_type)  # Add Cell Type column
-        self.df["location"] = self.df["condition"].apply(
+        self.df["location"] = self.df["filename"].apply(
             self.extract_location
         )  # Add Location column
         self.df["molecule"] = self.df["condition"].apply(
@@ -179,7 +179,7 @@ class ParticleMetrics:
     def extract_location(filename):
         match = re.search(r"loc-(\w+)(?:_|$)", filename)
         if match:
-            return match.group(1)
+            return match.group(1).upper()  # Convert to uppercase
         return "Unknown"  # Default value if no location is found
 
     @staticmethod

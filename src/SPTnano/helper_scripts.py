@@ -4,6 +4,7 @@ from collections import Counter
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import scipy.io
 
 # import os
@@ -1190,3 +1191,643 @@ def map_windowed_to_instant(
         .drop(columns=["__orig_idx", "__frame_idx"])
         .reset_index(drop=True)
     )
+
+
+def parse_filename_metadata(filename):
+    """
+    Parse filename to extract metadata components.
+    Expected format: cell-{cell}_type-{type}_mol-{mol}_group-{group}_{data_type}.csv
+    
+    Parameters
+    ----------
+    filename : str
+        Filename to parse
+        
+    Returns
+    -------
+    tuple
+        (cell, type, mol, group, data_type) extracted from filename
+    """
+    # Remove .csv extension and split by underscores
+    base_name = filename.replace('.csv', '')
+    parts = base_name.split('_')
+    
+    metadata = {}
+    data_type = parts[-1]  # instant or windowed
+    
+    # Parse the metadata parts
+    for part in parts[:-1]:  # exclude the last part (data_type)
+        if '-' in part:
+            key, value = part.split('-', 1)
+            metadata[key] = value
+    
+    return metadata['cell'], metadata['type'], metadata['mol'], metadata['group'], data_type
+
+
+def create_identifier(cell, type_val, mol, group):
+    """
+    Create identifier from first letters of cell, type, mol, group.
+    
+    Parameters
+    ----------
+    cell : str
+        Cell type
+    type_val : str
+        Type value
+    mol : str
+        Molecule type
+    group : str
+        Group identifier
+        
+    Returns
+    -------
+    str
+        Four-character lowercase identifier
+    """
+    return f"{cell[0].lower()}{type_val[0].lower()}{mol[0].lower()}{group[0].lower()}"
+
+
+def create_master_dataframes(dataframe_directory, listoffiles):
+    """
+    Create master instant and windowed dataframes from CSV files with metadata.
+    
+    Parameters
+    ----------
+    dataframe_directory : str
+        Directory containing the CSV files
+    listoffiles : list
+        List of filenames to process
+        
+    Returns
+    -------
+    tuple
+        (master_instant_df, master_windowed_df, summary_instant, summary_windowed)
+    """
+    # Initialize lists to store dataframes
+    instant_dataframes = []
+    windowed_dataframes = []
+
+    print("Processing files...")
+
+    for filename in listoffiles:
+        print(f"Processing: {filename}")
+        
+        # Parse metadata from filename
+        cell, type_val, mol, group, data_type = parse_filename_metadata(filename)
+        
+        # Create identifier
+        identifier = create_identifier(cell, type_val, mol, group)
+        
+        # Load the CSV file
+        file_path = os.path.join(dataframe_directory, filename)
+        df = pd.read_csv(file_path)
+        
+        # Add metadata columns
+        df['cell'] = cell
+        df['type'] = type_val
+        df['mol'] = mol
+        df['group'] = group
+        df['identifier'] = identifier
+        
+        # Modify unique_id if it exists
+        if 'unique_id' in df.columns:
+            df['unique_id'] = identifier + '_' + df['unique_id'].astype(str)
+        else:
+            print(f"Warning: 'unique_id' column not found in {filename}")
+        
+        # Add to appropriate list based on data type
+        if data_type == 'instant':
+            instant_dataframes.append(df)
+        elif data_type == 'windowed':
+            windowed_dataframes.append(df)
+        
+        print(f"  - Cell: {cell}, Type: {type_val}, Mol: {mol}, Group: {group}")
+        print(f"  - Identifier: {identifier}")
+        print(f"  - Data type: {data_type}")
+        print(f"  - Shape: {df.shape}")
+        print()
+
+    print(f"Found {len(instant_dataframes)} instant dataframes")
+    print(f"Found {len(windowed_dataframes)} windowed dataframes")
+
+    # Create master dataframes
+    print("\nCreating master dataframes...")
+    
+    master_instant_df = None
+    master_windowed_df = None
+    summary_instant = None
+    summary_windowed = None
+    
+    # Create master instant dataframe
+    if instant_dataframes:
+        master_instant_df = pd.concat(instant_dataframes, ignore_index=True)
+        print(f"Master instant dataframe created with shape: {master_instant_df.shape}")
+        
+        # Display summary of instant data
+        print("\nInstant dataframe summary:")
+        print("Unique identifiers:", master_instant_df['identifier'].unique())
+        print("Combinations:")
+        summary_instant = master_instant_df.groupby(['cell', 'type', 'mol', 'group', 'identifier']).size().reset_index(name='count')
+        print(summary_instant)
+    else:
+        print("No instant dataframes found!")
+
+    print()
+
+    # Create master windowed dataframe  
+    if windowed_dataframes:
+        master_windowed_df = pd.concat(windowed_dataframes, ignore_index=True)
+        print(f"Master windowed dataframe created with shape: {master_windowed_df.shape}")
+        
+        # Display summary of windowed data
+        print("\nWindowed dataframe summary:")
+        print("Unique identifiers:", master_windowed_df['identifier'].unique())
+        print("Combinations:")
+        summary_windowed = master_windowed_df.groupby(['cell', 'type', 'mol', 'group', 'identifier']).size().reset_index(name='count')
+        print(summary_windowed)
+    else:
+        print("No windowed dataframes found!")
+
+    print("\n✓ Master dataframes created successfully!")
+    
+    return master_instant_df, master_windowed_df, summary_instant, summary_windowed
+
+
+# ==================== POLARS-BASED FUNCTIONS ====================
+
+def extract_location(filename):
+    """
+    Extract location from filename using regex pattern.
+    
+    Parameters
+    ----------
+    filename : str
+        Filename to extract location from
+        
+    Returns
+    -------
+    str
+        Location in uppercase, or "Unknown" if not found
+    """
+    match = re.search(r"loc-(\w+)(?:_|$)", filename)
+    if match:
+        return match.group(1).upper()  # Convert to uppercase
+    return "Unknown"  # Default value if no location is found
+
+
+def extract_metadata_from_condition(condition):
+    """
+    Extract metadata components from condition string.
+    
+    Parameters
+    ----------
+    condition : str
+        Condition string containing metadata like "cell-neuron_type-wildtype_mol-HTT_geno-Q175_"
+        
+    Returns
+    -------
+    dict
+        Dictionary with extracted metadata: {'cell': ..., 'type': ..., 'mol': ..., 'geno': ...}
+    """
+    metadata = {}
+    # Split by underscore and look for key-value pairs
+    parts = condition.split('_')
+    for part in parts:
+        if '-' in part:
+            key, value = part.split('-', 1)
+            metadata[key] = value
+    
+    return metadata
+
+
+def extract_metadata_from_foldername(foldername):
+    """
+    Extract group metadata from folder name.
+    
+    Parameters
+    ----------
+    foldername : str
+        Folder name containing group info like "group-HTT77_something" 
+        
+    Returns
+    -------
+    str
+        Group value (only up to the underscore) or "Unknown" if not found
+    """
+    # Look for group-XXX pattern in the folder name
+    match = re.search(r"group-([^_]+)", foldername)
+    if match:
+        return match.group(1)
+    return "Unknown"
+
+
+def create_identifier_polars(cell, type_val, mol, geno, group):
+    """
+    Create identifier from first letters of cell, type, mol, geno, group.
+    
+    Parameters
+    ----------
+    cell : str
+        Cell type
+    type_val : str
+        Type value
+    mol : str
+        Molecule type
+    geno : str
+        Genotype
+    group : str
+        Group identifier
+        
+    Returns
+    -------
+    str
+        Five-character lowercase identifier
+    """
+    parts = [cell, type_val, mol, geno, group]
+    identifier = ''.join([str(part)[0].lower() if part and str(part) != 'Unknown' else 'x' for part in parts])
+    return identifier
+
+
+def load_dataframe_with_metadata_polars(folder_path, dataframe_name, parent_folder_path):
+    """
+    Load a single dataframe with metadata extraction using Polars.
+    
+    Parameters
+    ----------
+    folder_path : str
+        Path to folder containing the CSV file (the saved_data directory)
+    dataframe_name : str
+        Name of the CSV file to load (without .csv extension)
+    parent_folder_path : str
+        Full path to the parent folder (for compatibility with existing code)
+        
+    Returns
+    -------
+    pl.DataFrame or None
+        Loaded dataframe with metadata columns, or None if file not found
+    """
+    csv_path = os.path.join(folder_path, f"{dataframe_name}.csv")
+    
+    if not os.path.exists(csv_path):
+        print(f"Warning: {csv_path} not found")
+        return None
+    
+    try:
+        # Load with Polars
+        df = pl.read_csv(csv_path)
+        
+        # Add foldername column (full path with trailing backslash for compatibility)
+        folder_name_with_slash = parent_folder_path + ('' if parent_folder_path.endswith(('\\', '/')) else '\\')
+        df = df.with_columns(pl.lit(folder_name_with_slash).alias("foldername"))
+        
+        # Extract group from folder basename
+        folder_basename = os.path.basename(parent_folder_path.rstrip('\\/'))
+        group = extract_metadata_from_foldername(folder_basename)
+        df = df.with_columns(pl.lit(group).alias("group"))
+        
+        # Extract metadata from condition column if it exists
+        if "condition" in df.columns:
+            # Get a sample condition value to extract metadata keys
+            sample_condition = df.select("condition").head(1).to_pandas().iloc[0, 0]
+            metadata_keys = extract_metadata_from_condition(sample_condition)
+            
+            # Add metadata columns
+            for key in ['cell', 'type', 'mol', 'geno']:
+                if key in metadata_keys:
+                    # Use regex to extract each metadata field
+                    pattern = f"{key}-([^_]+)"
+                    df = df.with_columns(
+                        pl.col("condition")
+                        .str.extract(pattern, 1)
+                        .fill_null("Unknown")
+                        .alias(key)
+                    )
+                else:
+                    df = df.with_columns(pl.lit("Unknown").alias(key))
+        else:
+            # Add default values if condition column doesn't exist
+            for key in ['cell', 'type', 'mol', 'geno']:
+                df = df.with_columns(pl.lit("Unknown").alias(key))
+        
+        # Extract location from filename if it exists
+        if "filename" in df.columns:
+            df = df.with_columns(
+                pl.col("filename")
+                .map_elements(extract_location, return_dtype=pl.Utf8)
+                .alias("location")
+            )
+        else:
+            df = df.with_columns(pl.lit("Unknown").alias("location"))
+        
+        # Create identifier
+        df = df.with_columns(
+            pl.struct(["cell", "type", "mol", "geno", "group"])
+            .map_elements(
+                lambda x: create_identifier_polars(
+                    x["cell"], x["type"], x["mol"], x["geno"], x["group"]
+                ),
+                return_dtype=pl.Utf8
+            )
+            .alias("identifier")
+        )
+        
+        # Modify unique_id if it exists
+        if "unique_id" in df.columns:
+            df = df.with_columns(
+                (pl.col("identifier") + "_" + pl.col("unique_id").cast(pl.Utf8)).alias("unique_id")
+            )
+        
+        return df
+        
+    except Exception as e:
+        print(f"Error loading {csv_path}: {e}")
+        return None
+
+
+def create_master_dataframes_polars(master_dir, instant_df_name="instant_df_processed", windowed_df_name="time_windowed_df_processed"):
+    """
+    Create master instant and windowed dataframes from all folders in master_dir using Polars.
+    
+    Parameters
+    ----------
+    master_dir : str
+        Path to master directory containing subdirectories with saved_data folders
+    instant_df_name : str, default "instant_df_processed"
+        Name of the instant dataframe CSV file (without .csv extension)
+    windowed_df_name : str, default "time_windowed_df_processed"
+        Name of the windowed dataframe CSV file (without .csv extension)
+        
+    Returns
+    -------
+    tuple
+        (master_instant_df, master_windowed_df) - Polars DataFrames
+    """
+    print(f"Scanning master directory: {master_dir}")
+    
+    instant_dataframes = []
+    windowed_dataframes = []
+    
+    # Scan all subdirectories in master_dir
+    for item in os.listdir(master_dir):
+        item_path = os.path.join(master_dir, item)
+        if os.path.isdir(item_path):
+            # Look for saved_data subdirectory
+            saved_data_path = os.path.join(item_path, "saved_data")
+            if os.path.exists(saved_data_path) and os.path.isdir(saved_data_path):
+                print(f"Processing folder: {item}")
+                
+                # Load instant dataframe - pass the full parent folder path for compatibility
+                instant_df = load_dataframe_with_metadata_polars(
+                    saved_data_path, instant_df_name, item_path
+                )
+                if instant_df is not None:
+                    instant_dataframes.append(instant_df)
+                    print(f"  ✓ Loaded {instant_df_name}.csv ({instant_df.shape[0]} rows)")
+                
+                # Load windowed dataframe - pass the full parent folder path for compatibility
+                windowed_df = load_dataframe_with_metadata_polars(
+                    saved_data_path, windowed_df_name, item_path
+                )
+                if windowed_df is not None:
+                    windowed_dataframes.append(windowed_df)
+                    print(f"  ✓ Loaded {windowed_df_name}.csv ({windowed_df.shape[0]} rows)")
+            else:
+                print(f"  ⚠ No saved_data directory found in {item}")
+    
+    # Concatenate dataframes
+    master_instant_df = None
+    master_windowed_df = None
+    
+    if instant_dataframes:
+        print(f"\nConcatenating {len(instant_dataframes)} instant dataframes...")
+        master_instant_df = pl.concat(instant_dataframes, how="vertical")
+        print(f"Master instant dataframe shape: {master_instant_df.shape}")
+    else:
+        print("No instant dataframes found!")
+    
+    if windowed_dataframes:
+        print(f"\nConcatenating {len(windowed_dataframes)} windowed dataframes...")
+        master_windowed_df = pl.concat(windowed_dataframes, how="vertical")
+        print(f"Master windowed dataframe shape: {master_windowed_df.shape}")
+    else:
+        print("No windowed dataframes found!")
+    
+    return master_instant_df, master_windowed_df
+
+
+def save_master_dataframes_polars(master_instant_df, master_windowed_df, save_dir, 
+                                  instant_filename="master_instant_df", 
+                                  windowed_filename="master_windowed_df",
+                                  save_parquet=True, save_csv=True):
+    """
+    Save master dataframes in Parquet and/or CSV format.
+    
+    Parameters
+    ----------
+    master_instant_df : pl.DataFrame
+        Master instant dataframe
+    master_windowed_df : pl.DataFrame
+        Master windowed dataframe
+    save_dir : str
+        Directory to save the files
+    instant_filename : str, default "master_instant_df"
+        Base filename for instant dataframe (without extension)
+    windowed_filename : str, default "master_windowed_df"
+        Base filename for windowed dataframe (without extension)
+    save_parquet : bool, default True
+        Whether to save in Parquet format
+    save_csv : bool, default True
+        Whether to save in CSV format
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    
+    if master_instant_df is not None:
+        if save_parquet:
+            parquet_path = os.path.join(save_dir, f"{instant_filename}.parquet")
+            master_instant_df.write_parquet(parquet_path)
+            print(f"✓ Saved instant dataframe to: {parquet_path}")
+        
+        if save_csv:
+            csv_path = os.path.join(save_dir, f"{instant_filename}.csv")
+            master_instant_df.write_csv(csv_path)
+            print(f"✓ Saved instant dataframe to: {csv_path}")
+    
+    if master_windowed_df is not None:
+        if save_parquet:
+            parquet_path = os.path.join(save_dir, f"{windowed_filename}.parquet")
+            master_windowed_df.write_parquet(parquet_path)
+            print(f"✓ Saved windowed dataframe to: {parquet_path}")
+        
+        if save_csv:
+            csv_path = os.path.join(save_dir, f"{windowed_filename}.csv")
+            master_windowed_df.write_csv(csv_path)
+            print(f"✓ Saved windowed dataframe to: {csv_path}")
+
+
+def load_master_dataframes_polars(save_dir, 
+                                  instant_filename="master_instant_df.parquet", 
+                                  windowed_filename="master_windowed_df.parquet"):
+    """
+    Load previously saved master dataframes.
+    
+    Parameters
+    ----------
+    save_dir : str
+        Directory containing the saved files
+    instant_filename : str, default "master_instant_df.parquet"
+        Filename for instant dataframe
+    windowed_filename : str, default "master_windowed_df.parquet"
+        Filename for windowed dataframe
+        
+    Returns
+    -------
+    tuple
+        (master_instant_df, master_windowed_df) - Polars DataFrames or None if not found
+    """
+    master_instant_df = None
+    master_windowed_df = None
+    
+    instant_path = os.path.join(save_dir, instant_filename)
+    if os.path.exists(instant_path):
+        master_instant_df = pl.read_parquet(instant_path)
+        print(f"✓ Loaded instant dataframe from: {instant_path}")
+    else:
+        print(f"⚠ Instant dataframe not found: {instant_path}")
+    
+    windowed_path = os.path.join(save_dir, windowed_filename)
+    if os.path.exists(windowed_path):
+        master_windowed_df = pl.read_parquet(windowed_path)
+        print(f"✓ Loaded windowed dataframe from: {windowed_path}")
+    else:
+        print(f"⚠ Windowed dataframe not found: {windowed_path}")
+    
+    return master_instant_df, master_windowed_df
+
+
+def print_dataframe_summary_polars(df, df_name):
+    """
+    Print a summary of the dataframe including shape, columns, and unique values in key columns.
+    
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Dataframe to summarize
+    df_name : str
+        Name of the dataframe for printing
+    """
+    if df is None:
+        print(f"{df_name}: None")
+        return
+    
+    print(f"\n{df_name} Summary:")
+    print(f"Shape: {df.shape}")
+    print(f"Columns: {df.columns}")
+    
+    # Print unique values for key metadata columns
+    key_columns = ['foldername', 'cell', 'type', 'mol', 'geno', 'group', 'identifier', 'location']
+    for col in key_columns:
+        if col in df.columns:
+            unique_values = df.select(col).unique().to_pandas()[col].tolist()
+            print(f"{col}: {unique_values}")
+
+
+def convert_polars_to_pandas(df_polars):
+    """
+    Convert Polars DataFrame to Pandas DataFrame for compatibility with existing functions.
+    
+    Parameters
+    ----------
+    df_polars : pl.DataFrame
+        Polars DataFrame to convert
+        
+    Returns
+    -------
+    pd.DataFrame
+        Converted Pandas DataFrame
+    """
+    return df_polars.to_pandas() if df_polars is not None else None
+
+
+def load_dataframes_by_pattern_polars(base_directory, instant_df_name="instant_df_processed", windowed_df_name="time_windowed_df_processed"):
+    """
+    Load dataframes using the exact same pattern as the old method, but with Polars.
+    Mimics the original folder scanning approach for maximum compatibility.
+    
+    Parameters
+    ----------
+    base_directory : str
+        Base directory containing folders with saved_data subdirectories
+    instant_df_name : str, default "instant_df_processed"
+        Name of the instant dataframe CSV file (without .csv extension)
+    windowed_df_name : str, default "time_windowed_df_processed"
+        Name of the windowed dataframe CSV file (without .csv extension)
+        
+    Returns
+    -------
+    dict
+        Dictionary with keys like 'HTT_metrics_df', 'HTT_time_windowed_df', etc.
+        depending on what folders are found
+    """
+    # Store the paths of the folders contained in base_directory
+    folders = [f.path for f in os.scandir(base_directory) if f.is_dir()]
+    
+    # Add /saved_data to the path
+    folders = [f + '/saved_data' for f in folders]
+    
+    dataframes = {}
+    
+    # Process each folder
+    for folder in folders:
+        # Get the folder directory name but remove the '/saved_data' part
+        folder_name = os.path.dirname(folder) + '\\'
+        
+        try:
+            if 'HTTinEScells' in folder:
+                instant_df = pl.read_csv(os.path.join(folder, f'{instant_df_name}.csv'))
+                windowed_df = pl.read_csv(os.path.join(folder, f'{windowed_df_name}.csv'))
+                
+                # Add foldername as a column to the dataframes (exactly like the old method)
+                instant_df = instant_df.with_columns(pl.lit(folder_name).alias("foldername"))
+                windowed_df = windowed_df.with_columns(pl.lit(folder_name).alias("foldername"))
+                
+                dataframes['HTT_metrics_df'] = instant_df
+                dataframes['HTT_time_windowed_df'] = windowed_df
+                print(f"✓ Loaded HTT dataframes from {folder}")
+                
+            elif 'DyneininEScells' in folder:
+                instant_df = pl.read_csv(os.path.join(folder, f'{instant_df_name}.csv'))
+                windowed_df = pl.read_csv(os.path.join(folder, f'{windowed_df_name}.csv'))
+                
+                instant_df = instant_df.with_columns(pl.lit(folder_name).alias("foldername"))
+                windowed_df = windowed_df.with_columns(pl.lit(folder_name).alias("foldername"))
+                
+                dataframes['Dynein_metrics_df'] = instant_df
+                dataframes['Dynein_time_windowed_df'] = windowed_df
+                print(f"✓ Loaded Dynein dataframes from {folder}")
+                
+            elif 'KinesinEScells' in folder:
+                instant_df = pl.read_csv(os.path.join(folder, f'{instant_df_name}.csv'))
+                windowed_df = pl.read_csv(os.path.join(folder, f'{windowed_df_name}.csv'))
+                
+                instant_df = instant_df.with_columns(pl.lit(folder_name).alias("foldername"))
+                windowed_df = windowed_df.with_columns(pl.lit(folder_name).alias("foldername"))
+                
+                dataframes['Kinesin_metrics_df'] = instant_df
+                dataframes['Kinesin_time_windowed_df'] = windowed_df
+                print(f"✓ Loaded Kinesin dataframes from {folder}")
+                
+            elif 'MyosinEScells' in folder:
+                instant_df = pl.read_csv(os.path.join(folder, f'{instant_df_name}.csv'))
+                windowed_df = pl.read_csv(os.path.join(folder, f'{windowed_df_name}.csv'))
+                
+                instant_df = instant_df.with_columns(pl.lit(folder_name).alias("foldername"))
+                windowed_df = windowed_df.with_columns(pl.lit(folder_name).alias("foldername"))
+                
+                dataframes['Myosin_metrics_df'] = instant_df
+                dataframes['Myosin_time_windowed_df'] = windowed_df
+                print(f"✓ Loaded Myosin dataframes from {folder}")
+                
+        except Exception as e:
+            print(f"Error loading from {folder}: {e}")
+    
+    return dataframes
