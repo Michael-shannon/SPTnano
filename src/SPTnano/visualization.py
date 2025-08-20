@@ -405,45 +405,46 @@ def plot_histograms(
         if showavg:
             ax.axvline(avg_value, color=line_color, linestyle="--")
 
-    ax.set_xlabel(x_label, fontsize=scaled_font, color=line_color)
-    ax.set_ylabel(
-        "Percentage" if percentage else "Count", fontsize=scaled_font, color=line_color
-    )
-    ax.tick_params(
-        axis="both",
-        which="both",
-        color=line_color,
-        labelcolor=line_color,
-        labelsize=scaled_font,
-    )
-
-    if grid:
-        ax.grid(
-            True,
-            linestyle="--",
-            linewidth=0.5,
-            color=line_color if not transparent else (0, 0, 0, 0.5),
-            alpha=0.7,
-            axis="y",
+        # Apply line_color styling to each subplot individually
+        ax.set_xlabel(x_label, fontsize=scaled_font, color=line_color)
+        ax.set_ylabel(
+            "Percentage" if percentage else "Count", fontsize=scaled_font, color=line_color
+        )
+        ax.tick_params(
+            axis="both",
+            which="both",
+            color=line_color,
+            labelcolor=line_color,
+            labelsize=scaled_font,
         )
 
-    for spine in ax.spines.values():
-        spine.set_edgecolor(line_color)
-        if transparent:
-            spine.set_alpha(0.9)
+        if grid:
+            ax.grid(
+                True,
+                linestyle="--",
+                linewidth=0.5,
+                color=line_color if not transparent else (0, 0, 0, 0.5),
+                alpha=0.7,
+                axis="y",
+            )
 
-    ax.set_xlim(global_lower_bound, global_upper_bound)
-    xticks = np.arange(
-        global_lower_bound, global_upper_bound + tick_interval, tick_interval
-    )
-    ax.set_xticks(xticks)
-    if y_range is not None:
-        ax.set_ylim(y_range)
-    if log_scale:
-        ax.set_xscale("linear")
-        if log_axis_label == "actual":
-            formatter = FuncFormatter(lambda val, pos: f"{log_base ** val:.2g}")
-            ax.xaxis.set_major_formatter(formatter)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(line_color)
+            if transparent:
+                spine.set_alpha(0.9)
+
+        ax.set_xlim(global_lower_bound, global_upper_bound)
+        xticks = np.arange(
+            global_lower_bound, global_upper_bound + tick_interval, tick_interval
+        )
+        ax.set_xticks(xticks)
+        if y_range is not None:
+            ax.set_ylim(y_range)
+        if log_scale:
+            ax.set_xscale("linear")
+            if log_axis_label == "actual":
+                formatter = FuncFormatter(lambda val, pos: f"{log_base ** val:.2g}")
+                ax.xaxis.set_major_formatter(formatter)
 
     # legend = ax.legend(title=separate, fontsize=scaled_font, title_fontsize=scaled_font, loc='upper left', bbox_to_anchor=(1, 1))
     # plt.gca().add_artist(legend)
@@ -738,47 +739,47 @@ def plot_histograms_threshold(
                 color=color_mapping[category],
             )
 
-    # ——— existing axes labels & styling ———
-    ax.set_xlabel(x_label, fontsize=scaled_font, color=line_color)
-    ax.set_ylabel(
-        "Percentage" if percentage else "Count", fontsize=scaled_font, color=line_color
-    )
-    ax.tick_params(
-        axis="both",
-        which="both",
-        color=line_color,
-        labelcolor=line_color,
-        labelsize=scaled_font,
-    )
-
-    if grid:
-        ax.grid(
-            True,
-            linestyle="--",
-            linewidth=0.5,
-            color=line_color if not transparent else (0, 0, 0, 0.5),
-            alpha=0.7,
-            axis="y",
+        # Apply line_color styling to each subplot individually
+        ax.set_xlabel(x_label, fontsize=scaled_font, color=line_color)
+        ax.set_ylabel(
+            "Percentage" if percentage else "Count", fontsize=scaled_font, color=line_color
+        )
+        ax.tick_params(
+            axis="both",
+            which="both",
+            color=line_color,
+            labelcolor=line_color,
+            labelsize=scaled_font,
         )
 
-    for spine in ax.spines.values():
-        spine.set_edgecolor(line_color)
-        if transparent:
-            spine.set_alpha(0.9)
+        if grid:
+            ax.grid(
+                True,
+                linestyle="--",
+                linewidth=0.5,
+                color=line_color if not transparent else (0, 0, 0, 0.5),
+                alpha=0.7,
+                axis="y",
+            )
 
-    ax.set_xlim(global_lower_bound, global_upper_bound)
-    xticks = np.arange(
-        global_lower_bound, global_upper_bound + tick_interval, tick_interval
-    )
-    ax.set_xticks(xticks)
-    if y_range is not None:
-        ax.set_ylim(y_range)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(line_color)
+            if transparent:
+                spine.set_alpha(0.9)
 
-    if log_scale:
-        ax.set_xscale("linear")
-        if log_axis_label == "actual":
-            formatter = FuncFormatter(lambda val, pos: f"{log_base ** val:.2g}")
-            ax.xaxis.set_major_formatter(formatter)
+        ax.set_xlim(global_lower_bound, global_upper_bound)
+        xticks = np.arange(
+            global_lower_bound, global_upper_bound + tick_interval, tick_interval
+        )
+        ax.set_xticks(xticks)
+        if y_range is not None:
+            ax.set_ylim(y_range)
+
+        if log_scale:
+            ax.set_xscale("linear")
+            if log_axis_label == "actual":
+                formatter = FuncFormatter(lambda val, pos: f"{log_base ** val:.2g}")
+                ax.xaxis.set_major_formatter(formatter)
 
     # ——— NEW: shared‐axis threshold annotation (once) ———
     if threshold is not None and not (small_multiples and separate):
@@ -2752,7 +2753,10 @@ def plot_stacked_bar(
 def plot_stacked_bar_svg(
     df,
     x_category,
+    stack_category=None,
     order=None,
+    stack_order=None,
+    title=None,
     font_size=16,
     colormap="Dark2",
     figsize=(10, 8),
@@ -2764,18 +2768,29 @@ def plot_stacked_bar_svg(
     custom="_",
     show_plot=True,
     return_svg=False,
+    show_percentages=True,
+    percentage_threshold=5.0,
+    ylabel="Percentage (%)",
+    legend_title=None,
+    grid=False,
 ):
     """
-    Plot a stacked bar chart showing the percentage of motion classes for each category on the x-axis.
+    Plot a generalized stacked bar chart showing the percentage distribution of any categorical variable.
 
     Parameters
     ----------
     df : DataFrame
-        DataFrame containing the data with a 'motion_class' column and specified category.
+        DataFrame containing the data with the specified categorical columns.
     x_category : str
         The column name of the category to plot on the x-axis.
+    stack_category : str, optional
+        The column name of the category to stack. If None, defaults to 'motion_class' for backward compatibility.
     order : list, optional
         Custom order for the categories on the x-axis. Default is None.
+    stack_order : list, optional
+        Custom order for the stacked categories. Default is None.
+    title : str, optional
+        Title for the plot. If None, generates a default title.
     font_size : int, optional
         Font size for the plot text. Default is 16.
     colormap : str, optional
@@ -2792,10 +2807,22 @@ def plot_stacked_bar_svg(
         File format to export the figure ('png' or 'svg'). Default is 'png'.
     master_dir : str, optional
         Directory to save the plot. If not provided, defaults to "plots".
+    custom : str, optional
+        Custom string to add to filename. Default is "_".
     show_plot : bool, optional
         Whether to display the plot in the notebook. Default is True.
     return_svg : bool, optional
         If True and export_format is 'svg', returns the post-processed SVG image data as a string.
+    show_percentages : bool, optional
+        Whether to annotate percentages on bars. Default is True.
+    percentage_threshold : float, optional
+        Only show percentage labels on bars with height >= this threshold. Default is 5.0.
+    ylabel : str, optional
+        Label for y-axis. Default is "Percentage (%)".
+    legend_title : str, optional
+        Title for the legend. If None, uses the stack_category name.
+    grid : bool, optional
+        Whether to show grid lines. Default is False.
 
     Returns
     -------
@@ -2812,27 +2839,40 @@ def plot_stacked_bar_svg(
         figure_background = background
         axis_background = background
 
-    # Apply custom order if provided.
+    # Set default stack_category for backward compatibility
+    if stack_category is None:
+        stack_category = "motion_class"
+        
+    # Check if required columns exist
+    if x_category not in df.columns:
+        raise ValueError(f"Column '{x_category}' not found in dataframe")
+    if stack_category not in df.columns:
+        raise ValueError(f"Column '{stack_category}' not found in dataframe")
+
+    # Apply custom order if provided
     if order is not None:
         df[x_category] = pd.Categorical(df[x_category], categories=order, ordered=True)
+    
+    if stack_order is not None:
+        df[stack_category] = pd.Categorical(df[stack_category], categories=stack_order, ordered=True)
 
-    # Calculate percentage data for each motion class.
+    # Calculate percentage data for each stack category
     percentage_data = (
-        df.groupby([x_category, "motion_class"])
+        df.groupby([x_category, stack_category])
         .size()
         .unstack(fill_value=0)
         .apply(lambda x: x / x.sum() * 100, axis=1)
     )
 
-    # Determine unique motion classes and assign colors.
-    motion_classes = df["motion_class"].unique()
+    # Determine unique stack categories and assign colors
+    stack_categories = df[stack_category].unique() if stack_order is None else stack_order
     if colormap == "colorblind":
-        colors = sns.color_palette("colorblind", len(motion_classes))
+        colors = sns.color_palette("colorblind", len(stack_categories))
     elif colormap == "Dark2":
-        cmap = cm.get_cmap("Dark2", len(motion_classes))
-        colors = cmap(np.linspace(0, 1, len(motion_classes)))
+        cmap = cm.get_cmap("Dark2", len(stack_categories))
+        colors = cmap(np.linspace(0, 1, len(stack_categories)))
     else:
-        colors = plt.get_cmap(colormap, len(motion_classes)).colors
+        colors = plt.get_cmap(colormap, len(stack_categories)).colors
 
     # Create figure and axes.
     fig, ax = plt.subplots(figsize=figsize, facecolor=figure_background)
@@ -2847,26 +2887,30 @@ def plot_stacked_bar_svg(
     for patch in ax.patches:
         patch.set_edgecolor(line_color)
 
-    # Annotate percentages on the bars.
-    for patch in ax.patches:
-        width, height = patch.get_width(), patch.get_height()
-        x, y = patch.get_xy()
-        if height > 0:  # Only annotate if there's a height to show.
-            # ax.annotate(f'{height:.1f}%', (x + width / 2, y + height / 2),
-            ax.annotate(
-                f"{height:.1f}",
-                (x + width / 2, y + height / 2),
-                # ha='center', va='center', fontsize=font_size, color=line_color)
-                ha="center",
-                va="center",
-                fontsize=font_size * 0.75,
-                color=line_color,
-            )
+    # Annotate percentages on the bars if enabled
+    if show_percentages:
+        for patch in ax.patches:
+            width, height = patch.get_width(), patch.get_height()
+            x, y = patch.get_xy()
+            if height >= percentage_threshold:  # Only annotate if above threshold
+                ax.annotate(
+                    f"{height:.1f}%",
+                    (x + width / 2, y + height / 2),
+                    ha="center",
+                    va="center",
+                    fontsize=max(8, font_size - 2),  # Slightly smaller font for percentages
+                    color=line_color,
+                    weight="bold",
+                )
 
-    # Customize text elements.
-    ax.set_title("Distribution of Motion Classes", fontsize=font_size, color=line_color)
-    ax.set_xlabel("", fontsize=font_size, color=line_color)
-    ax.set_ylabel("Percentage (%)", fontsize=font_size, color=line_color)
+    # Set title (generate default if not provided)
+    if title is None:
+        title = f"Distribution of {stack_category.replace('_', ' ').title()}"
+    
+    # Customize text elements
+    ax.set_title(title, fontsize=font_size, color=line_color, pad=20)
+    ax.set_xlabel(x_category.replace('_', ' ').title(), fontsize=font_size, color=line_color)
+    ax.set_ylabel(ylabel, fontsize=font_size, color=line_color)
     ax.tick_params(
         axis="both",
         which="both",
@@ -2875,12 +2919,16 @@ def plot_stacked_bar_svg(
         labelsize=font_size,
     )
 
-    # Rotate x-tick labels for readability.
+    # Rotate x-tick labels for readability
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
 
-    # Move the legend outside the plot.
+    # Set legend title
+    if legend_title is None:
+        legend_title = stack_category.replace('_', ' ').title()
+
+    # Move the legend outside the plot
     legend = plt.legend(
-        title="Motion Type",
+        title=legend_title,
         bbox_to_anchor=(1.05, 1),
         loc="upper left",
         title_fontsize=font_size,
@@ -2891,10 +2939,11 @@ def plot_stacked_bar_svg(
         text.set_color(line_color)
     legend.get_title().set_color(line_color)
 
-    # Add grid.
-    ax.grid(
-        True, which="both", linestyle="--", linewidth=0.5, color=line_color, zorder=0
-    )
+    # Add grid if requested
+    if grid:
+        ax.grid(
+            True, which="both", linestyle="--", linewidth=0.5, color=line_color, zorder=0
+        )
 
     # Customize axis spines.
     for spine in ax.spines.values():
@@ -2937,6 +2986,252 @@ def plot_stacked_bar_svg(
     else:
         plt.close()
 
+    if ext == "svg" and return_svg:
+        return svg_data
+
+
+def plot_ratio_analysis_svg(
+    data_df,
+    x_category,
+    numerator_category="high",
+    denominator_category="low",
+    ratio_column=None,
+    calculate_ratio=True,
+    order=None,
+    title=None,
+    font_size=12,
+    palette="colorblind",
+    background="white",
+    transparent=False,
+    line_color="black",
+    show_plot=True,
+    master_dir=None,
+    grid=True,
+    y_max=None,
+    y_min=None,
+    figsize=(10, 8),
+    annotate_values=True,
+    rotation=45,
+    custom="_",
+    export_format="svg",
+    return_svg=False,
+    plot_type="bar",
+    add_reference_line=True,
+    reference_value=1.0,
+):
+    """
+    Plot ratio analysis comparing two categories (e.g., high:low diffusion coefficients).
+    
+    Parameters
+    ----------
+    data_df : DataFrame
+        DataFrame containing the data for ratio analysis.
+    x_category : str
+        The column name of the category to plot on the x-axis.
+    numerator_category : str, optional
+        Value in the ratio column to use as numerator. Default is "high".
+    denominator_category : str, optional
+        Value in the ratio column to use as denominator. Default is "low".
+    ratio_column : str, optional
+        Column containing the categories to calculate ratios from (e.g., 'simple_threshold').
+        If None and calculate_ratio=True, will look for 'simple_threshold'.
+    calculate_ratio : bool, optional
+        Whether to calculate ratios from counts or use pre-calculated values. Default is True.
+    order : list, optional
+        Custom order for the categories on the x-axis. Default is None.
+    title : str, optional
+        Title for the plot. If None, generates a default title.
+    font_size : int, optional
+        Font size for the plot text. Default is 12.
+    palette : str, optional
+        Color palette for the plot. Default is "colorblind".
+    background : str, optional
+        Background color for the figure. Default is "white".
+    transparent : bool, optional
+        If True, makes the plot background transparent. Default is False.
+    line_color : str, optional
+        Color of all lines, text, and borders. Default is "black".
+    show_plot : bool, optional
+        Whether to display the plot. Default is True.
+    master_dir : str, optional
+        Directory to save the plot. Default is None.
+    grid : bool, optional
+        Whether to show grid lines. Default is True.
+    y_max : float, optional
+        Maximum y-axis value. Default is None (auto).
+    y_min : float, optional
+        Minimum y-axis value. Default is None (auto).
+    figsize : tuple, optional
+        Figure size (width, height) in inches. Default is (10, 8).
+    annotate_values : bool, optional
+        Whether to annotate values on bars/points. Default is True.
+    rotation : int, optional
+        Rotation angle for x-axis labels. Default is 45.
+    custom : str, optional
+        Custom string for filename. Default is "_".
+    export_format : str, optional
+        Export format ('png' or 'svg'). Default is "svg".
+    return_svg : bool, optional
+        Whether to return SVG string. Default is False.
+    plot_type : str, optional
+        Type of plot ('bar', 'point', 'violin'). Default is "bar".
+    add_reference_line : bool, optional
+        Whether to add horizontal reference line. Default is True.
+    reference_value : float, optional
+        Y-value for reference line. Default is 1.0.
+        
+    Returns
+    -------
+    str or None
+        SVG string if return_svg=True and format='svg', otherwise None.
+    """
+    
+    figure_background = "none" if transparent else background
+    axis_background = (0, 0, 0, 0) if transparent else background
+    
+    # Set defaults for ratio calculation
+    if ratio_column is None and calculate_ratio:
+        ratio_column = "simple_threshold"
+    
+    if calculate_ratio:
+        # Calculate ratios from counts
+        if ratio_column not in data_df.columns:
+            raise ValueError(f"Column '{ratio_column}' not found for ratio calculation")
+        
+        # Group and count
+        count_data = data_df.groupby([x_category, ratio_column]).size().reset_index(name='count')
+        pivot_data = count_data.pivot_table(
+            index=x_category, 
+            columns=ratio_column, 
+            values='count', 
+            fill_value=0
+        )
+        
+        # Calculate ratio (add small constant to avoid division by zero)
+        if numerator_category not in pivot_data.columns or denominator_category not in pivot_data.columns:
+            available_categories = list(pivot_data.columns)
+            raise ValueError(f"Categories '{numerator_category}' or '{denominator_category}' not found. Available: {available_categories}")
+        
+        ratio_data = pivot_data[numerator_category] / (pivot_data[denominator_category] + 0.1)
+        plot_data = ratio_data.reset_index()
+        plot_data.columns = [x_category, 'ratio']
+        y_column = 'ratio'
+        y_label = f"Ratio ({numerator_category}:{denominator_category})"
+    else:
+        # Use pre-calculated ratio column
+        plot_data = data_df.copy()
+        y_column = ratio_column or 'ratio'
+        y_label = f"Ratio"
+    
+    # Apply order if provided
+    if order is not None:
+        plot_data[x_category] = pd.Categorical(plot_data[x_category], categories=order, ordered=True)
+        plot_data = plot_data.sort_values(x_category)
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=figsize, facecolor=figure_background)
+    ax.set_facecolor(axis_background)
+    
+    # Get colors
+    colors = sns.color_palette(palette, len(plot_data))
+    
+    # Create plot based on type
+    if plot_type == "bar":
+        # Use individual colors for each bar if enough colors available
+        bar_colors = colors if len(colors) >= len(plot_data) else [colors[i % len(colors)] for i in range(len(plot_data))]
+        
+        bars = ax.bar(plot_data[x_category], plot_data[y_column], 
+                     color=bar_colors, edgecolor=line_color, linewidth=1)
+        
+        if annotate_values:
+            for bar in bars:
+                height = bar.get_height()
+                # Place annotation in the middle of the bar (both horizontally and vertically)
+                ax.annotate(f'{height:.2f}',
+                           xy=(bar.get_x() + bar.get_width() / 2, height / 2),
+                           ha='center', va='center',
+                           fontsize=font_size-1, color='k', weight='bold',
+                           bbox=dict(boxstyle="round,pad=0.3", facecolor="white", 
+                                   edgecolor='k', alpha=0.8))
+                           
+    elif plot_type == "point":
+        ax.scatter(plot_data[x_category], plot_data[y_column], 
+                  color=colors[0], s=100, edgecolors=line_color, linewidth=1)
+        ax.plot(plot_data[x_category], plot_data[y_column], 
+               color=colors[0], alpha=0.7, linewidth=2)
+        
+        if annotate_values:
+            for i, (x, y) in enumerate(zip(plot_data[x_category], plot_data[y_column])):
+                ax.annotate(f'{y:.2f}', xy=(x, y), xytext=(5, 5),
+                           textcoords="offset points", ha='left',
+                           fontsize=font_size-2, color=line_color)
+    
+    # Add reference line
+    if add_reference_line:
+        ax.axhline(y=reference_value, color=line_color, linestyle='--', 
+                  alpha=0.7, label=f'Reference ({reference_value})')
+    
+    # Set title and labels
+    if title is None:
+        title = f"{numerator_category.title()}:{denominator_category.title()} Ratio by {x_category.replace('_', ' ').title()}"
+    
+    ax.set_title(title, fontsize=font_size, color=line_color, pad=20)
+    ax.set_xlabel(x_category.replace('_', ' ').title(), fontsize=font_size, color=line_color)
+    ax.set_ylabel(y_label, fontsize=font_size, color=line_color)
+    
+    # Set y-limits if provided
+    if y_min is not None or y_max is not None:
+        ax.set_ylim(y_min, y_max)
+    
+    # Customize ticks
+    ax.tick_params(axis="both", which="both", color=line_color, 
+                  labelcolor=line_color, labelsize=font_size)
+    
+    # Rotate x-labels
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=rotation, ha="right")
+    
+    # Add grid
+    if grid:
+        ax.grid(True, linestyle="--", linewidth=0.5, color=line_color, alpha=0.7, axis="y")
+    
+    # Customize spines
+    for spine in ax.spines.values():
+        spine.set_edgecolor(line_color)
+        if transparent:
+            spine.set_alpha(0.9)
+    
+    plt.tight_layout()
+    
+    # Save file
+    svg_data = None
+    master_dir = master_dir or "plots"
+    os.makedirs(master_dir, exist_ok=True)
+    ext = export_format.lower()
+    if ext not in ["png", "svg"]:
+        print("Invalid export format specified. Defaulting to 'png'.")
+        ext = "png"
+    filename = f"{master_dir}/ratio_analysis_{x_category}_{custom}.{ext}"
+    plt.savefig(filename, bbox_inches="tight", transparent=transparent, format=ext)
+    
+    # Process SVG if needed
+    if ext == "svg":
+        with open(filename, encoding="utf-8") as f:
+            svg_data = f.read()
+        # Clean SVG similar to other functions
+        svg_data = re.sub(r'<clipPath id="[^"]*">.*?</clipPath>', "", svg_data, flags=re.DOTALL)
+        svg_data = re.sub(r'\s*clip-path="url\([^)]*\)"', "", svg_data)
+        svg_data = re.sub(r"<metadata>.*?</metadata>", "", svg_data, flags=re.DOTALL)
+        svg_data = re.sub(r"<\?xml[^>]*\?>", "", svg_data, flags=re.DOTALL)
+        svg_data = re.sub(r"<!DOCTYPE[^>]*>", "", svg_data, flags=re.DOTALL)
+        svg_data = svg_data.strip()
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(svg_data)
+    
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+        
     if ext == "svg" and return_svg:
         return svg_data
 
@@ -5960,6 +6255,7 @@ def napari_visualizer(
     cell=None,
     location=None,
     save_movie_flag=False,
+    save_path=None,  # Optional custom save path for movies
     save_as_png=False,
     feature="particle",  # feature to use for coloring
     steps=None,
@@ -5992,7 +6288,9 @@ def napari_visualizer(
       - tracks_df: DataFrame containing track information.
       - master_dir: Directory containing the master folder. Can be encoded in df.
       - condition, cell, location: Identifiers for filtering tracks and images.
-      - save_movie_flag: If True, save a movie of the visualization in the movies folder.
+      - save_movie_flag: If True, save a movie of the visualization.
+      - save_path: Optional custom path for saving movies. If None, uses default path with format "{condition}_{cell}.mov".
+                   Supported formats: .mov, .mp4, .avi, .gif, .mpg, .mpeg, .mkv, .wmv
       - feature: Column name to use for track coloring.
       - steps: Number of steps/frames for the movie.
       - track_thickness, tail_length, tail_width: Track rendering options.
@@ -6494,13 +6792,22 @@ def napari_visualizer(
         elif steps is None:
             steps = int(tracks_new_df["frame"].max()) + 1
             print(f"Number of steps for the movie automatically set to: {steps}")
-        movie_dir = os.path.join(master_dir, "movies")
-        print(f"Saving movie to: {movie_dir}")
-        if not os.path.exists(movie_dir):
-            os.makedirs(movie_dir, exist_ok=True)
-
-        os.makedirs(movie_dir, exist_ok=True)
-        movie_path = os.path.join(movie_dir, f"{condition}_{cell}.mov")
+        if save_path is None:
+            # Use default path if no custom path provided
+            movie_dir = os.path.join(master_dir, "movies")
+            print(f"Saving movie to: {movie_dir}")
+            if not os.path.exists(movie_dir):
+                os.makedirs(movie_dir, exist_ok=True)
+            movie_path = os.path.join(movie_dir, f"{condition}_{cell}.mov")
+        else:
+            # Use custom save path
+            movie_path = save_path
+            # Create directory if it doesn't exist
+            movie_dir = os.path.dirname(movie_path)
+            if movie_dir and not os.path.exists(movie_dir):
+                os.makedirs(movie_dir, exist_ok=True)
+            print(f"Saving movie to custom path: {movie_path}")
+        
         save_movie(
             viewer,
             tracks_new_df,
@@ -7702,3 +8009,985 @@ def plot_contour_panel_timelapse(
 #             f"hexbin_color = {hexbin_color}, gridsize = {spatial_gridsize}, box_size = {box_size}."
 #         )
 #         print(summary_message)
+
+
+def auto_select_time_period(tracks_df, target_tracks=30, frame_interval=0.01, start_offset=1.0):
+    """
+    Automatically select a time period based on the number of unique tracks.
+    
+    Starting from start_offset seconds into the data, this function finds the first
+    time window where at least target_tracks unique tracks are present.
+    
+    Parameters
+    ----------
+    tracks_df : polars.DataFrame or pandas.DataFrame
+        DataFrame containing track data with 'unique_id' and 'frame' columns
+    target_tracks : int, default 30
+        Target number of unique tracks to find in the time window
+    frame_interval : float, default 0.01
+        Time between frames in seconds
+    start_offset : float, default 1.0
+        Starting time offset in seconds (to skip initial frames)
+        
+    Returns
+    -------
+    tuple
+        (time_start, time_end) in seconds, or (None, None) if insufficient tracks found
+    """
+    import polars as pl
+    
+    # Convert to polars if pandas
+    if hasattr(tracks_df, 'to_polars'):
+        df = tracks_df.to_polars()
+    elif not hasattr(tracks_df, 'lazy'):
+        # It's pandas, convert to polars
+        df = pl.from_pandas(tracks_df)
+    else:
+        df = tracks_df
+    
+    # Get total unique tracks in the dataset
+    total_unique_tracks = df['unique_id'].n_unique()
+    
+    # If we don't have enough tracks overall, adjust target or return fallback
+    if total_unique_tracks < target_tracks:
+        # Use a fallback: target 80% of available tracks or at least 5 tracks
+        adjusted_target = max(5, int(total_unique_tracks * 0.8))
+        print(f"Dataset has only {total_unique_tracks} total tracks, adjusting target to {adjusted_target}")
+    else:
+        adjusted_target = target_tracks
+    
+    # Get frame range
+    min_frame = int(df['frame'].min())
+    max_frame = int(df['frame'].max())
+    
+    # Convert start_offset to frame number
+    start_frame = int(start_offset / frame_interval)
+    start_frame = max(min_frame, start_frame)
+    
+    # Search for suitable time window, incrementing by 1 second (1/frame_interval frames)
+    frames_per_second = int(1.0 / frame_interval)
+    
+    # Try progressively longer time windows
+    for current_start_frame in range(start_frame, max_frame, frames_per_second):
+        # Try different window sizes: 5s, 10s, 15s, 20s, 30s, 45s, 60s
+        for window_duration in [5, 10, 15, 20, 30, 45, 60]:
+            window_frames = int(window_duration / frame_interval)
+            end_frame = current_start_frame + window_frames
+            
+            if end_frame > max_frame:
+                continue
+                
+            # Count unique tracks in this window
+            window_df = df.filter(
+                (pl.col('frame') >= current_start_frame) & 
+                (pl.col('frame') <= end_frame)
+            )
+            
+            unique_tracks = window_df['unique_id'].n_unique()
+            
+            if unique_tracks >= adjusted_target:
+                time_start = current_start_frame * frame_interval
+                time_end = end_frame * frame_interval
+                return time_start, time_end
+    
+    # If no suitable window found with adjusted target, try a very permissive fallback
+    # Just find any window with at least 5 tracks
+    if adjusted_target > 5:
+        for current_start_frame in range(start_frame, max_frame, frames_per_second):
+            for window_duration in [10, 20, 30, 60]:
+                window_frames = int(window_duration / frame_interval)
+                end_frame = current_start_frame + window_frames
+                
+                if end_frame > max_frame:
+                    continue
+                    
+                window_df = df.filter(
+                    (pl.col('frame') >= current_start_frame) & 
+                    (pl.col('frame') <= end_frame)
+                )
+                
+                unique_tracks = window_df['unique_id'].n_unique()
+                
+                if unique_tracks >= 5:
+                    time_start = current_start_frame * frame_interval
+                    time_end = end_frame * frame_interval
+                    print(f"Fallback: found {unique_tracks} tracks (less than target {target_tracks})")
+                    return time_start, time_end
+    
+    # If still no suitable window found, return None
+    print(f"Warning: Could not find time window with sufficient tracks (target: {target_tracks}, total: {total_unique_tracks})")
+    return None, None
+
+
+def plot_tracks_polars_static(
+    tracks_df,
+    color_by="particle",
+    time_start=None,
+    time_end=None,
+    overlay_image=False,
+    master_dir=None,
+    display_final_frame=True,
+    max_projection=False,
+    contrast_limits=None,
+    invert_image=False,
+    scale_bar_length=2,  # in microns
+    scale_bar_color="black",
+    scale_bar_thickness=2,
+    transparent_background=True,
+    save_path=None,
+    figsize=(3, 3),  # figure size in inches
+    plot_size_um=10,  # final data range (in microns)
+    line_thickness=0.8,  # thickness of track lines
+    dpi=200,
+    export_format="svg",  # 'png' or 'svg'
+    show_plot=True,  # whether to show the plot after saving/exporting
+    colorway="tab20",
+    frame_interval=0.01,  # seconds per frame
+    pixel_size_um=0.065,  # microns per pixel conversion factor
+    gradient=False,
+    order=None,  # Order for categorical coloring
+    motion_type=None,  # Filter by motion type if column exists
+    return_svg=False,  # if True and exporting as SVG, return the SVG string
+    auto_select_tracks=30,  # target number of tracks for auto time selection (disabled if time_start/end specified)
+    filename=None,  # filename to display on the plot
+):
+    """
+    Create a static plot of tracks using Polars DataFrame directly with full functionality.
+    
+    Enhanced version with image overlay, proper timing annotations, and all original features
+    while maintaining streamlined Polars input without complex filtering logic.
+    
+    Parameters
+    ----------
+    tracks_df : polars.DataFrame
+        Pre-filtered DataFrame containing tracks to plot
+    color_by : str
+        Column name to use for coloring tracks
+    time_start : float, optional
+        Start time in seconds for temporal filtering
+    time_end : float, optional  
+        End time in seconds for temporal filtering
+    overlay_image : bool
+        Whether to overlay tracks on microscopy image
+    master_dir : str, optional
+        Master directory containing image data (required if overlay_image=True)
+    display_final_frame : bool
+        Whether to show final frame of image (vs max projection)
+    max_projection : bool
+        Whether to use max projection of image stack
+    contrast_limits : tuple, optional
+        (lower, upper) contrast limits for image display
+    invert_image : bool
+        Whether to invert image colors
+    scale_bar_length : float
+        Length of scale bar in microns
+    scale_bar_color : str
+        Color of scale bar and labels
+    scale_bar_thickness : float
+        Thickness of scale bar line
+    transparent_background : bool
+        Whether to use transparent background
+    save_path : str, optional
+        Directory to save plot (if None, won't save)
+    figsize : tuple
+        Figure size in inches (width, height)
+    plot_size_um : float
+        Size of plot area in microns
+    line_thickness : float
+        Thickness of track lines
+    dpi : int
+        Resolution for saving
+    export_format : str
+        Format for saving ('png' or 'svg')
+    show_plot : bool
+        Whether to display the plot
+    colorway : str
+        Matplotlib colormap name
+    frame_interval : float
+        Time between frames in seconds
+    pixel_size_um : float
+        Microns per pixel conversion factor
+    gradient : bool
+        Whether to apply gradient effect (for future enhancement)
+    order : list, optional
+        Order for categorical coloring
+    motion_type : str, optional
+        Filter by specific motion type if motion_class column exists
+    return_svg : bool
+        If True and export_format='svg', return SVG string
+    auto_select_tracks : int, default 30
+        Target number of tracks for automatic time period selection.
+        Only used when both time_start and time_end are None.
+    filename : str, optional
+        Filename to display on the plot as an annotation
+        
+    Returns
+    -------
+    dict
+        Dictionary with plotted track info, filtered data, and optional SVG string
+    """
+    import polars as pl
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import os
+    import re
+    from skimage.io import imread
+    from skimage.util import img_as_float
+    
+    # Convert to pandas for matplotlib compatibility
+    # (Polars -> Pandas conversion for plotting only)
+    df_pandas = tracks_df.to_pandas()
+    
+    # Filter by motion type if specified
+    if motion_type is not None and 'motion_class' in df_pandas.columns:
+        df_pandas = df_pandas[df_pandas['motion_class'] == motion_type]
+    
+    # Text scaling based on figure size
+    baseline_width = 6.0
+    baseline_font = 12
+    scale_factor = figsize[0] / baseline_width
+    default_font = baseline_font * scale_factor
+    
+    plt.rcParams.update({
+        "font.size": default_font,
+        "axes.titlesize": default_font,
+        "axes.labelsize": default_font,
+        "xtick.labelsize": default_font,
+        "ytick.labelsize": default_font,
+    })
+    
+    # Ensure required columns exist
+    required_cols = ['unique_id', 'frame', 'x_um', 'y_um']
+    missing_cols = [col for col in required_cols if col not in df_pandas.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+    
+    # Temporal filtering with auto-selection support
+    min_frame = df_pandas['frame'].min()
+    max_frame = df_pandas['frame'].max()
+    
+    # Auto-select time period if both time_start and time_end are None
+    if time_start is None and time_end is None and auto_select_tracks is not None:
+        auto_time_start, auto_time_end = auto_select_time_period(
+            tracks_df, 
+            target_tracks=auto_select_tracks, 
+            frame_interval=frame_interval
+        )
+        if auto_time_start is not None and auto_time_end is not None:
+            time_start, time_end = auto_time_start, auto_time_end
+            print(f"Auto-selected time period: {time_start:.2f}s to {time_end:.2f}s "
+                  f"(targeting {auto_select_tracks} tracks)")
+        else:
+            print(f"Auto-selection failed, using full time range (all {tracks_df.shape[0]} data points)")
+    
+    if time_start is not None:
+        start_frame = int(time_start / frame_interval)
+        start_frame = max(min_frame, min(start_frame, max_frame))
+    else:
+        start_frame = min_frame
+        
+    if time_end is not None:
+        end_frame = int(time_end / frame_interval)
+        end_frame = max(min_frame, min(end_frame, max_frame))
+    else:
+        end_frame = max_frame
+    
+    if time_start is not None or time_end is not None:
+        df_pandas = df_pandas[
+            (df_pandas['frame'] >= start_frame) & 
+            (df_pandas['frame'] <= end_frame)
+        ]
+    
+    # Calculate time range for annotation
+    time_start_sec = start_frame * frame_interval
+    time_end_sec = end_frame * frame_interval
+    
+    if df_pandas.empty:
+        raise ValueError("No data remaining after filtering")
+    
+    # Enhanced color mapping with order support
+    if color_by in df_pandas.columns:
+        # Handle categorical vs continuous coloring
+        is_categorical = (
+            df_pandas[color_by].dtype == 'object' or 
+            pd.api.types.is_categorical_dtype(df_pandas[color_by]) or
+            color_by in ['cluster', 'cluster_id', 'motion_class'] or 
+            'cluster' in color_by.lower()
+        )
+        
+        if is_categorical:
+            # Get unique values and apply order if provided
+            all_unique_values = sorted([v for v in df_pandas[color_by].unique() if pd.notna(v)])
+            
+            if order is None:
+                unique_classes = all_unique_values
+            else:
+                # Use provided order, but only include values that exist in data
+                unique_classes = [c for c in order if c in all_unique_values]
+                # Add any remaining values not in the provided order
+                remaining_values = [c for c in all_unique_values if c not in unique_classes]
+                unique_classes.extend(remaining_values)
+            
+            # Create color mapping
+            n_colors = len(unique_classes)
+            if n_colors > 0:
+                colors = plt.cm.get_cmap(colorway)(np.linspace(0, 1, max(n_colors, 1)))
+                color_map = dict(zip(unique_classes, colors))
+                df_pandas['plot_color'] = df_pandas[color_by].map(color_map)
+            else:
+                df_pandas['plot_color'] = 'blue'
+        else:
+            # Continuous coloring
+            norm = plt.Normalize(vmin=df_pandas[color_by].min(), 
+                               vmax=df_pandas[color_by].max())
+            df_pandas['plot_color'] = df_pandas[color_by].apply(
+                lambda x: plt.cm.get_cmap(colorway)(norm(x))
+            )
+            unique_classes = None  # For continuous data
+    else:
+        # Default color if column doesn't exist
+        df_pandas['plot_color'] = 'blue'
+        unique_classes = None
+    
+    # Create figure
+    figure_background = "none" if transparent_background else "white"
+    axis_background = (0, 0, 0, 0) if transparent_background else "white"
+    
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    fig.patch.set_facecolor(figure_background)
+    ax.set_facecolor(axis_background)
+    
+    # Overlay image if requested
+    if overlay_image:
+        if master_dir is None:
+            raise ValueError("master_dir must be provided when overlay_image=True")
+            
+        # Get filename and condition from data
+        if 'filename' in df_pandas.columns and 'condition' in df_pandas.columns:
+            filename = df_pandas['filename'].iloc[0]
+            condition = df_pandas['condition'].iloc[0]
+            
+            # Construct image path
+            image_filename = filename.replace("_tracked", "") + ".tif"
+            image_path = os.path.join(master_dir, "data", condition, image_filename)
+            
+            try:
+                overlay_data = imread(image_path)
+                
+                # Process image based on settings
+                if max_projection:
+                    overlay_data = np.max(overlay_data, axis=0)
+                elif display_final_frame:
+                    overlay_data = overlay_data[-1, :, :]
+                    
+                overlay_data = img_as_float(overlay_data)
+                
+                # Apply contrast limits
+                if contrast_limits:
+                    lower, upper = contrast_limits
+                    overlay_data = np.clip((overlay_data - lower) / (upper - lower), 0, 1)
+                else:
+                    overlay_data = (overlay_data - overlay_data.min()) / (
+                        overlay_data.max() - overlay_data.min()
+                    )
+                
+                # Invert if requested
+                if invert_image:
+                    overlay_data = 1 - overlay_data
+                
+                # Set image extent in microns
+                height, width = overlay_data.shape
+                extent = [0, width * pixel_size_um, 0, height * pixel_size_um]
+                ax.imshow(overlay_data, cmap="gray", origin="lower", extent=extent, alpha=0.8)
+                
+            except Exception as e:
+                print(f"Warning: Could not load image from {image_path}: {e}")
+        else:
+            print("Warning: filename and condition columns required for image overlay")
+    
+    # Plot tracks
+    unique_tracks = df_pandas['unique_id'].unique()
+    plotted_tracks = []
+    
+    for track_id in unique_tracks:
+        track_data = df_pandas[df_pandas['unique_id'] == track_id].sort_values('frame')
+        
+        # Skip single-point tracks
+        if len(track_data) < 2:
+            continue
+            
+        # Get color for this track
+        if 'plot_color' in track_data.columns:
+            track_color = track_data['plot_color'].iloc[0]
+        else:
+            track_color = 'blue'
+        
+        # Plot track as line
+        line = ax.plot(
+            track_data['x_um'],
+            track_data['y_um'],
+            color=track_color,
+            linewidth=line_thickness,
+            alpha=0.8
+        )[0]
+        
+        # Set unique identifier for SVG
+        line.set_gid(f"track_{track_id}")
+        plotted_tracks.append(track_id)
+    
+    # Set plot limits and aspect
+    ax.set_xlim(0, plot_size_um)
+    ax.set_ylim(0, plot_size_um)
+    ax.set_aspect("equal", adjustable="datalim")
+    
+    # Remove axes if no overlay image
+    if not overlay_image:
+        ax.axis("off")
+    
+    # Add scale bar
+    margin = plot_size_um * 0.05
+    x_end = plot_size_um - margin
+    x_start = x_end - scale_bar_length
+    y_bar = margin
+    
+    ax.plot(
+        [x_start, x_end],
+        [y_bar, y_bar],
+        color=scale_bar_color,
+        lw=scale_bar_thickness,
+        solid_capstyle="butt",
+    )
+    
+    # Scale bar label
+    ax.text(
+        (x_start + x_end) / 2,
+        y_bar - margin * 0.3,
+        f"{scale_bar_length} µm",
+        ha="center",
+        va="top",
+        fontsize=10 * scale_factor,
+        color=scale_bar_color,
+    )
+    
+    # Add Time Range Annotation (the "timer" at the top)
+    ax.annotate(
+        f"Time: {time_start_sec:.2f}s - {time_end_sec:.2f}s",
+        xy=(0.5, 1.02),
+        xycoords="axes fraction",
+        ha="center",
+        va="bottom",
+        fontsize=default_font,
+        color=scale_bar_color,
+    )
+    
+    # Add filename annotation at the bottom if provided
+    if filename is not None:
+        ax.annotate(
+            filename,
+            xy=(0.5, -0.08),
+            xycoords="axes fraction",
+            ha="center",
+            va="top",
+            fontsize=default_font * 0.8,  # Slightly smaller than time annotation
+            color=scale_bar_color,
+        )
+    
+    # Add colorbar or legend if needed
+    is_categorical = (
+        color_by in df_pandas.columns and 
+        (df_pandas[color_by].dtype == 'object' or 
+         pd.api.types.is_categorical_dtype(df_pandas[color_by]) or
+         color_by in ['cluster', 'cluster_id', 'motion_class'] or 
+         'cluster' in color_by.lower())
+    )
+    
+    if color_by in df_pandas.columns and unique_classes is not None:
+        if is_categorical:
+            # Only show colors for classes actually present in the filtered data
+            present_classes = [
+                cls for cls in unique_classes if cls in df_pandas[color_by].unique()
+            ]
+            handles = []
+            for cls in present_classes[:10]:  # Limit to 10 for readability
+                if 'color_map' in locals():
+                    color = color_map.get(cls, 'gray')
+                    handles.append(plt.Line2D([0], [0], color=color, lw=2, label=f"{cls}"))
+
+            if handles:
+                ax.legend(
+                    handles=handles,
+                    loc="upper left",
+                    bbox_to_anchor=(1.05, 1),
+                    borderaxespad=0.0,
+                    title=f"Legend: {color_by}",
+                    fontsize=default_font * 0.8,
+                    title_fontsize=default_font * 0.8,
+                )
+        else:
+            # Continuous colorbar
+            color_min = df_pandas[color_by].min()
+            color_max = df_pandas[color_by].max()
+            sm = plt.cm.ScalarMappable(
+                cmap=colorway, norm=plt.Normalize(vmin=color_min, vmax=color_max)
+            )
+            sm.set_array([])
+            cbar = plt.colorbar(
+                sm, ax=ax, orientation="vertical", pad=0.1, fraction=0.03, shrink=0.25
+            )
+            cbar.set_label(
+                f"{color_by} (range: {round(color_min, 2)} - {round(color_max, 2)})",
+                color=scale_bar_color,
+                fontsize=default_font,
+            )
+            cbar.ax.yaxis.set_tick_params(color=scale_bar_color, labelsize=default_font)
+            plt.setp(cbar.ax.yaxis.get_ticklabels(), color=scale_bar_color)
+    
+    plt.tight_layout()
+    
+    # Save if requested
+    svg_data = None
+    if save_path:
+        save_dir = os.path.dirname(save_path) if os.path.dirname(save_path) else save_path
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+            
+        ext = export_format.lower()
+        if ext not in ["png", "svg"]:
+            print("Invalid export format specified. Defaulting to 'png'.")
+            ext = "png"
+            
+        # Create filename based on available data
+        if 'filename' in df_pandas.columns:
+            base_name = df_pandas['filename'].iloc[0].split(".")[0]
+        else:
+            base_name = f"tracks_plot_{len(plotted_tracks)}tracks"
+            
+        out_filename = f"{base_name}_tracks.{ext}"
+        full_save_path = os.path.join(save_dir, out_filename)
+        
+        plt.savefig(
+            full_save_path, 
+            transparent=transparent_background, 
+            dpi=dpi, 
+            format=ext,
+            bbox_inches='tight'
+        )
+        
+        # SVG post-processing (like in original function)
+        if ext == "svg":
+            try:
+                with open(full_save_path, encoding="utf-8") as f:
+                    svg_data = f.read()
+                # Remove <clipPath> definitions, metadata, XML declaration, and DOCTYPE
+                svg_data = re.sub(
+                    r'<clipPath id="[^"]*">.*?</clipPath>', "", svg_data, flags=re.DOTALL
+                )
+                svg_data = re.sub(r'\s*clip-path="url\([^)]*\)"', "", svg_data)
+                svg_data = re.sub(
+                    r"<metadata>.*?</metadata>", "", svg_data, flags=re.DOTALL
+                )
+                svg_data = re.sub(r"<\?xml[^>]*\?>", "", svg_data, flags=re.DOTALL)
+                svg_data = re.sub(r"<!DOCTYPE[^>]*>", "", svg_data, flags=re.DOTALL)
+                svg_data = svg_data.strip()
+                with open(full_save_path, "w", encoding="utf-8") as f:
+                    f.write(svg_data)
+            except Exception as e:
+                print(f"Warning: SVG post-processing failed: {e}")
+        
+        print(f"Plot saved to: {full_save_path}")
+    
+    # Show plot
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+    
+    # Prepare return data
+    result = {
+        "plotted_tracks": plotted_tracks,
+        "n_tracks_plotted": len(plotted_tracks),
+        "filtered_data_shape": df_pandas.shape,
+        "coordinate_range": {
+            "x_min": df_pandas['x_um'].min(),
+            "x_max": df_pandas['x_um'].max(),
+            "y_min": df_pandas['y_um'].min(), 
+            "y_max": df_pandas['y_um'].max()
+        },
+        "tracks_df": df_pandas  # Include filtered data like original function
+    }
+    
+    # Add SVG data if requested and available
+    if export_format.lower() == "svg" and return_svg and svg_data:
+        result["svg_data"] = svg_data
+    
+    return result
+
+
+def gallery_of_tracks(
+    instant_df,
+    color_by="simple_threshold",
+    num_tracks=20,
+    colormap="Dark2",
+    figsize=(12, 12),
+    transparent_background=True,
+    show_annotations=False,
+    annotation_color="white",
+    text_size=10,
+    export_format="svg",
+    save_path=None,
+    show_plot=True,
+    order=None,
+    track_length_frames=60,
+    spacing_factor=1.2,
+    line_width=1.5,
+    grid_cols=None,
+    dpi=200,
+    subplot_size_um=None,
+):
+    """
+    Create a gallery of tracks distributed in a grid layout with consistent scaling.
+    
+    This function creates a visual gallery of particle tracks, where each track is 
+    displayed in its own subplot with consistent scaling across all tracks for 
+    visual size comparison.
+    
+    Parameters
+    ----------
+    instant_df : pandas.DataFrame or polars.DataFrame
+        Instant trajectory dataframe containing track data
+    color_by : str, default "simple_threshold"
+        Column name to use for categorical coloring of tracks
+    num_tracks : int, default 20
+        Number of tracks to display per category
+    colormap : str, default "Dark2"
+        Matplotlib colormap name for coloring categories
+    figsize : tuple or None, default (12, 12)
+        Figure size in inches (width, height). If None, automatically calculated based on grid size
+    transparent_background : bool, default True
+        Whether to use transparent background
+    show_annotations : bool, default False
+        Whether to show track annotations
+    annotation_color : str, default "white"
+        Color for annotations
+    text_size : int, default 10
+        Font size for text annotations
+    export_format : str, default "svg"
+        Export format ('svg' or 'png')
+    save_path : str or None, default None
+        Path to save the figure. If None, saves to current directory
+    show_plot : bool, default True
+        Whether to display the plot
+    order : list or None, default None
+        Order of categories to display
+    track_length_frames : int, default 60
+        Number of consecutive frames to include per track
+    spacing_factor : float, default 1.2
+        Factor to multiply the maximum track extent for spacing between tracks
+    line_width : float, default 1.5
+        Width of track lines
+    grid_cols : int or None, default None
+        Number of columns in the grid. If None, automatically calculated
+    dpi : int, default 200
+        Resolution for saved figure
+    subplot_size_um : float or None, default None
+        Manual subplot size in microns. If None, automatically calculated from largest track extent
+        
+    Returns
+    -------
+    dict
+        Dictionary containing track information and figure details
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+    import numpy as np
+    import random
+    from matplotlib import cm
+    import seaborn as sns
+    
+    # Auto-detect dataframe type and convert to pandas for compatibility
+    is_polars = hasattr(instant_df, 'schema')
+    if is_polars:
+        import polars as pl
+        df = instant_df.to_pandas()
+    else:
+        df = instant_df.copy()
+    
+    # Ensure required columns exist
+    required_cols = ['unique_id', 'x_um', 'y_um', 'frame']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+    
+    if color_by not in df.columns:
+        raise ValueError(f"Column '{color_by}' not found in dataframe")
+    
+    # Get categories for coloring
+    categories = order if order else sorted(df[color_by].unique())
+    print(f"Gallery categories in order: {categories}")
+    
+    # Set up color mapping
+    if colormap == "colorblind":
+        colors = sns.color_palette("colorblind", len(categories))
+    elif colormap == "Dark2":
+        cmap = cm.get_cmap("Dark2", len(categories))
+        colors = cmap(np.linspace(0, 1, len(categories)))
+    else:
+        colors = plt.get_cmap(colormap, len(categories)).colors
+    
+    category_color_map = {cat: colors[i] for i, cat in enumerate(categories)}
+    
+    # Collect track segments for each category
+    all_track_segments = []
+    track_info = []
+    
+    for category in categories:
+        # Filter by category
+        cat_df = df[df[color_by] == category]
+        unique_ids = cat_df['unique_id'].unique()
+        
+        # Randomly select tracks for this category
+        selected_ids = random.sample(
+            list(unique_ids), 
+            min(num_tracks, len(unique_ids))
+        )
+        
+        for unique_id in selected_ids:
+            # Get all data for this track
+            track_data = cat_df[cat_df['unique_id'] == unique_id].sort_values('frame')
+            
+            # Take a consecutive segment of the specified length
+            if len(track_data) >= track_length_frames:
+                # Randomly choose a starting point that allows for full segment
+                max_start = len(track_data) - track_length_frames
+                start_idx = random.randint(0, max_start) if max_start > 0 else 0
+                track_segment = track_data.iloc[start_idx:start_idx + track_length_frames]
+            else:
+                # Use all available data if track is shorter
+                track_segment = track_data
+            
+            if len(track_segment) >= 10:  # Minimum track length for visualization
+                all_track_segments.append(track_segment)
+                track_info.append((category, unique_id, len(track_segment)))
+    
+    if not all_track_segments:
+        raise ValueError("No valid track segments found")
+    
+    print(f"Collected {len(all_track_segments)} tracks total")
+    
+    # Calculate subplot size
+    if subplot_size_um is not None:
+        # Use manually specified subplot size
+        subplot_size = subplot_size_um
+        print(f"Using manual subplot size: {subplot_size:.2f} μm")
+    else:
+        # Calculate global scale based on largest track extent
+        max_extent = 0
+        for segment in all_track_segments:
+            x_range = segment['x_um'].max() - segment['x_um'].min()
+            y_range = segment['y_um'].max() - segment['y_um'].min()
+            extent = max(x_range, y_range)
+            max_extent = max(max_extent, extent)
+        
+        # Add spacing between tracks
+        subplot_size = max_extent * spacing_factor
+        print(f"Using calculated subplot size: {subplot_size:.2f} μm")
+    
+    # Calculate grid layout
+    total_tracks = len(all_track_segments)
+    if grid_cols is None:
+        grid_cols = int(np.ceil(np.sqrt(total_tracks)))
+    grid_rows = int(np.ceil(total_tracks / grid_cols))
+    
+    print(f"Grid layout: {grid_rows} rows × {grid_cols} columns")
+    
+    # Calculate dynamic figsize if None
+    if figsize is None:
+        # Base size per subplot in inches (adjust as needed)
+        subplot_size_inches = 2.0
+        figsize = (grid_cols * subplot_size_inches, grid_rows * subplot_size_inches)
+        print(f"Using dynamic figsize: {figsize}")
+    
+    # Create figure
+    figure_background = "none" if transparent_background else "white"
+    axis_background = (0, 0, 0, 0) if transparent_background else "white"
+    
+    fig, axes = plt.subplots(
+        grid_rows, grid_cols, 
+        figsize=figsize,
+        facecolor=figure_background
+    )
+    
+    # Handle single subplot case
+    if grid_rows == 1 and grid_cols == 1:
+        axes = [axes]
+    elif grid_rows == 1 or grid_cols == 1:
+        axes = axes.flatten()
+    else:
+        axes = axes.flatten()
+    
+    # Remove spacing between subplots for seamless grid
+    fig.subplots_adjust(wspace=0.02, hspace=0.02)
+    
+    # Plot each track
+    plotted_tracks = []
+    for idx, (segment, (category, unique_id, segment_length)) in enumerate(zip(all_track_segments, track_info)):
+        if idx >= len(axes):
+            break
+            
+        ax = axes[idx]
+        
+        # Extract coordinates
+        x_coords = segment['x_um'].values
+        y_coords = segment['y_um'].values
+        
+        # Calculate centroid for centering
+        x_center = x_coords.mean()
+        y_center = y_coords.mean()
+        
+        # Plot the track
+        color = category_color_map[category]
+        ax.plot(x_coords, y_coords, color=color, linewidth=line_width, alpha=0.8)
+        
+        # Set consistent axis limits centered on track
+        half_size = subplot_size / 2
+        ax.set_xlim(x_center - half_size, x_center + half_size)
+        ax.set_ylim(y_center - half_size, y_center + half_size)
+        ax.set_aspect('equal')
+        
+        # Remove all axis elements
+        ax.axis('off')
+        ax.set_facecolor(axis_background)
+        
+        # Add category annotation if requested
+        if show_annotations:
+            ax.text(
+                0.5, 0.95, f"{category}\n{unique_id}",
+                transform=ax.transAxes,
+                ha='center', va='top',
+                fontsize=text_size,
+                color=annotation_color,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor='black', alpha=0.7)
+            )
+        
+        plotted_tracks.append({
+            'category': category,
+            'unique_id': unique_id,
+            'segment_length': segment_length,
+            'x_center': x_center,
+            'y_center': y_center,
+            'subplot_index': idx
+        })
+    
+    # Hide any unused subplots
+    for idx in range(len(all_track_segments), len(axes)):
+        axes[idx].axis('off')
+        axes[idx].set_facecolor(axis_background)
+    
+    # Add title with category information
+    category_counts = {}
+    for category, _, _ in track_info:
+        category_counts[category] = category_counts.get(category, 0) + 1
+    
+    title_text = f"Gallery of Tracks (colored by {color_by})\n"
+    title_text += " | ".join([f"{cat}: {count}" for cat, count in category_counts.items()])
+    
+    fig.suptitle(
+        title_text,
+        fontsize=text_size + 2,
+        color=annotation_color if transparent_background else "black",
+        y=0.98
+    )
+    
+    # Save figure
+    if save_path is None:
+        save_path = f"gallery_of_tracks_{color_by}.{export_format}"
+    
+    plt.savefig(
+        save_path,
+        format=export_format,
+        dpi=dpi,
+        bbox_inches='tight',
+        transparent=transparent_background,
+        facecolor=figure_background
+    )
+    
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+    
+    # Return summary information
+    return {
+        'plotted_tracks': plotted_tracks,
+        'category_counts': category_counts,
+        'total_tracks': len(all_track_segments),
+        'subplot_size_um': subplot_size,
+        'grid_dimensions': (grid_rows, grid_cols),
+        'save_path': save_path,
+        'categories': categories
+    }
+
+
+def create_test_track_data_polars(n_tracks=10, track_length=50, plot_size=8):
+    """
+    Create simulated track data in Polars format for testing.
+    
+    Parameters
+    ----------
+    n_tracks : int
+        Number of tracks to generate
+    track_length : int
+        Number of points per track
+    plot_size : float
+        Size of the plotting area in microns
+        
+    Returns
+    -------
+    polars.DataFrame
+        Simulated track data
+    """
+    import polars as pl
+    import numpy as np
+    
+    data = []
+    
+    for track_id in range(n_tracks):
+        # Random starting position
+        start_x = np.random.uniform(1, plot_size - 1)
+        start_y = np.random.uniform(1, plot_size - 1)
+        
+        # Random walk parameters
+        step_size = 0.1
+        drift_x = np.random.uniform(-0.02, 0.02)
+        drift_y = np.random.uniform(-0.02, 0.02)
+        
+        x_pos, y_pos = start_x, start_y
+        
+        for frame in range(track_length):
+            # Random walk with slight drift
+            x_pos += np.random.normal(drift_x, step_size)
+            y_pos += np.random.normal(drift_y, step_size)
+            
+            # Keep within bounds
+            x_pos = np.clip(x_pos, 0.1, plot_size - 0.1)
+            y_pos = np.clip(y_pos, 0.1, plot_size - 0.1)
+            
+            # Add simple categorical for testing gallery function
+            simple_threshold = 'high' if track_id % 2 == 0 else 'low'
+            motion_type = ['subdiffusive', 'normal', 'superdiffusive'][track_id % 3]
+            
+            data.append({
+                'unique_id': f'track_{track_id:03d}',
+                'frame': frame,
+                'x_um': x_pos,
+                'y_um': y_pos,
+                'particle': track_id,
+                'filename': 'test_data',
+                'condition': 'simulated',
+                'simple_threshold': simple_threshold,
+                'motion_type': motion_type
+            })
+    
+    return pl.DataFrame(data)
+
+

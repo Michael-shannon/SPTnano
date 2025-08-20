@@ -1831,3 +1831,161 @@ def load_dataframes_by_pattern_polars(base_directory, instant_df_name="instant_d
             print(f"Error loading from {folder}: {e}")
     
     return dataframes
+
+
+def split_by_diffusion_threshold(data_df, feature="diffusion_coefficient", threshold=None, 
+                                 log_scale=True, log_base=10):
+    """
+    Split dataframe into two based on a threshold value for diffusion coefficient.
+    Mimics the log calculation logic from the histograms function.
+    Supports both pandas and polars dataframes with automatic detection.
+    
+    Parameters
+    -----------
+    data_df : pandas.DataFrame or polars.DataFrame
+        Input dataframe containing the feature to split on
+    feature : str, default="diffusion_coefficient"
+        Column name to apply threshold to
+    threshold : float
+        Threshold value to split on, IN LOG SCALE if log_scale=True. 
+        If None, uses median of the (log-transformed) feature
+    log_scale : bool, default=True
+        Whether to calculate log values before applying threshold
+    log_base : int, default=10
+        Base for logarithm calculation (10, 2, or any other number)
+    
+    Returns
+    --------
+    full_df_with_threshold : pandas.DataFrame or polars.DataFrame
+        Full original dataframe with added 'simple_threshold' column ('low'/'high')
+    low_windowed_df : pandas.DataFrame or polars.DataFrame
+        Dataframe containing values below threshold with 'simple_threshold' column
+    high_windowed_df : pandas.DataFrame or polars.DataFrame
+        Dataframe containing values at or above threshold with 'simple_threshold' column
+    threshold_used : float
+        The actual threshold value used for splitting (in log scale if log_scale=True)
+    """
+    
+    # Detect dataframe type and handle accordingly
+    is_polars = hasattr(data_df, 'schema')  # polars DataFrames have schema attribute
+    
+    if is_polars:
+        import polars as pl
+        # Make a copy to avoid modifying original dataframe
+        df_copy = data_df.clone()
+        # Check if feature exists in dataframe
+        if feature not in df_copy.columns:
+            raise ValueError(f"Feature '{feature}' not found in dataframe columns")
+    else:
+        # Assume pandas
+        # Make a copy to avoid modifying original dataframe
+        df_copy = data_df.copy()
+        # Check if feature exists in dataframe
+        if feature not in df_copy.columns:
+            raise ValueError(f"Feature '{feature}' not found in dataframe columns")
+    
+    # Handle log scale transformation (same logic as histograms function)
+    if log_scale:
+        new_feature = "log_" + feature
+        
+        if is_polars:
+            # Check for positive values in polars
+            if (df_copy.select(pl.col(feature) <= 0).sum().item() > 0):
+                raise ValueError(f"All values of {feature} must be positive for log scale.")
+            
+            # Create log transformed column in polars
+            if log_base == 10:
+                df_copy = df_copy.with_columns(pl.col(feature).log10().alias(new_feature))
+            elif log_base == 2:
+                df_copy = df_copy.with_columns(pl.col(feature).log().alias(new_feature) / np.log(2))
+            else:
+                df_copy = df_copy.with_columns(pl.col(feature).log().alias(new_feature) / np.log(log_base))
+        else:
+            # Pandas version
+            if (df_copy[feature] <= 0).any():
+                raise ValueError(f"All values of {feature} must be positive for log scale.")
+            
+            if log_base == 10:
+                df_copy[new_feature] = np.log10(df_copy[feature])
+            elif log_base == 2:
+                df_copy[new_feature] = np.log2(df_copy[feature])
+            else:
+                df_copy[new_feature] = np.log(df_copy[feature]) / np.log(log_base)
+        
+        feature_to_split = new_feature
+        
+        # Threshold is already in log scale - use directly
+        if threshold is not None:
+            threshold_log = threshold
+            # Convert to original scale for reporting
+            threshold_original = log_base ** threshold_log
+        else:
+            # Use median of log-transformed values
+            if is_polars:
+                threshold_log = df_copy.select(pl.col(feature_to_split).median()).item()
+            else:
+                threshold_log = df_copy[feature_to_split].median()
+            # Convert to original scale for reporting
+            threshold_original = log_base ** threshold_log
+    else:
+        feature_to_split = feature
+        threshold_log = threshold
+        threshold_original = threshold
+        if threshold is None:
+            if is_polars:
+                threshold_log = df_copy.select(pl.col(feature_to_split).median()).item()
+            else:
+                threshold_log = df_copy[feature_to_split].median()
+            threshold_original = threshold_log
+    
+    # Add simple_threshold column and split the dataframe
+    if is_polars:
+        # Add simple_threshold column
+        df_copy = df_copy.with_columns(
+            pl.when(pl.col(feature_to_split) < threshold_log)
+            .then(pl.lit("low"))
+            .otherwise(pl.lit("high"))
+            .alias("simple_threshold")
+        )
+        
+        # Split the dataframe
+        low_windowed_df = df_copy.filter(pl.col("simple_threshold") == "low")
+        high_windowed_df = df_copy.filter(pl.col("simple_threshold") == "high")
+        full_df_with_threshold = df_copy
+    else:
+        # Pandas version
+        # Add simple_threshold column
+        df_copy['simple_threshold'] = np.where(
+            df_copy[feature_to_split] < threshold_log, 
+            'low', 
+            'high'
+        )
+        
+        # Split the dataframe
+        low_windowed_df = df_copy[df_copy['simple_threshold'] == 'low'].copy()
+        high_windowed_df = df_copy[df_copy['simple_threshold'] == 'high'].copy()
+        full_df_with_threshold = df_copy
+    
+    # Print summary statistics
+    if is_polars:
+        total_count = df_copy.height
+        low_count = low_windowed_df.height
+        high_count = high_windowed_df.height
+    else:
+        total_count = len(df_copy)
+        low_count = len(low_windowed_df)
+        high_count = len(high_windowed_df)
+    
+    print(f"Split summary for {feature}:")
+    print(f"  Dataframe type: {'Polars' if is_polars else 'Pandas'}")
+    print(f"  Total records: {total_count}")
+    if log_scale:
+        print(f"  Log{log_base} threshold: {threshold_log:.4f}")
+        print(f"  Original scale threshold: {threshold_original:.4f}")
+    else:
+        print(f"  Threshold used: {threshold_log:.4f}")
+    print(f"  Low group (< threshold): {low_count} ({low_count/total_count*100:.1f}%)")
+    print(f"  High group (>= threshold): {high_count} ({high_count/total_count*100:.1f}%)")
+    print(f"  Added 'simple_threshold' column with values: 'low', 'high'")
+    
+    return full_df_with_threshold, low_windowed_df, high_windowed_df, threshold_log
