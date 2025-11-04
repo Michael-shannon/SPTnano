@@ -19,6 +19,7 @@ import pims
 import seaborn as sns
 import skimage.io as skio
 import xarray as xr  # for converting arrays to DataArray
+from scipy.stats import gaussian_kde
 from .config import FEATURES2  # import additional features from your config
 from datashader.reductions import mean
 from matplotlib import cm
@@ -39,6 +40,7 @@ from sklearn.preprocessing import MinMaxScaler
 
 from . import config
 from .helper_scripts import *
+from .helper_scripts import center_scale_data
 
 # Set up fonts and SVG text handling so that text remains editable in Illustrator.
 mpl.rcParams["svg.fonttype"] = "none"
@@ -53,6 +55,46 @@ else:
 
 
 # Helper function to handle Location/location column case sensitivity
+def _process_palette(palette, n_colors):
+    """
+    Process palette parameter that can be either a string (palette name) or a list of colors.
+    
+    Parameters
+    ----------
+    palette : str or list
+        Either a palette name ('colorblind', 'Dark2', etc.) or a list of colors (hex codes, named colors, RGB tuples)
+    n_colors : int
+        Number of colors needed
+        
+    Returns
+    -------
+    list
+        List of colors, cycling if needed
+    """
+    if isinstance(palette, (list, tuple)):
+        # Custom colors provided - cycle if needed
+        return [palette[i % len(palette)] for i in range(n_colors)]
+    elif palette == "colorblind":
+        # Use Wong 2011 colorblind-friendly palette
+        colorblind_colors = [
+            '#0173B2',  # Blue
+            '#DE8F05',  # Orange  
+            '#029E73',  # Green
+            '#CC78BC',  # Purple
+            '#CA9161',  # Brown
+            '#FBAFE4',  # Pink
+            '#949494',  # Gray
+            '#ECE133',  # Yellow
+            '#56B4E9',  # Sky blue
+            '#D55E00'   # Vermillion
+        ]
+        return [colorblind_colors[i % len(colorblind_colors)] for i in range(n_colors)]
+    else:
+        # Use seaborn/matplotlib palette
+        import seaborn as sns
+        return sns.color_palette(palette, n_colors)
+
+
 def _get_location_column(df):
     """
     Helper function to detect whether dataframe has 'Location' or 'location' column.
@@ -235,7 +277,7 @@ def plot_histograms(
     separate=None,
     xlimit=None,
     small_multiples=False,
-    palette="colorblind",
+    palette="colorblind",  # Can be string (palette name) or list of colors
     use_kde=False,
     kde_fill=True,
     show_plot=True,
@@ -263,7 +305,17 @@ def plot_histograms(
     figsize=(3, 3),
 ):
     """
-    Modified function to allow removing KDE fill and moving the legend outside the plot.
+    Plot histograms with flexible color options and customization.
+    
+    Parameters
+    ----------
+    palette : str or list, default "colorblind"
+        Color palette for categories. Can be:
+        - String: palette name ('colorblind' uses Wong 2011, 'Dark2', 'Set2', etc.)
+        - List: custom colors as hex codes, named colors, or RGB tuples
+        Example: ['#0173B2', '#DE8F05', '#029E73'] or ['red', 'blue', 'green']
+    
+    (Other parameters documented elsewhere)
     """
     if master_dir is None:
         master_dir = "plots"
@@ -313,7 +365,7 @@ def plot_histograms(
     else:
         unique_categories = [None]
 
-    color_palette = sns.color_palette(palette, len(unique_categories))
+    color_palette = _process_palette(palette, len(unique_categories))
 
     # # Create a color mapping for conditions based on the provided dictionary
     # color_mapping = {}
@@ -2425,8 +2477,12 @@ def plot_boxplots_svg(
         Font size for the plot text. Default is 12.
     order : list, optional
         Specific order for the categories. Default is None.
-    palette : str, optional
-        Color palette for the plot. Default is 'colorblind'.
+    palette : str or list, optional
+        Color palette for the plot. Can be:
+        - String: palette name ('colorblind' uses Wong 2011, 'Dark2', 'Set2', etc.)
+        - List: custom colors as hex codes, named colors, or RGB tuples
+        Example: ['#0173B2', '#DE8F05', '#029E73'] or ['red', 'blue', 'green']
+        Default is 'colorblind'.
     background : str, tuple, optional
         Background color as a color name, RGB tuple, or hex code. Default is 'white'.
     transparent : bool, optional
@@ -2484,6 +2540,10 @@ def plot_boxplots_svg(
         "notebook", rc={"xtick.labelsize": font_size, "ytick.labelsize": font_size}
     )
 
+    # Process palette to handle both string names and custom color lists
+    n_categories = len(order) if order is not None else len(data_df[x_category].unique())
+    processed_palette = _process_palette(palette, n_categories)
+
     if bw:
         boxplot = sns.boxplot(
             x=x_category,
@@ -2505,7 +2565,7 @@ def plot_boxplots_svg(
             x=x_category,
             y=feature,
             data=data_df,
-            palette=palette,
+            palette=processed_palette,
             order=order,
             showfliers=False,
             linewidth=1.5,
@@ -4898,7 +4958,7 @@ def plot_tracks_static_svg(
                 )[0]
                 line_obj.set_gid(f"track_{uid}_segment_{segment_id}")
 
-                # else:
+        else:
             # For non-cluster coloring, plot entire track as one polyline
             if color_by == "motion_class":
                 line_color_plot = track["motion_color"].iloc[0]
@@ -8628,6 +8688,7 @@ def gallery_of_tracks(
     color_by="simple_threshold",
     num_tracks=20,
     colormap="Dark2",
+    custom_colors=None,
     figsize=(12, 12),
     transparent_background=True,
     show_annotations=False,
@@ -8660,7 +8721,15 @@ def gallery_of_tracks(
     num_tracks : int, default 20
         Number of tracks to display per category
     colormap : str, default "Dark2"
-        Matplotlib colormap name for coloring categories
+        Colormap for coloring categories. Options:
+        - 'colorblind': Wong 2011 colorblind-friendly palette (10 colors, cycles if needed)
+        - 'Dark2': Matplotlib Dark2 colormap
+        - Any other matplotlib colormap name
+        Ignored if custom_colors is provided.
+    custom_colors : list of str or None, default None
+        Custom list of colors (hex codes, named colors, or RGB tuples).
+        If provided, overrides colormap parameter.
+        Example: ['#0173B2', '#DE8F05', '#029E73'] or ['red', 'blue', 'green']
     figsize : tuple or None, default (12, 12)
         Figure size in inches (width, height). If None, automatically calculated based on grid size
     transparent_background : bool, default True
@@ -8726,8 +8795,26 @@ def gallery_of_tracks(
     print(f"Gallery categories in order: {categories}")
     
     # Set up color mapping
-    if colormap == "colorblind":
-        colors = sns.color_palette("colorblind", len(categories))
+    if custom_colors is not None:
+        # Use custom colors provided by user
+        # Cycle through colors if more categories than colors
+        colors = [custom_colors[i % len(custom_colors)] for i in range(len(categories))]
+    elif colormap == "colorblind":
+        # Use Wong 2011 colorblind-friendly palette (same as plot_pca_3d)
+        colorblind_colors = [
+            '#0173B2',  # Blue
+            '#DE8F05',  # Orange  
+            '#029E73',  # Green
+            '#CC78BC',  # Purple
+            '#CA9161',  # Brown
+            '#FBAFE4',  # Pink
+            '#949494',  # Gray
+            '#ECE133',  # Yellow
+            '#56B4E9',  # Sky blue
+            '#D55E00'   # Vermillion
+        ]
+        # Cycle through colors if more categories than colors
+        colors = [colorblind_colors[i % len(colorblind_colors)] for i in range(len(categories))]
     elif colormap == "Dark2":
         cmap = cm.get_cmap("Dark2", len(categories))
         colors = cmap(np.linspace(0, 1, len(categories)))
@@ -8989,5 +9076,1018 @@ def create_test_track_data_polars(n_tracks=10, track_length=50, plot_size=8):
             })
     
     return pl.DataFrame(data)
+
+
+def plot_xy_heatmap(
+    df,
+    x_col,
+    y_col,
+    plot_type='hexbin',
+    color_by=None,
+    small_multiples=False,
+    shared_scale=True,
+    gridsize=50,
+    figsize=(8, 6),
+    cmap=None,
+    alpha=0.6,
+    s=10,
+    title=None,
+    xlabel=None,
+    ylabel=None,
+    scale_data=False,
+    scale_method='standard',
+    scale_group_by=None,
+    xlim=None,
+    ylim=None,
+    save_path=None,
+    dpi=150,
+    log_scale=True,
+    transparent_background=False,
+    line_color='black',
+    export_format='png',
+    return_svg=False,
+    contour_levels=None,
+    contour_cmap='viridis',
+    **kwargs
+):
+    """
+    Create flexible x vs y plots with hexbin or scatter options.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing the data to plot.
+    x_col : str
+        Column name for x-axis.
+    y_col : str
+        Column name for y-axis.
+    plot_type : str, optional
+        Type of plot. Options are:
+        - 'hexbin': Hexagonal binning (good for medium-large datasets)
+        - 'scatter': Individual points (good for small datasets or categorical data)
+        Default is 'hexbin'.
+    color_by : str, optional
+        Column name to color/separate data by. If None, pools all data together.
+        If specified, colors scatter plots by category or creates small multiples
+        when small_multiples=True. Default is None.
+    small_multiples : bool, optional
+        If True and color_by is provided, creates separate subplots for each category.
+        If False, plots all data together (colored by category for scatter).
+        Default is False.
+    shared_scale : bool, optional
+        If True (default), all subplots share the same x/y scale (max of all data).
+        If False, each subplot uses different colormaps (for hexbin/hist2d).
+        Only applies when small_multiples=True.
+    gridsize : int, optional
+        Grid size for hexbin plots. Default is 50.
+    figsize : tuple, optional
+        Figure size (width, height) in inches. Default is (8, 6).
+    cmap : str or list of str, optional
+        Colormap(s) for hexbin plots. 
+        - For single hexbin: string colormap name (default: 'inferno')
+        - For small multiples hexbin: list of colormaps, one per subplot
+          (default: ['inferno', 'viridis', 'plasma', 'magma', 'cividis', 'hot'])
+        - Ignored for scatter plots (uses categorical colors)
+        Good hexbin colormaps: 'inferno', 'hot', 'plasma', 'magma', 'viridis', 'cividis'.
+    alpha : float, optional
+        Transparency for scatter plots. Default is 0.6.
+    s : float or int, optional
+        Marker size for scatter plots. Default is 10.
+    title : str, optional
+        Overall figure title. Default is None.
+    xlabel : str, optional
+        X-axis label. Default is x_col.
+    ylabel : str, optional
+        Y-axis label. Default is y_col.
+    scale_data : bool, optional
+        If True, applies scaling to x_col and y_col before plotting. Default is False.
+    scale_method : str, optional
+        Scaling method to use if scale_data=True. Default is 'standard'.
+        Options: 'standard', 'minmax', 'robust', 'standard_minmax', etc.
+    scale_group_by : str or list of str, optional
+        Group by column(s) for scaling. Default is None.
+    xlim : tuple, optional
+        X-axis limits (xmin, xmax). Default is None (auto).
+    ylim : tuple, optional
+        Y-axis limits (ymin, ymax). Default is None (auto).
+    save_path : str, optional
+        Path to save the figure. Can be:
+        - A directory path: filename will be auto-generated as 
+          "{x_col}_vs_{y_col}_{plot_type}_by_{color_by}_{modifiers}.{ext}"
+        - A full file path: will be used as-is (extension adjusted to match export_format)
+        Default is None (no save).
+    dpi : int, optional
+        DPI for saved figure. Default is 150.
+    log_scale : bool, optional
+        If True, use logarithmic color scaling for hexbin plots to better
+        highlight areas of low and high density. Default is True.
+    transparent_background : bool, optional
+        If True, makes the background transparent. Useful for presentations
+        and publications. Default is False.
+    line_color : str, optional
+        Color for axis lines, ticks, and labels. Default is 'black'.
+        Use 'white' for dark backgrounds in presentations.
+    export_format : str, optional
+        File format to export ('png' or 'svg'). Default is 'png'.
+    return_svg : bool, optional
+        If True and export_format is 'svg', returns the cleaned SVG data as a string.
+        Default is False.
+    contour_levels : int or None, optional
+        If specified, adds density contour lines on top of scatter/hexbin plots.
+        Number indicates how many contour levels to draw. Default is None (no contours).
+    contour_cmap : str, optional
+        Colormap for contour lines when contour_levels is specified.
+        Default is 'viridis'.
+    **kwargs
+        Additional keyword arguments passed to plotting functions.
+    
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object.
+    axes : matplotlib.axes.Axes or np.ndarray of Axes
+        The axes object(s).
+    svg_data : str (optional)
+        If export_format='svg' and return_svg=True, returns cleaned SVG string.
+    
+    Examples
+    --------
+    >>> # Simple hexbin plot (all data pooled)
+    >>> fig, ax = plot_xy_heatmap(df, 'x_um', 'y_um')
+    
+    >>> # Scatter plot colored by category
+    >>> fig, ax = plot_xy_heatmap(df, 'speed', 'D', plot_type='scatter', color_by='mol')
+    
+    >>> # Small multiples by condition
+    >>> fig, axes = plot_xy_heatmap(df, 'x_um', 'y_um', 
+    ...                              color_by='condition',
+    ...                              small_multiples=True)
+    
+    >>> # With data scaling
+    >>> fig, ax = plot_xy_heatmap(df, 'x_um', 'y_um',
+    ...                            scale_data=True,
+    ...                            scale_method='standard_minmax')
+    
+    """
+    # Create a copy of the dataframe to avoid modifying the original
+    plot_df = df.copy()
+    
+    # Apply scaling if requested
+    if scale_data:
+        plot_df = center_scale_data(
+            plot_df,
+            columns=[x_col, y_col],
+            method=scale_method,
+            group_by=scale_group_by,
+            copy=False
+        )
+    
+    # Set default labels
+    if xlabel is None:
+        xlabel = x_col
+    if ylabel is None:
+        ylabel = y_col
+    
+    def add_density_contours(ax, x, y, levels=5, cmap_name='viridis', alpha_contour=0.6):
+        """Add 2D density contours."""
+        # Calculate 2D density
+        try:
+            xy = np.vstack([x, y])
+            z = gaussian_kde(xy)(xy)
+            
+            # Create grid for contours
+            x_min, x_max = x.min(), x.max()
+            y_min, y_max = y.min(), y.max()
+            x_range = x_max - x_min
+            y_range = y_max - y_min
+            
+            # Add padding
+            x_min -= x_range * 0.1
+            x_max += x_range * 0.1
+            y_min -= y_range * 0.1
+            y_max += y_range * 0.1
+            
+            xx, yy = np.mgrid[x_min:x_max:100j, y_min:y_max:100j]
+            positions = np.vstack([xx.ravel(), yy.ravel()])
+            f = np.reshape(gaussian_kde(xy)(positions).T, xx.shape)
+            
+            # Draw contours
+            contours = ax.contour(xx, yy, f, levels=levels, cmap=cmap_name, 
+                                 alpha=alpha_contour, linewidths=1.5)
+            ax.clabel(contours, inline=True, fontsize=8)
+        except (ValueError, np.linalg.LinAlgError):
+            # Skip if KDE fails (too few points or singular matrix)
+            pass
+    
+    # Set default colormaps
+    default_hexbin_cmaps = ['inferno', 'viridis', 'plasma', 'magma', 'cividis', 'hot']
+    if cmap is None:
+        if plot_type == 'hexbin':
+            cmap = 'inferno'  # Single plot default
+        else:
+            cmap = None  # Scatter uses categorical colors
+    
+    # Set backgrounds
+    figure_background = 'none' if transparent_background else 'white'
+    axis_background = (0, 0, 0, 0) if transparent_background else 'white'
+    
+    # Determine if we need subplots based on color_by and small_multiples
+    if color_by is not None and small_multiples:
+        categories = sorted(plot_df[color_by].unique())
+        n_cats = len(categories)
+        
+        # Always create vertical stack of plots for small multiples
+        fig, axes = plt.subplots(
+            n_cats, 1,
+            figsize=(figsize[0], figsize[1] * n_cats)
+        )
+        fig.patch.set_facecolor(figure_background)
+        if n_cats == 1:
+            axes = [axes]
+        
+        # Calculate shared scale if needed
+        if shared_scale:
+            x_min, x_max = plot_df[x_col].min(), plot_df[x_col].max()
+            y_min, y_max = plot_df[y_col].min(), plot_df[y_col].max()
+            # Use max range for both axes
+            data_range = max(x_max - x_min, y_max - y_min)
+            x_center = (x_max + x_min) / 2
+            y_center = (y_max + y_min) / 2
+            xlim_shared = (x_center - data_range/2, x_center + data_range/2)
+            ylim_shared = (y_center - data_range/2, y_center + data_range/2)
+        
+        # Handle colormap list for hexbin plots
+        cmap_list = cmap
+        if plot_type == 'hexbin':
+            if isinstance(cmap, str):
+                # Single colormap provided - use different ones for each subplot
+                cmap_list = default_hexbin_cmaps
+            if isinstance(cmap_list, list):
+                # Extend list if needed
+                if len(cmap_list) < n_cats:
+                    cmap_list = (cmap_list * (n_cats // len(cmap_list) + 1))[:n_cats]
+            else:
+                cmap_list = [cmap_list] * n_cats
+        
+        # Plot each category
+        for idx, cat in enumerate(categories):
+            ax = axes[idx]
+            ax.set_facecolor(axis_background)
+            cat_df = plot_df[plot_df[color_by] == cat]
+            
+            if plot_type == 'hexbin':
+                # Use different colormap for each subplot
+                current_cmap = cmap_list[idx] if isinstance(cmap_list, list) else cmap_list
+                norm = LogNorm() if log_scale else None
+                
+                hb = ax.hexbin(
+                    cat_df[x_col],
+                    cat_df[y_col],
+                    gridsize=gridsize,
+                    cmap=current_cmap,
+                    mincnt=1,
+                    norm=norm,
+                    **kwargs
+                )
+                cbar = plt.colorbar(hb, ax=ax, label='Count (log scale)' if log_scale else 'Count')
+                cbar.ax.yaxis.set_tick_params(color=line_color)
+                cbar.ax.yaxis.label.set_color(line_color)
+                plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color=line_color)
+                
+                # Add contours if requested
+                if contour_levels is not None:
+                    add_density_contours(ax, cat_df[x_col].values, cat_df[y_col].values, 
+                                        levels=contour_levels, cmap_name=contour_cmap)
+                
+            elif plot_type == 'scatter':
+                # For scatter in small multiples, use uniform single color per subplot
+                # Use same color palette as non-multiples but cycle through colors
+                color_palette = plt.cm.tab10(idx % 10)
+                ax.scatter(cat_df[x_col], cat_df[y_col], s=s, alpha=alpha, 
+                          color=color_palette, **kwargs)
+                
+                # Add contours if requested
+                if contour_levels is not None:
+                    add_density_contours(ax, cat_df[x_col].values, cat_df[y_col].values,
+                                        levels=contour_levels, cmap_name=contour_cmap)
+            else:
+                raise ValueError(f"plot_type must be 'hexbin' or 'scatter', got '{plot_type}'")
+            
+            # Set limits
+            if shared_scale:
+                ax.set_xlim(xlim_shared if xlim is None else xlim)
+                ax.set_ylim(ylim_shared if ylim is None else ylim)
+            else:
+                if xlim is not None:
+                    ax.set_xlim(xlim)
+                if ylim is not None:
+                    ax.set_ylim(ylim)
+            
+            # Labels and styling
+            ax.set_xlabel(xlabel, color=line_color)
+            ax.set_ylabel(ylabel, color=line_color)
+            ax.set_title(f"{color_by}: {cat}", color=line_color)
+            ax.grid(alpha=0.3, color=line_color)
+            ax.tick_params(colors=line_color)
+            for spine in ax.spines.values():
+                spine.set_edgecolor(line_color)
+        
+        # No unused axes to hide in vertical layout
+        
+    else:
+        # Single plot (pool all data or color by category)
+        fig, ax = plt.subplots(figsize=figsize)
+        fig.patch.set_facecolor(figure_background)
+        ax.set_facecolor(axis_background)
+        
+        if plot_type == 'hexbin':
+            # Density plot - pool all data
+            norm = LogNorm() if log_scale else None
+            hb = ax.hexbin(
+                plot_df[x_col],
+                plot_df[y_col],
+                gridsize=gridsize,
+                cmap=cmap,
+                mincnt=1,
+                norm=norm,
+                **kwargs
+            )
+            cbar = plt.colorbar(hb, ax=ax, label='Count (log scale)' if log_scale else 'Count')
+            cbar.ax.yaxis.set_tick_params(color=line_color)
+            cbar.ax.yaxis.label.set_color(line_color)
+            plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color=line_color)
+            
+            # Add contours if requested
+            if contour_levels is not None:
+                add_density_contours(ax, plot_df[x_col].values, plot_df[y_col].values,
+                                    levels=contour_levels, cmap_name=contour_cmap)
+            
+        elif plot_type == 'scatter':
+            if color_by is not None and color_by in plot_df.columns:
+                # Color by specified column
+                unique_colors = sorted(plot_df[color_by].unique())
+                for color_val in unique_colors:
+                    color_df = plot_df[plot_df[color_by] == color_val]
+                    ax.scatter(
+                        color_df[x_col],
+                        color_df[y_col],
+                        s=s,
+                        alpha=alpha,
+                        label=str(color_val),
+                        **kwargs
+                    )
+                ax.legend(title=color_by, bbox_to_anchor=(1.05, 1), loc='upper left')
+                
+                # Add contours if requested (on all data)
+                if contour_levels is not None:
+                    add_density_contours(ax, plot_df[x_col].values, plot_df[y_col].values,
+                                        levels=contour_levels, cmap_name=contour_cmap)
+            else:
+                # Single color scatter (pool all data)
+                ax.scatter(plot_df[x_col], plot_df[y_col], s=s, alpha=alpha, **kwargs)
+                
+                # Add contours if requested
+                if contour_levels is not None:
+                    add_density_contours(ax, plot_df[x_col].values, plot_df[y_col].values,
+                                        levels=contour_levels, cmap_name=contour_cmap)
+        else:
+            raise ValueError(f"plot_type must be 'hexbin' or 'scatter', got '{plot_type}'")
+        
+        # Set limits
+        if xlim is not None:
+            ax.set_xlim(xlim)
+        if ylim is not None:
+            ax.set_ylim(ylim)
+        
+        # Labels and styling
+        ax.set_xlabel(xlabel, color=line_color)
+        ax.set_ylabel(ylabel, color=line_color)
+        ax.grid(alpha=0.3, color=line_color)
+        ax.tick_params(colors=line_color)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(line_color)
+        axes = ax
+    
+    # Set overall title
+    if title is not None:
+        fig.suptitle(title, fontsize=14, fontweight='bold', color=line_color)
+    
+    plt.tight_layout()
+    
+    # Save if requested
+    svg_data = None
+    if save_path is not None:
+        ext = export_format.lower()
+        if ext not in ['png', 'svg']:
+            print("Invalid export format specified. Defaulting to 'png'.")
+            ext = 'png'
+        
+        # Check if save_path is a directory or a full file path
+        if os.path.isdir(save_path) or (not os.path.exists(save_path) and not save_path.endswith(('.png', '.svg'))):
+            # It's a directory - generate filename automatically
+            save_dir = save_path
+            
+            # Build descriptive filename
+            filename_parts = [f"{x_col}_vs_{y_col}", plot_type]
+            if color_by is not None:
+                filename_parts.append(f"by_{color_by}")
+            if small_multiples:
+                filename_parts.append("multiples")
+            if scale_data:
+                filename_parts.append(scale_method)
+            
+            filename = "_".join(filename_parts) + f".{ext}"
+            save_path = os.path.join(save_dir, filename)
+        else:
+            # It's a full file path - use as is but ensure correct extension
+            save_dir = os.path.dirname(save_path)
+            if not save_path.endswith(f'.{ext}'):
+                save_path = save_path.rsplit('.', 1)[0] + f'.{ext}' if '.' in save_path else f'{save_path}.{ext}'
+        
+        # Create directory if it doesn't exist
+        if save_dir and not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        
+        fig.savefig(
+            save_path,
+            transparent=transparent_background,
+            dpi=dpi,
+            format=ext,
+            bbox_inches='tight'
+        )
+        
+        # SVG post-processing
+        if ext == 'svg':
+            try:
+                with open(save_path, encoding='utf-8') as f:
+                    svg_data = f.read()
+                # Remove <clipPath> definitions, metadata, XML declaration, and DOCTYPE
+                svg_data = re.sub(
+                    r'<clipPath id="[^"]*">.*?</clipPath>', '', svg_data, flags=re.DOTALL
+                )
+                svg_data = re.sub(r'\s*clip-path="url\([^)]*\)"', '', svg_data)
+                svg_data = re.sub(
+                    r'<metadata>.*?</metadata>', '', svg_data, flags=re.DOTALL
+                )
+                svg_data = re.sub(r'<\?xml[^>]*\?>', '', svg_data, flags=re.DOTALL)
+                svg_data = re.sub(r'<!DOCTYPE[^>]*>', '', svg_data, flags=re.DOTALL)
+                svg_data = svg_data.strip()
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    f.write(svg_data)
+            except Exception as e:
+                print(f"Warning: SVG post-processing failed: {e}")
+        
+        print(f"Figure saved to: {save_path}")
+    
+    if return_svg and svg_data:
+        return fig, axes, svg_data
+    else:
+        return fig, axes
+
+
+def interactive_roi_gating(
+    df,
+    x_col,
+    y_col,
+    color_by=None,
+    scale_data=False,
+    scale_method='standard',
+    title=None,
+    point_size=3,
+    opacity=0.6,
+    contour_density=True,
+    n_contours=10,
+    contour_colorscale='Viridis',
+    height=700,
+    width=900,
+    show_legend=True,
+    sample_frac=None,
+    colorscale='Plotly',
+):
+    """
+    Interactive FACS-style gating plot using Plotly with polygonal ROI selection.
+    
+    This function creates an interactive scatter plot where you can draw polygonal 
+    regions of interest (ROIs) to gate/filter your data, similar to FACS analysis.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing the data to plot.
+    x_col : str
+        Column name for x-axis.
+    y_col : str
+        Column name for y-axis.
+    color_by : str, optional
+        Column name to color points by. If None, all points are the same color.
+        Can be categorical or continuous. Default is None.
+    scale_data : bool, optional
+        If True, applies scaling to x_col and y_col before plotting. Default is False.
+    scale_method : str, optional
+        Scaling method if scale_data=True. Options: 'standard', 'minmax', 
+        'robust', 'standard_minmax'. Default is 'standard'.
+    title : str, optional
+        Plot title. Default is auto-generated from column names.
+    point_size : int, optional
+        Size of scatter points. Default is 3.
+    opacity : float, optional
+        Opacity of scatter points (0-1). Default is 0.6.
+    contour_density : bool, optional
+        If True, adds density contours to the plot. Default is True.
+    n_contours : int, optional
+        Number of contour levels to show if contour_density=True. Default is 10.
+    contour_colorscale : str, optional
+        Colorscale for contours. Default is 'Viridis'.
+    height : int, optional
+        Plot height in pixels. Default is 700.
+    width : int, optional
+        Plot width in pixels. Default is 900.
+    show_legend : bool, optional
+        Whether to show the legend. Default is True.
+    sample_frac : float, optional
+        Fraction of data to plot (for very large datasets). If None, plots all data.
+        Example: 0.1 plots 10% of the data. Default is None.
+    colorscale : str, optional
+        Colorscale for continuous color_by values. Options: 'Plotly', 'Viridis', 
+        'Cividis', 'Inferno', 'Magma', 'Plasma', 'Turbo'. Default is 'Plotly'.
+    
+    Returns
+    -------
+    fig : plotly.graph_objects.Figure
+        The interactive Plotly figure. Use fig.show() to display.
+        
+    Notes
+    -----
+    How to use:
+    1. Run the function to display the interactive plot
+    2. Click the "Draw a closed shape" tool in the toolbar (lasso/polygon icon)
+    3. Click points to draw your ROI polygon
+    4. Double-click to close the polygon
+    5. The selected points are automatically highlighted
+    6. Use fig.data to access the ROI coordinates and selected data
+    
+    To extract ROI data programmatically:
+    ```python
+    # After drawing ROIs, extract the selection:
+    from shapely.geometry import Point, Polygon
+    
+    # Get ROI coordinates from the drawn shape
+    # You can access selectedData from the figure or export via browser
+    
+    # Or use the companion function: extract_roi_data(df, roi_coords, x_col, y_col)
+    ```
+    
+    Examples
+    --------
+    >>> # Basic interactive plot
+    >>> fig = interactive_roi_gating(df, 'PC1', 'PC2')
+    >>> fig.show()
+    
+    >>> # Colored by molecule type with contours
+    >>> fig = interactive_roi_gating(df, 'diffusion_coefficient', 'radius_of_gyration',
+    ...                               color_by='mol', contour_density=True)
+    >>> fig.show()
+    
+    >>> # With data scaling
+    >>> fig = interactive_roi_gating(df, 'x_um', 'y_um',
+    ...                               scale_data=True, scale_method='standard')
+    >>> fig.show()
+    
+    >>> # For very large datasets, sample the data
+    >>> fig = interactive_roi_gating(df, 'PC1', 'PC2', sample_frac=0.1)
+    >>> fig.show()
+    """
+    try:
+        import plotly.graph_objects as go
+        import plotly.express as px
+        from plotly.subplots import make_subplots
+    except ImportError:
+        raise ImportError(
+            "Plotly is required for interactive gating. "
+            "Install with: pip install plotly"
+        )
+    
+    # Create a copy of the dataframe
+    plot_df = df.copy()
+    
+    # Sample data if requested (for performance with large datasets)
+    if sample_frac is not None:
+        if 0 < sample_frac < 1:
+            plot_df = plot_df.sample(frac=sample_frac, random_state=42)
+            print(f"📊 Sampled {len(plot_df):,} points ({sample_frac*100:.1f}% of data)")
+    
+    # Apply scaling if requested
+    if scale_data:
+        plot_df = center_scale_data(
+            plot_df,
+            columns=[x_col, y_col],
+            method=scale_method,
+            copy=False
+        )
+        print(f"✓ Data scaled using '{scale_method}' method")
+    
+    # Set default title
+    if title is None:
+        title = f"{y_col} vs {x_col}"
+        if color_by:
+            title += f" (colored by {color_by})"
+    
+    # Create the figure
+    fig = go.Figure()
+    
+    # Determine if color_by is categorical or continuous
+    is_categorical = False
+    if color_by is not None:
+        if plot_df[color_by].dtype == 'object' or plot_df[color_by].nunique() < 20:
+            is_categorical = True
+    
+    # Add scatter plot
+    if color_by is None:
+        # Single color scatter
+        fig.add_trace(go.Scattergl(
+            x=plot_df[x_col],
+            y=plot_df[y_col],
+            mode='markers',
+            marker=dict(
+                size=point_size,
+                color='#636EFA',  # Plotly default blue
+                opacity=opacity,
+                line=dict(width=0)
+            ),
+            name='Data',
+            showlegend=show_legend,
+            hovertemplate=(
+                f'{x_col}: %{{x:.3f}}<br>'
+                f'{y_col}: %{{y:.3f}}<br>'
+                '<extra></extra>'
+            )
+        ))
+    elif is_categorical:
+        # Categorical coloring - one trace per category
+        categories = sorted(plot_df[color_by].unique())
+        colors = px.colors.qualitative.Plotly
+        if len(categories) > len(colors):
+            colors = px.colors.qualitative.Dark24
+        
+        for i, cat in enumerate(categories):
+            cat_df = plot_df[plot_df[color_by] == cat]
+            fig.add_trace(go.Scattergl(
+                x=cat_df[x_col],
+                y=cat_df[y_col],
+                mode='markers',
+                marker=dict(
+                    size=point_size,
+                    color=colors[i % len(colors)],
+                    opacity=opacity,
+                    line=dict(width=0)
+                ),
+                name=str(cat),
+                showlegend=show_legend,
+                hovertemplate=(
+                    f'{color_by}: {cat}<br>'
+                    f'{x_col}: %{{x:.3f}}<br>'
+                    f'{y_col}: %{{y:.3f}}<br>'
+                    '<extra></extra>'
+                )
+            ))
+    else:
+        # Continuous coloring
+        fig.add_trace(go.Scattergl(
+            x=plot_df[x_col],
+            y=plot_df[y_col],
+            mode='markers',
+            marker=dict(
+                size=point_size,
+                color=plot_df[color_by],
+                colorscale=colorscale,
+                opacity=opacity,
+                showscale=True,
+                colorbar=dict(title=color_by),
+                line=dict(width=0)
+            ),
+            name='Data',
+            showlegend=False,
+            hovertemplate=(
+                f'{x_col}: %{{x:.3f}}<br>'
+                f'{y_col}: %{{y:.3f}}<br>'
+                f'{color_by}: %{{marker.color:.3f}}<br>'
+                '<extra></extra>'
+            )
+        ))
+    
+    # Add density contours if requested
+    if contour_density:
+        try:
+            from scipy.stats import gaussian_kde
+            
+            # Calculate 2D density
+            x_data = plot_df[x_col].values
+            y_data = plot_df[y_col].values
+            
+            # Remove NaN values
+            mask = ~(np.isnan(x_data) | np.isnan(y_data))
+            x_data = x_data[mask]
+            y_data = y_data[mask]
+            
+            if len(x_data) > 10:
+                # Create grid for contours
+                x_min, x_max = x_data.min(), x_data.max()
+                y_min, y_max = y_data.min(), y_data.max()
+                x_range = x_max - x_min
+                y_range = y_max - y_min
+                
+                # Add padding
+                x_min -= x_range * 0.05
+                x_max += x_range * 0.05
+                y_min -= y_range * 0.05
+                y_max += y_range * 0.05
+                
+                # Create meshgrid
+                x_grid = np.linspace(x_min, x_max, 100)
+                y_grid = np.linspace(y_min, y_max, 100)
+                xx, yy = np.meshgrid(x_grid, y_grid)
+                
+                # Calculate density
+                positions = np.vstack([xx.ravel(), yy.ravel()])
+                kernel = gaussian_kde(np.vstack([x_data, y_data]))
+                density = np.reshape(kernel(positions).T, xx.shape)
+                
+                # Add contour
+                fig.add_trace(go.Contour(
+                    x=x_grid,
+                    y=y_grid,
+                    z=density,
+                    colorscale=contour_colorscale,
+                    opacity=0.4,
+                    ncontours=n_contours,
+                    showscale=False,
+                    hoverinfo='skip',
+                    line=dict(width=1),
+                    name='Density'
+                ))
+        except Exception as e:
+            print(f"Warning: Could not add density contours: {e}")
+    
+    # Update layout with drawing tools
+    fig.update_layout(
+        title=dict(
+            text=title,
+            x=0.5,
+            xanchor='center',
+            font=dict(size=16)
+        ),
+        xaxis=dict(
+            title=x_col,
+            showgrid=True,
+            gridcolor='lightgray',
+            zeroline=True,
+            zerolinecolor='lightgray'
+        ),
+        yaxis=dict(
+            title=y_col,
+            showgrid=True,
+            gridcolor='lightgray',
+            zeroline=True,
+            zerolinecolor='lightgray'
+        ),
+        height=height,
+        width=width,
+        hovermode='closest',
+        dragmode='drawclosedpath',  # Enable polygon drawing by default
+        newshape=dict(
+            line=dict(color='red', width=3),
+            fillcolor='rgba(255, 0, 0, 0.1)',
+            opacity=0.5
+        ),
+        modebar_add=[
+            'drawclosedpath',
+            'drawopenpath', 
+            'drawrect',
+            'eraseshape'
+        ],
+        template='plotly_white',
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="right",
+            x=0.99
+        )
+    )
+    
+    # Add config for better interactivity
+    config = {
+        'modeBarButtonsToAdd': ['drawclosedpath', 'eraseshape'],
+        'displaylogo': False,
+        'toImageButtonOptions': {
+            'format': 'png',
+            'filename': f'{x_col}_vs_{y_col}_gating',
+            'height': height,
+            'width': width,
+            'scale': 2
+        }
+    }
+    
+    print("\n" + "="*80)
+    print("🎨 INTERACTIVE GATING PLOT")
+    print("="*80)
+    print(f"📊 Plotting {len(plot_df):,} points")
+    print(f"📈 X-axis: {x_col}")
+    print(f"📈 Y-axis: {y_col}")
+    if color_by:
+        print(f"🎨 Colored by: {color_by}")
+    print("\n" + "─"*80)
+    print("🖱️  HOW TO USE:")
+    print("─"*80)
+    print("1. Click 'Draw a closed shape' button in the toolbar (top-right)")
+    print("2. Click points on the plot to draw your ROI polygon")
+    print("3. Double-click to close the polygon")
+    print("4. Draw multiple ROIs if needed")
+    print("5. Use 'Erase active shape' to remove ROIs")
+    print("6. Use extract_roi_data() to get the gated data (see below)")
+    print("="*80 + "\n")
+    
+    # Store the dataframe in the figure for later extraction
+    fig._df = plot_df
+    fig._x_col = x_col
+    fig._y_col = y_col
+    
+    return fig
+
+
+def extract_roi_data(fig=None, df=None, roi_coords=None, x_col=None, y_col=None):
+    """
+    Extract data points within drawn ROI polygons.
+    
+    Parameters
+    ----------
+    fig : plotly.graph_objects.Figure, optional
+        The figure object returned by interactive_roi_gating(). 
+        If provided, uses the stored dataframe and coordinates.
+    df : pd.DataFrame, optional
+        DataFrame to filter. Required if fig is not provided.
+    roi_coords : list of tuples, optional
+        List of (x, y) coordinates defining the ROI polygon.
+        Required if fig is not provided.
+    x_col : str, optional
+        Column name for x-axis. Required if fig is not provided.
+    y_col : str, optional
+        Column name for y-axis. Required if fig is not provided.
+    
+    Returns
+    -------
+    pd.DataFrame
+        Filtered dataframe containing only points within the ROI(s).
+    dict
+        Dictionary with ROI statistics and metadata.
+    
+    Examples
+    --------
+    >>> # Method 1: After drawing ROIs in the plot, manually provide coordinates
+    >>> roi_coords = [(0.5, 0.5), (1.5, 0.5), (1.5, 1.5), (0.5, 1.5)]
+    >>> filtered_df, info = extract_roi_data(df=my_df, roi_coords=roi_coords, 
+    ...                                       x_col='PC1', y_col='PC2')
+    
+    >>> # Method 2: With saved ROI coordinates from multiple gates
+    >>> gate1 = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    >>> gate2 = [(2, 2), (3, 2), (3, 3), (2, 3)]
+    >>> df_gate1, _ = extract_roi_data(df=my_df, roi_coords=gate1, x_col='PC1', y_col='PC2')
+    >>> df_gate2, _ = extract_roi_data(df=my_df, roi_coords=gate2, x_col='PC1', y_col='PC2')
+    """
+    try:
+        from shapely.geometry import Point, Polygon
+    except ImportError:
+        raise ImportError(
+            "Shapely is required for ROI extraction. "
+            "Install with: pip install shapely"
+        )
+    
+    # Get data from figure if provided
+    if fig is not None and hasattr(fig, '_df'):
+        df = fig._df
+        x_col = fig._x_col
+        y_col = fig._y_col
+    
+    # Validate inputs
+    if df is None or x_col is None or y_col is None:
+        raise ValueError(
+            "Must provide either 'fig' from interactive_roi_gating(), "
+            "or all of: df, x_col, y_col"
+        )
+    
+    if roi_coords is None:
+        print("⚠️  No ROI coordinates provided.")
+        print("    After drawing ROIs in the plot, you need to:")
+        print("    1. Manually copy the coordinates from the drawn shapes, or")
+        print("    2. Use Plotly's relayout_data callback to capture the shape coordinates")
+        print("\n    Example:")
+        print("    roi_coords = [(x1, y1), (x2, y2), (x3, y3), ...]")
+        print("    filtered_df, info = extract_roi_data(df=df, roi_coords=roi_coords,")
+        print("                                          x_col='PC1', y_col='PC2')")
+        return df.iloc[:0], {}  # Return empty dataframe
+    
+    # Create polygon from coordinates
+    try:
+        polygon = Polygon(roi_coords)
+    except Exception as e:
+        raise ValueError(f"Invalid ROI coordinates: {e}")
+    
+    # Filter points within polygon
+    points = [Point(x, y) for x, y in zip(df[x_col], df[y_col])]
+    mask = [polygon.contains(point) for point in points]
+    
+    filtered_df = df[mask].copy()
+    
+    # Calculate statistics
+    n_total = len(df)
+    n_selected = len(filtered_df)
+    percent_selected = (n_selected / n_total * 100) if n_total > 0 else 0
+    
+    info = {
+        'n_total': n_total,
+        'n_selected': n_selected,
+        'percent_selected': percent_selected,
+        'roi_coords': roi_coords,
+        'x_col': x_col,
+        'y_col': y_col
+    }
+    
+    print(f"✅ ROI Filtering Complete")
+    print(f"   Total points: {n_total:,}")
+    print(f"   Selected points: {n_selected:,} ({percent_selected:.2f}%)")
+    
+    return filtered_df, info
+
+
+def save_roi_coordinates(roi_coords, filename, save_path=None):
+    """
+    Save ROI coordinates to a file for later use.
+    
+    Parameters
+    ----------
+    roi_coords : list of tuples
+        List of (x, y) coordinates defining the ROI polygon.
+    filename : str
+        Name for the saved file (without extension).
+    save_path : str, optional
+        Directory to save the file. If None, saves to current directory.
+    
+    Examples
+    --------
+    >>> roi = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    >>> save_roi_coordinates(roi, 'my_gate_1', save_path='./gates/')
+    """
+    import json
+    
+    if save_path is None:
+        save_path = '.'
+    
+    os.makedirs(save_path, exist_ok=True)
+    
+    filepath = os.path.join(save_path, f'{filename}.json')
+    
+    with open(filepath, 'w') as f:
+        json.dump(roi_coords, f, indent=2)
+    
+    print(f"✅ ROI coordinates saved to: {filepath}")
+
+
+def load_roi_coordinates(filename, save_path=None):
+    """
+    Load ROI coordinates from a saved file.
+    
+    Parameters
+    ----------
+    filename : str
+        Name of the saved file (with or without .json extension).
+    save_path : str, optional
+        Directory where the file is saved. If None, looks in current directory.
+    
+    Returns
+    -------
+    list of tuples
+        List of (x, y) coordinates defining the ROI polygon.
+    
+    Examples
+    --------
+    >>> roi = load_roi_coordinates('my_gate_1', save_path='./gates/')
+    >>> filtered_df, _ = extract_roi_data(df=df, roi_coords=roi, x_col='PC1', y_col='PC2')
+    """
+    import json
+    
+    if save_path is None:
+        save_path = '.'
+    
+    if not filename.endswith('.json'):
+        filename += '.json'
+    
+    filepath = os.path.join(save_path, filename)
+    
+    with open(filepath, 'r') as f:
+        roi_coords = json.load(f)
+    
+    print(f"✅ ROI coordinates loaded from: {filepath}")
+    print(f"   {len(roi_coords)} vertices")
+    
+    return roi_coords
 
 

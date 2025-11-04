@@ -3,6 +3,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import polars as pl
 import torch
 import torch.nn.functional as F
 from sklearn.cluster import KMeans
@@ -24,15 +25,113 @@ class TransformerMotionEncoder(nn.Module):
         )
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.norm = nn.LayerNorm(embed_dim)
+        
+        # Store attention weights if needed (for interpretability)
+        self.store_attention = False
+        self.attention_weights = None
 
-    def forward(self, x):  # x: [B, T, 3]
+    def forward(self, x, return_attention=False):  # x: [B, T, 3]
+        """
+        Forward pass with optional attention weight extraction.
+        
+        Args:
+            x: Input tensor [B, T, input_dim]
+            return_attention: If True, also return attention weights (slower)
+            
+        Returns:
+            embeddings: [B, embed_dim]
+            attention_weights (optional): List of attention weight tensors per layer
+        """
         B, T, _ = x.shape
         x = self.input_proj(x)  # [B, T, embed_dim]
         cls_tokens = self.cls_token.expand(B, -1, -1)  # [B, 1, embed_dim]
         x = torch.cat((cls_tokens, x), dim=1)  # [B, T+1, embed_dim]
         x = self.transformer_encoder(x.permute(1, 0, 2))  # [T+1, B, embed_dim]
         x = x[0]  # take CLS token [B, embed_dim]
+        
+        # Note: Standard PyTorch TransformerEncoder doesn't expose attention weights
+        # For full attention extraction, you'd need to use a custom encoder
+        # or access layer internals during forward pass
+        
+        if return_attention:
+            # This is a placeholder - actual implementation would need custom encoder
+            # See extract_attention_weights() method for practical alternatives
+            print("⚠️ Standard TransformerEncoder doesn't expose attention weights")
+            print("💡 Use extract_attention_weights() method for interpretability")
+            return self.norm(x), None
+        
         return self.norm(x)
+    
+    def extract_attention_weights(self, x, method='gradient'):
+        """
+        Extract interpretable attention/importance scores from the model.
+        
+        This provides alternatives to true attention weights for understanding
+        what the model focuses on.
+        
+        Args:
+            x: Input tensor [B, T, input_dim]
+            method: 'gradient' or 'leave_one_out'
+            
+        Returns:
+            importance_scores: [B, T] tensor showing frame importance
+        """
+        if method == 'gradient':
+            return self._gradient_based_importance(x)
+        elif method == 'leave_one_out':
+            return self._leave_one_out_importance(x)
+        else:
+            raise ValueError(f"Unknown method: {method}")
+    
+    def _gradient_based_importance(self, x):
+        """
+        Compute frame importance using input gradients.
+        Shows which frames, if perturbed, would most change the embedding.
+        """
+        self.eval()
+        x_requires_grad = x.clone().requires_grad_(True)
+        
+        # Forward pass
+        embedding = self.forward(x_requires_grad)
+        
+        # Compute gradient of embedding norm w.r.t. input
+        embedding_norm = embedding.norm(dim=1).sum()
+        embedding_norm.backward()
+        
+        # Gradient magnitude = importance
+        importance = x_requires_grad.grad.abs().mean(dim=2)  # [B, T]
+        
+        return importance.detach()
+    
+    def _leave_one_out_importance(self, x):
+        """
+        Compute frame importance using leave-one-out analysis.
+        Shows which frames, if removed, would most change the embedding.
+        """
+        self.eval()
+        B, T, C = x.shape
+        
+        with torch.no_grad():
+            # Get baseline embedding
+            embedding_full = self.forward(x)
+            
+            # Test removing each frame
+            importance_scores = []
+            for t in range(T):
+                # Mask out frame t
+                x_masked = x.clone()
+                x_masked[:, t, :] = 0
+                
+                # Get embedding without this frame
+                embedding_masked = self.forward(x_masked)
+                
+                # Compute change in embedding
+                importance = torch.norm(embedding_full - embedding_masked, dim=1)
+                importance_scores.append(importance)
+            
+            importance_scores = torch.stack(importance_scores, dim=1)  # [B, T]
+        
+        return importance_scores
 
 
 class TimeWindowDataset(Dataset):
@@ -48,14 +147,15 @@ class TimeWindowDataset(Dataset):
 
 class PandasTrajectoryDataset(Dataset):
     """
-    Dataset class for extracting time windows from pandas trajectory dataframe.
+    Dataset class for extracting time windows from trajectory dataframe.
     Creates sequences of (dx, dy, direction) motion features.
+    Supports both Pandas and Polars DataFrames natively.
     """
 
     def __init__(self, instant_df, window_size=60, overlap=30, min_track_length=60):
         """
         Args:
-            instant_df: DataFrame with trajectory data
+            instant_df: DataFrame with trajectory data (Pandas or Polars)
             window_size: Number of frames per window
             overlap: Number of overlapping frames between windows
             min_track_length: Minimum track length to consider
@@ -65,9 +165,13 @@ class PandasTrajectoryDataset(Dataset):
         self.overlap = overlap
         self.step_size = window_size - overlap
         self.min_track_length = min_track_length
+        self.is_polars = isinstance(instant_df, pl.DataFrame)
 
         # Sort by unique_id and frame to ensure temporal order
-        self.df = instant_df.sort_values(["unique_id", "frame"]).reset_index(drop=True)
+        if self.is_polars:
+            self.df = instant_df.sort(["unique_id", "frame"])
+        else:
+            self.df = instant_df.sort_values(["unique_id", "frame"]).reset_index(drop=True)
 
         # Generate windows
         self.windows = self._generate_windows()
@@ -76,49 +180,93 @@ class PandasTrajectoryDataset(Dataset):
         """Generate all valid windows from the trajectory data"""
         windows = []
 
-        # Group by track ID
-        for unique_id, track_data in self.df.groupby("unique_id"):
-            track_data = track_data.sort_values("frame").reset_index(drop=True)
+        if self.is_polars:
+            # Use Polars native operations
+            for unique_id in self.df["unique_id"].unique():
+                track_data = self.df.filter(pl.col("unique_id") == unique_id).sort("frame")
+                
+                # Skip short tracks
+                if len(track_data) < self.min_track_length:
+                    continue
 
-            # Skip short tracks
-            if len(track_data) < self.min_track_length:
-                continue
+                # Convert to pandas for window extraction (small per-track conversion)
+                track_pandas = track_data.to_pandas()
+                
+                # Generate overlapping windows for this track
+                for start_idx in range(
+                    0, len(track_pandas) - self.window_size + 1, self.step_size
+                ):
+                    end_idx = start_idx + self.window_size
+                    window_data = track_pandas.iloc[start_idx:end_idx].copy()
 
-            # Generate overlapping windows for this track
-            for start_idx in range(
-                0, len(track_data) - self.window_size + 1, self.step_size
-            ):
-                end_idx = start_idx + self.window_size
-                window_data = track_data.iloc[start_idx:end_idx].copy()
+                    # Extract motion features for this window
+                    features = self._extract_features(window_data)
 
-                # Extract motion features for this window
-                features = self._extract_features(window_data)
+                    if features is not None:
+                        # Calculate time_window_num EXACTLY like features.py: start // (window_size - overlap)
+                        time_window_num = start_idx // self.step_size
 
-                if features is not None:
-                    # Calculate time_window_num EXACTLY like features.py: start // (window_size - overlap)
-                    time_window_num = start_idx // self.step_size
+                        # Create window_uid that matches features.py format: unique_id_timewindow_framestart_frameend
+                        frame_start = window_data.iloc[0]["frame"]
+                        frame_end = window_data.iloc[-1]["frame"]
+                        window_uid = (
+                            f"{unique_id}_{time_window_num}_{frame_start}_{frame_end}"
+                        )
 
-                    # Create window_uid that matches features.py format: unique_id_timewindow_framestart_frameend
-                    frame_start = window_data.iloc[0]["frame"]
-                    frame_end = window_data.iloc[-1]["frame"]
-                    window_uid = (
-                        f"{unique_id}_{time_window_num}_{frame_start}_{frame_end}"
-                    )
+                        windows.append(
+                            {
+                                "features": features,
+                                "unique_id": unique_id,
+                                "start_frame": frame_start,
+                                "end_frame": frame_end,
+                                "window_idx": len(windows),
+                                "window_uid": window_uid,
+                                "time_window": time_window_num,
+                                "condition": window_data["condition"].iloc[0],
+                            }
+                        )
+        else:
+            # Use Pandas operations
+            for unique_id, track_data in self.df.groupby("unique_id"):
+                track_data = track_data.sort_values("frame").reset_index(drop=True)
 
-                    windows.append(
-                        {
-                            "features": features,
-                            "unique_id": unique_id,
-                            "start_frame": frame_start,
-                            "end_frame": frame_end,
-                            "window_idx": len(windows),
-                            "window_uid": window_uid,  # NEW: Add window_uid for mapping
-                            "time_window": time_window_num,  # NEW: Add time window number
-                            "condition": track_data["condition"].iloc[
-                                0
-                            ],  # Store condition for analysis
-                        }
-                    )
+                # Skip short tracks
+                if len(track_data) < self.min_track_length:
+                    continue
+
+                # Generate overlapping windows for this track
+                for start_idx in range(
+                    0, len(track_data) - self.window_size + 1, self.step_size
+                ):
+                    end_idx = start_idx + self.window_size
+                    window_data = track_data.iloc[start_idx:end_idx].copy()
+
+                    # Extract motion features for this window
+                    features = self._extract_features(window_data)
+
+                    if features is not None:
+                        # Calculate time_window_num EXACTLY like features.py: start // (window_size - overlap)
+                        time_window_num = start_idx // self.step_size
+
+                        # Create window_uid that matches features.py format: unique_id_timewindow_framestart_frameend
+                        frame_start = window_data.iloc[0]["frame"]
+                        frame_end = window_data.iloc[-1]["frame"]
+                        window_uid = (
+                            f"{unique_id}_{time_window_num}_{frame_start}_{frame_end}"
+                        )
+
+                        windows.append(
+                            {
+                                "features": features,
+                                "unique_id": unique_id,
+                                "start_frame": frame_start,
+                                "end_frame": frame_end,
+                                "window_idx": len(windows),
+                                "window_uid": window_uid,
+                                "time_window": time_window_num,
+                                "condition": track_data["condition"].iloc[0],
+                            }
+                        )
 
         return windows
 
@@ -580,16 +728,23 @@ def create_smart_train_val_test_split(
     test_split=0.2,
     split_strategy="hybrid_cell",
     random_seed=42,
+    condition_factors=None,
+    cells_per_condition=8,
+    test_condition_col=None,
 ):
     """
     Create smart train/validation/test splits with multiple strategies.
 
     Args:
-        instant_df: DataFrame with trajectory data
+        instant_df: DataFrame with trajectory data (Pandas or Polars)
         val_split: Fraction for validation set
         test_split: Fraction for test set
-        split_strategy: 'hybrid_cell', 'stratified', 'random', 'cell_balanced'
+        split_strategy: 'hybrid_cell', 'enhanced_hybrid_cell', 'fixed_cells', 'stratified', 'random', 'cell_balanced'
         random_seed: Random seed for reproducibility
+        condition_factors: List of column names to use for condition balancing 
+                          (e.g., ['cell', 'type', 'mol']). If None, uses default config.
+        cells_per_condition: Number of cells per condition for test set (used with 'fixed_cells' strategy)
+        test_condition_col: Column name to use for test set selection (if None, uses 'condition')
 
     Returns:
         train_df, val_df, test_df: Split dataframes
@@ -598,19 +753,67 @@ def create_smart_train_val_test_split(
     """
     np.random.seed(random_seed)
 
-    # Get track and cell information
-    track_info = (
-        instant_df.groupby("unique_id")
-        .agg(
-            {
-                "condition": "first",
-                "filename": "first",  # Cell identifier
-                "frame": "count",  # Track length
-            }
+    # Handle both Polars and Pandas DataFrames natively
+    is_polars = isinstance(instant_df, pl.DataFrame)
+    
+    # Handle condition_factors configuration
+    if condition_factors is None:
+        try:
+            from . import config
+            condition_factors = config.ANALYSIS_PARAMS["split_params"]["condition_factors"]
+        except (ImportError, KeyError):
+            # Fallback to default
+            condition_factors = ["cell", "type", "mol"]
+    
+    # Create class balance label column if using enhanced_hybrid_cell or fixed_cells strategy
+    if split_strategy in ["enhanced_hybrid_cell", "fixed_cells"]:
+        print(f"🔧 Creating class balance labels using factors: {condition_factors}")
+        
+        if is_polars:
+            # Create class balance label using Polars
+            condition_expr = pl.concat_str([pl.col(factor) for factor in condition_factors], separator="_")
+            working_df = instant_df.with_columns(condition_expr.alias("class_balance_label"))
+        else:
+            # Create class balance label using Pandas
+            working_df = instant_df.copy()
+            working_df["class_balance_label"] = working_df[condition_factors].apply(
+                lambda row: "_".join(row.astype(str)), axis=1
+            )
+        
+        print(f"   ✅ Created class balance labels (sample): {working_df['class_balance_label'].unique()[:5].to_list() if is_polars else working_df['class_balance_label'].unique()[:5].tolist()}")
+    else:
+        # Use existing condition column
+        working_df = instant_df
+    
+    # Always use original condition column for track info
+    condition_col = "condition"
+    
+    if is_polars:
+        # Get track and cell information using Polars
+        track_info = (
+            working_df
+            .group_by("unique_id")
+            .agg([
+                pl.col(condition_col).first().alias("condition"),
+                pl.col("filename").first().alias("filename"),
+                pl.col("frame").count().alias("track_length")
+            ])
+            .to_pandas()  # Convert only this summary to pandas for processing logic
         )
-        .reset_index()
-    )
-    track_info.columns = ["unique_id", "condition", "filename", "track_length"]
+    else:
+        # Get track and cell information using Pandas
+        track_info = (
+            working_df.groupby("unique_id")
+            .agg(
+                {
+                    condition_col: "first",
+                    "filename": "first",  # Cell identifier
+                    "frame": "count",  # Track length
+                }
+            )
+            .reset_index()
+        )
+        track_info.columns = ["unique_id", "condition", "filename", "track_length"]
 
     print("📊 Data Overview:")
     print(f"   Total tracks: {len(track_info)}")
@@ -618,7 +821,146 @@ def create_smart_train_val_test_split(
     print(f"   Unique cells (filenames): {track_info['filename'].nunique()}")
     print(f"   Strategy: {split_strategy}")
 
-    if split_strategy == "hybrid_cell":
+    if split_strategy == "fixed_cells":
+        # 🎯 FIXED CELLS STRATEGY: Fixed number of cells per condition in test set
+        print(f"\n🎯 Fixed Cells Strategy:")
+        print(f"   - Test set: {cells_per_condition} complete cells per condition")
+        print("   - Train/Val: Remaining data split by tracks (not cells)")
+        
+        # Use specified condition column for test cell selection
+        test_condition_col = test_condition_col or "condition"
+        
+        # Get all available conditions from test condition column
+        if is_polars:
+            all_conditions = working_df[test_condition_col].unique().to_list()
+        else:
+            all_conditions = working_df[test_condition_col].unique().tolist()
+        
+        print(f"\n🔍 Selecting {cells_per_condition} cells per condition...")
+        print(f"   Available conditions: {all_conditions}")
+        
+        # Group cells by test condition column
+        if is_polars:
+            cells_by_condition = (
+                working_df.group_by(["filename", test_condition_col])
+                .agg([
+                    pl.col("unique_id").n_unique().alias("n_tracks"),
+                    pl.len().alias("total_frames")
+                ])
+                .to_pandas()
+            )
+        else:
+            cells_by_condition = (
+                working_df.groupby(["filename", test_condition_col])
+                .agg({"unique_id": "nunique", "frame": "count"})
+                .reset_index()
+            )
+            cells_by_condition.columns = ["filename", test_condition_col, "n_tracks", "total_frames"]
+        
+        # Select cells for test set
+        test_cells = []
+        cells_selected_per_condition = {}
+        
+        for condition in all_conditions:
+            condition_cells = cells_by_condition[
+                cells_by_condition[test_condition_col] == condition
+            ].copy()
+            
+            # Sort by number of tracks (prefer cells with more tracks)
+            condition_cells = condition_cells.sort_values("n_tracks", ascending=False)
+            
+            # Select up to cells_per_condition cells
+            selected_cells = condition_cells.head(cells_per_condition)
+            selected_filenames = selected_cells["filename"].tolist()
+            
+            test_cells.extend(selected_filenames)
+            cells_selected_per_condition[condition] = len(selected_cells)
+            
+            print(f"   ✅ {condition}: Selected {len(selected_cells)} cells")
+            for _, cell in selected_cells.iterrows():
+                print(f"      - {cell['filename']}: {cell['n_tracks']} tracks")
+        
+        print(f"\n📊 Test Set Summary:")
+        if is_polars:
+            # Create a nice summary table using Polars
+            summary_data = []
+            for condition, count in cells_selected_per_condition.items():
+                summary_data.append({
+                    "condition": condition,
+                    "cells_selected": count,
+                    "target": cells_per_condition,
+                    "status": "✅ Complete" if count == cells_per_condition else f"⚠️ Only {count}"
+                })
+            summary_df = pl.DataFrame(summary_data)
+            print(summary_df)
+        else:
+            for condition, count in cells_selected_per_condition.items():
+                status = "✅ Complete" if count == cells_per_condition else f"⚠️ Only {count}"
+                print(f"   {condition}: {count}/{cells_per_condition} cells {status}")
+        
+        # Get test tracks (complete selected cells)
+        if is_polars:
+            test_df = working_df.filter(pl.col("filename").is_in(test_cells))
+            remaining_df = working_df.filter(~pl.col("filename").is_in(test_cells))
+        else:
+            test_df = working_df[working_df["filename"].isin(test_cells)].copy()
+            remaining_df = working_df[~working_df["filename"].isin(test_cells)].copy()
+        
+        # Split remaining data by tracks (not cells) for train/val using class_balance_label
+        if is_polars:
+            remaining_track_info = (
+                remaining_df.group_by("unique_id")
+                .agg([
+                    pl.col("class_balance_label").first().alias("condition"),
+                    pl.col("filename").first().alias("filename"),
+                    pl.col("frame").count().alias("track_length")
+                ])
+                .to_pandas()
+            )
+        else:
+            remaining_track_info = (
+                remaining_df.groupby("unique_id")
+                .agg({
+                    "class_balance_label": "first",
+                    "filename": "first",
+                    "frame": "count",
+                })
+                .reset_index()
+            )
+            remaining_track_info.columns = ["unique_id", "condition", "filename", "track_length"]
+        
+        # Stratified split of remaining tracks for train/val using class_balance_label
+        train_tracks, val_tracks = _stratified_track_split(
+            remaining_track_info, val_split, random_seed
+        )
+        
+        # Extract test track IDs from the test set
+        if is_polars:
+            test_track_ids = test_df["unique_id"].unique().to_list()
+        else:
+            test_track_ids = test_df["unique_id"].unique().tolist()
+        
+        # Create final dataframes
+        if is_polars:
+            train_df = remaining_df.filter(pl.col("unique_id").is_in(train_tracks))
+            val_df = remaining_df.filter(pl.col("unique_id").is_in(val_tracks))
+        else:
+            train_df = remaining_df[remaining_df["unique_id"].isin(train_tracks)].copy()
+            val_df = remaining_df[remaining_df["unique_id"].isin(val_tracks)].copy()
+        
+        split_info = {
+            "strategy": "fixed_cells",
+            "test_cells": test_cells,
+            "test_tracks": len(test_track_ids),
+            "train_tracks": len(train_tracks),
+            "val_tracks": len(val_tracks),
+            "test_complete_cells": True,
+            "cells_selected_per_condition": cells_selected_per_condition,
+            "cells_per_condition": cells_per_condition,
+            "test_condition_col": test_condition_col,
+        }
+        
+    elif split_strategy in ["hybrid_cell", "enhanced_hybrid_cell"]:
         # 🎯 HYBRID STRATEGY: Mixed train/val, complete cells for test
         print("\n🎯 Hybrid Cell Strategy:")
         print("   - Test set: Complete cells (clean visualization)")
@@ -844,10 +1186,17 @@ def create_smart_train_val_test_split(
 
         split_info = {"strategy": "random", "test_complete_cells": False}
 
-    # Create the split dataframes
-    train_df = instant_df[instant_df["unique_id"].isin(train_tracks)].copy()
-    val_df = instant_df[instant_df["unique_id"].isin(val_tracks)].copy()
-    test_df = instant_df[instant_df["unique_id"].isin(test_track_ids)].copy()
+    # Create the split dataframes using native operations
+    if is_polars:
+        # Use Polars native filtering
+        train_df = working_df.filter(pl.col("unique_id").is_in(train_tracks))
+        val_df = working_df.filter(pl.col("unique_id").is_in(val_tracks))
+        test_df = working_df.filter(pl.col("unique_id").is_in(test_track_ids))
+    else:
+        # Use Pandas filtering
+        train_df = working_df[working_df["unique_id"].isin(train_tracks)].copy()
+        val_df = working_df[working_df["unique_id"].isin(val_tracks)].copy()
+        test_df = working_df[working_df["unique_id"].isin(test_track_ids)].copy()
 
     # Update split info with final statistics
     split_info.update(
@@ -870,20 +1219,58 @@ def create_smart_train_val_test_split(
 
     # Check condition balance
     print("\n🔍 Condition Balance:")
+    # Use the appropriate condition column based on split strategy
+    if split_strategy == "enhanced_hybrid_cell":
+        condition_col_to_use = "class_balance_label"
+    elif split_strategy == "fixed_cells":
+        # For fixed_cells, use class_balance_label for reporting if available, otherwise condition
+        condition_col_to_use = "class_balance_label" if "class_balance_label" in train_df.columns else "condition"
+    else:
+        condition_col_to_use = "condition"
+    
     for split_name, df in [("Train", train_df), ("Val", val_df), ("Test", test_df)]:
         if len(df) > 0:
-            condition_counts = (
-                df.groupby("unique_id")["condition"].first().value_counts()
-            )
+            if is_polars:
+                condition_counts = (
+                    df.group_by("unique_id")
+                    .agg(pl.col(condition_col_to_use).first())
+                    .group_by(condition_col_to_use)
+                    .agg(pl.len().alias("count"))
+                    .to_pandas()
+                    .set_index(condition_col_to_use)["count"]
+                )
+            else:
+                condition_counts = (
+                    df.groupby("unique_id")[condition_col_to_use].first().value_counts()
+                )
             print(f"   {split_name}: {dict(condition_counts)}")
 
-    if split_strategy == "hybrid_cell":
+    if split_strategy in ["hybrid_cell", "enhanced_hybrid_cell", "fixed_cells"]:
         print("\n🎯 Test Set Cell Info:")
-        test_cell_info = test_df.groupby("filename").agg(
-            {"unique_id": "nunique", "condition": lambda x: list(x.unique())[0]}
-        )
-        for filename, info in test_cell_info.iterrows():
-            print(f"   {filename}: {info['unique_id']} tracks, {info['condition']}")
+        if is_polars:
+            test_cell_info = (
+                test_df.group_by("filename")
+                .agg([
+                    pl.col("unique_id").n_unique().alias("n_tracks"),
+                    pl.col("condition").first().alias("original_condition"),
+                    pl.col(condition_col_to_use).first().alias("balance_label") if condition_col_to_use in test_df.columns else pl.col("condition").first().alias("balance_label")
+                ])
+                .sort("n_tracks", descending=True)
+            )
+            
+            print("📊 Test Set Cells Summary:")
+            print(test_cell_info)
+        else:
+            test_cell_info = test_df.groupby("filename").agg({
+                "unique_id": "nunique", 
+                "condition": lambda x: list(x.unique())[0],
+                condition_col_to_use: lambda x: list(x.unique())[0] if condition_col_to_use in test_df.columns else None
+            }).sort_values("unique_id", ascending=False)
+            
+            print("📊 Test Set Cells Summary:")
+            for filename, info in test_cell_info.iterrows():
+                balance_info = f", {info[condition_col_to_use]}" if condition_col_to_use in info and pd.notna(info[condition_col_to_use]) else ""
+                print(f"   {filename}: {info['unique_id']} tracks, {info['condition']}{balance_info}")
 
         # NEW: Show condition balance quality
         if "test_condition_balance" in split_info:
@@ -945,6 +1332,9 @@ def train_motion_transformer(
     augmentation_strategy="basic",
     save_model_path=None,
     use_scheduler=False,
+    condition_factors=None,
+    cells_per_condition=8,
+    test_condition_col=None,
 ):
     """
     Enhanced pipeline to train a motion transformer with smart data splitting and validation tracking.
@@ -957,13 +1347,15 @@ def train_motion_transformer(
         epochs: Number of training epochs
         val_split: Fraction of data for validation (from train+val pool)
         test_split: Fraction of data for testing
-        split_strategy: 'hybrid_cell', 'stratified', 'random', 'cell_balanced'
+        split_strategy: 'hybrid_cell', 'enhanced_hybrid_cell', 'stratified', 'random', 'cell_balanced'
         device: 'auto', 'cuda', or 'cpu'
         use_tensorboard: Enable TensorBoard logging
         tensorboard_log_dir: Directory for TensorBoard logs
         augmentation_strategy: Augmentation strategy
         save_model_path: Path to save trained model
         use_scheduler: Use learning rate scheduler
+        condition_factors: List of column names for condition balancing (e.g., ['cell', 'type', 'mol'])
+        test_condition_col: Column name to use for test set selection (if None, uses 'condition')
 
     Returns:
         trainer: Trained MotionTrainer object
@@ -987,6 +1379,9 @@ def train_motion_transformer(
         val_split=val_split,
         test_split=test_split,
         split_strategy=split_strategy,
+        condition_factors=condition_factors,
+        cells_per_condition=cells_per_condition,
+        test_condition_col=test_condition_col,
     )
 
     # Create datasets
@@ -1116,7 +1511,10 @@ def train_multi_scale_transformers(
         print(f"   Step size: {window_size - overlap} frames")
 
         # Check if any tracks are long enough for this scale
-        max_track_length = df.groupby("unique_id")["frame"].count().max()
+        if isinstance(df, pl.DataFrame):
+            max_track_length = df.group_by("unique_id").agg(pl.col("frame").count().alias("track_length"))["track_length"].max()
+        else:
+            max_track_length = df.groupby("unique_id")["frame"].count().max()
         if max_track_length < window_size:
             print(
                 f"   ⚠ Skipping scale: No tracks long enough ({max_track_length} < {window_size})"
@@ -1148,7 +1546,7 @@ def train_multi_scale_transformers(
                 epochs=epochs,
                 val_split=0.15,  # Add validation split
                 test_split=test_split,
-                split_strategy="hybrid_cell",  # Use smart splitting
+                split_strategy="enhanced_hybrid_cell",  # Use enhanced smart splitting
                 device=device,
                 use_tensorboard=use_tensorboard,
                 tensorboard_log_dir=scale_tensorboard_dir,
@@ -1281,7 +1679,10 @@ def train_multi_scale_transformers(
         ].apply(lambda row: "_".join(row.astype(str)), axis=1)
 
     # Report final mapping results
-    frame_assignments = (~integrated_instant_df["final_cluster"].isna()).sum()
+    if isinstance(integrated_instant_df, pl.DataFrame):
+        frame_assignments = integrated_instant_df.filter(pl.col("final_cluster").is_not_null()).height
+    else:
+        frame_assignments = (~integrated_instant_df["final_cluster"].isna()).sum()
     print(f"   ✅ Mapped clusters to {frame_assignments:,} trajectory points")
 
     # Create summary statistics
@@ -1292,13 +1693,20 @@ def train_multi_scale_transformers(
         scale_suffix = scale_name.replace("scale_", "")
 
         # Count actual valid assignments (not -1)
-        coverage = (integrated_instant_df[f"cluster_scale_{scale_suffix}"] != -1).sum()
+        if isinstance(integrated_instant_df, pl.DataFrame):
+            coverage = integrated_instant_df.filter(pl.col(f"cluster_scale_{scale_suffix}") != -1).height
+        else:
+            coverage = (integrated_instant_df[f"cluster_scale_{scale_suffix}"] != -1).sum()
         scale_coverage[scale_name] = coverage
 
         # 🔍 DEBUGGING: Calculate expected coverage based on track lengths
         window_size = scale_results[scale_name]["window_size"]
-        tracks = integrated_instant_df.groupby("unique_id").size()
-        expected_points = tracks[tracks >= window_size].sum()
+        if isinstance(integrated_instant_df, pl.DataFrame):
+            tracks = integrated_instant_df.group_by("unique_id").agg(pl.len().alias("track_length"))
+            expected_points = tracks.filter(pl.col("track_length") >= window_size)["track_length"].sum()
+        else:
+            tracks = integrated_instant_df.groupby("unique_id").size()
+            expected_points = tracks[tracks >= window_size].sum()
         expected_coverage[scale_name] = expected_points
 
     print("\n📊 COVERAGE SUMMARY (Valid Assignments Only):")
@@ -1308,14 +1716,23 @@ def train_multi_scale_transformers(
         actual = scale_coverage[scale_name]
         expected = expected_coverage[scale_name]
         efficiency = (actual / expected * 100) if expected > 0 else 0
-        actual_pct = actual / len(integrated_instant_df) * 100
-        expected_pct = expected / len(integrated_instant_df) * 100
+        if isinstance(integrated_instant_df, pl.DataFrame):
+            total_df_len = integrated_instant_df.height
+        else:
+            total_df_len = len(integrated_instant_df)
+        actual_pct = actual / total_df_len * 100
+        expected_pct = expected / total_df_len * 100
         print(
             f"{scale_name:<10} {actual:>6,} ({actual_pct:4.1f}%) {expected:>6,} ({expected_pct:4.1f}%) {efficiency:>6.1f}%"
         )
 
-    final_coverage = (~integrated_instant_df["final_cluster"].isna()).sum()
-    final_percentage = final_coverage / len(integrated_instant_df) * 100
+    if isinstance(integrated_instant_df, pl.DataFrame):
+        final_coverage = integrated_instant_df.filter(pl.col("final_cluster").is_not_null()).height
+        total_points = integrated_instant_df.height
+    else:
+        final_coverage = (~integrated_instant_df["final_cluster"].isna()).sum()
+        total_points = len(integrated_instant_df)
+    final_percentage = final_coverage / total_points * 100
     print(f"\n   Final assignment: {final_coverage:,} points ({final_percentage:.1f}%)")
 
     # 🔍 DEBUGGING: Show mapping efficiency issues
@@ -1341,15 +1758,26 @@ def train_multi_scale_transformers(
 
     # 🔥 NEW: Multi-scale analysis summary
     print("\n📊 MULTI-SCALE BEHAVIORAL ANALYSIS:")
-    total_frames = len(integrated_instant_df)
-
-    # Count frames with different levels of scale coverage
-    no_coverage = (integrated_instant_df[signature_cols] == -1).all(axis=1).sum()
-    partial_coverage = (
-        (integrated_instant_df[signature_cols] == -1).any(axis=1)
-        & ~(integrated_instant_df[signature_cols] == -1).all(axis=1)
-    ).sum()
-    full_coverage = (~(integrated_instant_df[signature_cols] == -1).any(axis=1)).sum()
+    if isinstance(integrated_instant_df, pl.DataFrame):
+        total_frames = integrated_instant_df.height
+        
+        # Count frames with different levels of scale coverage using Polars
+        all_neg_one = pl.all_horizontal([pl.col(col) == -1 for col in signature_cols])
+        any_neg_one = pl.any_horizontal([pl.col(col) == -1 for col in signature_cols])
+        
+        no_coverage = integrated_instant_df.filter(all_neg_one).height
+        partial_coverage = integrated_instant_df.filter(any_neg_one & ~all_neg_one).height
+        full_coverage = integrated_instant_df.filter(~any_neg_one).height
+    else:
+        total_frames = len(integrated_instant_df)
+        
+        # Count frames with different levels of scale coverage using Pandas
+        no_coverage = (integrated_instant_df[signature_cols] == -1).all(axis=1).sum()
+        partial_coverage = (
+            (integrated_instant_df[signature_cols] == -1).any(axis=1)
+            & ~(integrated_instant_df[signature_cols] == -1).all(axis=1)
+        ).sum()
+        full_coverage = (~(integrated_instant_df[signature_cols] == -1).any(axis=1)).sum()
 
     print(
         f"   🔍 No scale coverage: {no_coverage:,} points ({no_coverage/total_frames*100:.1f}%)"
@@ -1362,16 +1790,29 @@ def train_multi_scale_transformers(
     )
 
     # Sample of multi-scale signatures
-    valid_signatures = (
-        integrated_instant_df[integrated_instant_df["final_cluster"].notna()][
-            "multi_scale_signature"
-        ]
-        .value_counts()
-        .head(5)
-    )
     print("\n🧬 Top 5 behavioral signatures:")
-    for signature, count in valid_signatures.items():
-        print(f"   {signature}: {count:,} frames")
+    if isinstance(integrated_instant_df, pl.DataFrame):
+        valid_signatures = (
+            integrated_instant_df
+            .filter(pl.col("final_cluster").is_not_null())
+            .group_by("multi_scale_signature")
+            .agg(pl.len().alias("count"))
+            .sort("count", descending=True)
+            .head(5)
+            .to_pandas()
+        )
+        for _, row in valid_signatures.iterrows():
+            print(f"   {row['multi_scale_signature']}: {row['count']:,} frames")
+    else:
+        valid_signatures = (
+            integrated_instant_df[integrated_instant_df["final_cluster"].notna()][
+                "multi_scale_signature"
+            ]
+            .value_counts()
+            .head(5)
+        )
+        for signature, count in valid_signatures.items():
+            print(f"   {signature}: {count:,} frames")
 
     # Combine all windowed dataframes
     all_windowed_dfs = []
@@ -1822,6 +2263,57 @@ def map_clusters_from_windowed_to_instant_df(
     )
 
     return result_df
+
+
+def create_enhanced_hybrid_split_demo(instant_df, condition_factors=["cell", "type", "mol"]):
+    """
+    Demo function to show the enhanced hybrid split with clean conditions.
+    
+    Args:
+        instant_df: DataFrame with trajectory data
+        condition_factors: List of columns to use for condition balancing
+    
+    Returns:
+        Dictionary with split results and clean condition examples
+    """
+    print("🚀 Enhanced Hybrid Split Demo")
+    print("=" * 50)
+    
+    # Show original vs clean conditions
+    print(f"🔧 Using condition factors: {condition_factors}")
+    
+    # Create the split
+    train_df, val_df, test_df, split_info = create_smart_train_val_test_split(
+        instant_df,
+        split_strategy="enhanced_hybrid_cell",
+        condition_factors=condition_factors,
+        test_split=0.2,
+        val_split=0.15
+    )
+    
+    print(f"\n✅ Split completed successfully!")
+    print(f"   Train: {len(train_df):,} points")
+    print(f"   Val: {len(val_df):,} points") 
+    print(f"   Test: {len(test_df):,} points")
+    
+    # Show sample clean conditions
+    if "clean_condition" in train_df.columns:
+        if hasattr(train_df, 'unique'):  # Polars
+            sample_conditions = train_df["clean_condition"].unique()[:10].to_list()
+        else:  # Pandas
+            sample_conditions = train_df["clean_condition"].unique()[:10].tolist()
+        
+        print(f"\n🧬 Sample clean conditions:")
+        for i, condition in enumerate(sample_conditions, 1):
+            print(f"   {i:2d}. {condition}")
+    
+    return {
+        "train_df": train_df,
+        "val_df": val_df, 
+        "test_df": test_df,
+        "split_info": split_info,
+        "condition_factors": condition_factors
+    }
 
 
 def cluster_test_set_only_with_mapping(

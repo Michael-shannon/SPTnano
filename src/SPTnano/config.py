@@ -3,7 +3,9 @@
 import os
 
 # Define global variables - users can modify these directly
-MASTER = "D:/data_transformer_input/"
+
+MASTER = 'D:/TRANSFORMER_DEVELOPMENT/'
+
 SAVED_DATA = MASTER + "saved_data/"
 
 # Other configurations
@@ -56,6 +58,15 @@ ANALYSIS_PARAMS = {
     # Traditional analysis
     "window_size": 60,
     "n_clusters_traditional": 5,
+        # Data splitting configuration
+        "split_params": {
+            "condition_factors": ["mol"],  # Factors to create class balance labels (default: just molecule type)
+            "test_split": 0.2,
+            "val_split": 0.1,  # Reduced since we're using fixed cells for test
+            "split_strategy": "fixed_cells",  # Fixed number of cells per condition for test set
+            "cells_per_condition": 6,  # Number of cells per condition in test set
+            "random_seed": 42,
+        },
     # Enhanced transformer parameters
     "transformer_params": {
         "single_scale": {
@@ -63,7 +74,7 @@ ANALYSIS_PARAMS = {
             "overlap": 30,
             "epochs": 25,
             "batch_size": 64,
-            "augmentation_strategy": "comprehensive",
+            "augmentation_strategy": "measurement_noise",
         },
         "multi_scale": {
             "scales": [

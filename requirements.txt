@@ -191,3 +191,6 @@ hdbscan>=0.8.29
 colorcet>=3.0.0
 # Add TensorBoard for training monitoring
 tensorboard>=2.12.0
+# Interactive plotting and ROI gating
+plotly>=5.0.0
+shapely>=2.0.0
