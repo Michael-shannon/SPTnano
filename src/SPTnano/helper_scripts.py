@@ -4778,6 +4778,168 @@ def center_scale_data(
     return df
 
 
+def add_scaled_columns(
+    df,
+    columns,
+    method='standard',
+    suffix='_scaled',
+    group_by=None,
+    return_polars=None
+):
+    """
+    Add scaled versions of columns to the dataframe with a specified suffix.
+    
+    This function adds new columns with scaled values rather than replacing original columns.
+    Supports both pandas and polars DataFrames.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame or pl.DataFrame
+        DataFrame containing the data to scale.
+    columns : list of str
+        List of column names to scale.
+    method : str, optional
+        Scaling method to use. Options are:
+        - 'standard': StandardScaler (mean=0, std=1) [default]
+        - 'minmax': MinMaxScaler (scales to [0, 1])
+        - 'robust': RobustScaler (uses median and IQR, robust to outliers)
+        - 'maxabs': MaxAbsScaler (scales to [-1, 1], preserves sparsity)
+        - 'quantile': QuantileTransformer (uniform or gaussian distribution)
+        - 'power': PowerTransformer (makes data more Gaussian)
+        - 'normalize': Normalizer (scales each sample to unit norm)
+        - 'standard_minmax': StandardScaler then MinMaxScaler (center then bound to [0,1])
+    suffix : str, optional
+        Suffix to append to column names for scaled versions. Default is '_scaled'.
+    group_by : str or list of str, optional
+        Column name(s) to group by before scaling. If provided, scaling is done
+        independently for each group. Default is None.
+    return_polars : bool, optional
+        Whether to return a polars DataFrame. If None, returns the same type as input.
+        Default is None.
+    
+    Returns
+    -------
+    pd.DataFrame or pl.DataFrame
+        DataFrame with original columns plus new scaled columns with specified suffix.
+    
+    Examples
+    --------
+    >>> # Standard scaling with default suffix
+    >>> df_with_scaled = add_scaled_columns(df, ['x_um', 'y_um'], method='standard')
+    >>> # Result has: x_um, y_um, x_um_scaled, y_um_scaled
+    
+    >>> # MinMax scaling with custom suffix
+    >>> df_with_scaled = add_scaled_columns(df, ['speed'], method='minmax', suffix='_norm')
+    >>> # Result has: speed, speed_norm
+    
+    >>> # Standard then MinMax scaling (good for PCA thresholds)
+    >>> df_with_scaled = add_scaled_columns(df, features_list, method='standard_minmax')
+    
+    >>> # Scaling by group (e.g., per condition)
+    >>> df_with_scaled = add_scaled_columns(df, features_list, method='standard', 
+    ...                                      group_by='mol')
+    
+    """
+    from sklearn.preprocessing import (
+        StandardScaler,
+        MinMaxScaler,
+        RobustScaler,
+        MaxAbsScaler,
+        QuantileTransformer,
+        PowerTransformer,
+        Normalizer
+    )
+    
+    # Check if input is polars
+    try:
+        import polars as pl
+        is_polars = isinstance(df, pl.DataFrame)
+    except ImportError:
+        is_polars = False
+    
+    # Convert to pandas if needed
+    if is_polars:
+        df_pd = df.to_pandas()
+    else:
+        df_pd = df.copy()
+    
+    # Initialize the scaler based on method
+    scalers = {
+        'standard': StandardScaler(),
+        'minmax': MinMaxScaler(),
+        'robust': RobustScaler(),
+        'maxabs': MaxAbsScaler(),
+        'quantile': QuantileTransformer(),
+        'power': PowerTransformer(),
+        'normalize': Normalizer(),
+        'standard_minmax': 'combined'  # Special case
+    }
+    
+    if method not in scalers:
+        raise ValueError(
+            f"method must be one of {list(scalers.keys())}, got '{method}'"
+        )
+    
+    # Ensure columns is a list
+    if isinstance(columns, str):
+        columns = [columns]
+    
+    # Check if all columns exist
+    missing_cols = [col for col in columns if col not in df_pd.columns]
+    if missing_cols:
+        raise ValueError(f"Columns not found in dataframe: {missing_cols}")
+    
+    # Create new column names
+    new_col_names = [f"{col}{suffix}" for col in columns]
+    
+    # Scale data
+    if group_by is None:
+        # Scale all data at once
+        if method == 'standard_minmax':
+            # First apply StandardScaler, then MinMaxScaler
+            scaler1 = StandardScaler()
+            temp_data = scaler1.fit_transform(df_pd[columns])
+            scaler2 = MinMaxScaler()
+            scaled_data = scaler2.fit_transform(temp_data)
+        else:
+            scaler = scalers[method]
+            scaled_data = scaler.fit_transform(df_pd[columns])
+        
+        # Add scaled columns
+        for i, new_col in enumerate(new_col_names):
+            df_pd[new_col] = scaled_data[:, i]
+    else:
+        # Scale by group
+        if isinstance(group_by, str):
+            group_by = [group_by]
+        
+        # Initialize new columns with NaN
+        for new_col in new_col_names:
+            df_pd[new_col] = float('nan')
+        
+        for group_vals, group_df in df_pd.groupby(group_by):
+            if method == 'standard_minmax':
+                # First apply StandardScaler, then MinMaxScaler
+                scaler1 = StandardScaler()
+                temp_data = scaler1.fit_transform(group_df[columns])
+                scaler2 = MinMaxScaler()
+                scaled_data = scaler2.fit_transform(temp_data)
+            else:
+                scaler = scalers[method]
+                scaled_data = scaler.fit_transform(group_df[columns])
+            
+            # Add scaled values for this group
+            for i, new_col in enumerate(new_col_names):
+                df_pd.loc[group_df.index, new_col] = scaled_data[:, i]
+    
+    # Convert back to polars if needed
+    if return_polars or (return_polars is None and is_polars):
+        import polars as pl
+        return pl.from_pandas(df_pd)
+    else:
+        return df_pd
+
+
 def balance_classes_for_pca(
     df,
     class_column,

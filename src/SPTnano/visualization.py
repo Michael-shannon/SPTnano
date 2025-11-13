@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import napari
 import numpy as np
 import pandas as pd
+import polars as pl
 import pims
 import seaborn as sns
 import skimage.io as skio
@@ -270,6 +271,164 @@ def plot_histograms_seconds(traj_df, bins=100, coltoseparate="tracker", xlimit=N
     plt.show()
 
 
+# Helper functions for dataframe type detection and operations
+def _is_polars(df):
+    """Check if dataframe is a Polars DataFrame."""
+    return isinstance(df, pl.DataFrame)
+
+
+def _is_pandas(df):
+    """Check if dataframe is a Pandas DataFrame."""
+    return isinstance(df, pd.DataFrame)
+
+
+def _get_column(df, column):
+    """Get a column from either Polars or Pandas dataframe."""
+    if _is_polars(df):
+        return df[column]
+    else:
+        return df[column]
+
+
+def _get_unique_categories(df, column, order=None):
+    """Get unique categories from a column, handling both Polars and Pandas."""
+    if _is_polars(df):
+        if order is not None:
+            return order
+        return df[column].unique().to_list()
+    else:
+        # Pandas logic with categorical
+        if not pd.api.types.is_categorical_dtype(df[column]):
+            df[column] = df[column].astype("category")
+        if order is not None:
+            df[column] = pd.Categorical(df[column], categories=order, ordered=True)
+        return df[column].cat.categories.tolist()
+
+
+def _filter_dataframe(df, column, value):
+    """Filter dataframe by column value, handling both Polars and Pandas."""
+    if _is_polars(df):
+        return df.filter(pl.col(column) == value)
+    else:
+        return df[df[column] == value]
+
+
+def _filter_range(df, column, lower, upper):
+    """Filter dataframe by range, handling both Polars and Pandas."""
+    if _is_polars(df):
+        return df.filter((pl.col(column) >= lower) & (pl.col(column) <= upper))
+    else:
+        return df[(df[column] >= lower) & (df[column] <= upper)]
+
+
+def _column_min(df, column):
+    """Get column minimum, handling both Polars and Pandas."""
+    if _is_polars(df):
+        return df[column].min()
+    else:
+        return df[column].min()
+
+
+def _column_max(df, column):
+    """Get column maximum, handling both Polars and Pandas."""
+    if _is_polars(df):
+        return df[column].max()
+    else:
+        return df[column].max()
+
+
+def _column_mean(df, column):
+    """Get column mean, handling both Polars and Pandas."""
+    if _is_polars(df):
+        return df[column].mean()
+    else:
+        return df[column].mean()
+
+
+def _column_median(df, column):
+    """Get column median, handling both Polars and Pandas."""
+    if _is_polars(df):
+        return df[column].median()
+    else:
+        return df[column].median()
+
+
+def _column_sum(df, column):
+    """Get column sum, handling both Polars and Pandas."""
+    if _is_polars(df):
+        return df[column].sum()
+    else:
+        return df[column].sum()
+
+
+def _column_any(df, column):
+    """Check if any value in column is True, handling both Polars and Pandas."""
+    if _is_polars(df):
+        return df[column].any()
+    else:
+        return df[column].any()
+
+
+def _create_log_column(df, feature, new_feature, log_base):
+    """Create a log-transformed column, handling both Polars and Pandas."""
+    if _is_polars(df):
+        if log_base == 10:
+            return df.with_columns(pl.col(feature).log10().alias(new_feature))
+        elif log_base == 2:
+            return df.with_columns(pl.col(feature).log().alias(new_feature) / np.log(2))
+        else:
+            return df.with_columns(pl.col(feature).log().alias(new_feature) / np.log(log_base))
+    else:
+        # Pandas - modify in place
+        if log_base == 10:
+            df[new_feature] = np.log10(df[feature])
+        elif log_base == 2:
+            df[new_feature] = np.log2(df[feature])
+        else:
+            df[new_feature] = np.log(df[feature]) / np.log(log_base)
+        return df
+
+
+def _to_numpy(series):
+    """Convert a series to numpy array, handling both Polars and Pandas."""
+    if isinstance(series, pl.Series):
+        return series.to_numpy()
+    elif isinstance(series, pl.DataFrame):
+        # If single column dataframe
+        return series.to_numpy().flatten()
+    else:
+        # Pandas
+        return series.values
+
+
+def _groupby_agg(df, groupby_col, agg_col, agg_func):
+    """Perform groupby aggregation, handling both Polars and Pandas."""
+    if _is_polars(df):
+        if agg_func == 'median':
+            result = df.group_by(groupby_col).agg(pl.col(agg_col).median())
+        elif agg_func == 'mean':
+            result = df.group_by(groupby_col).agg(pl.col(agg_col).mean())
+        else:
+            raise ValueError(f"Unsupported aggregation function: {agg_func}")
+        # Return as dict for consistency
+        return dict(zip(result[groupby_col].to_list(), result[agg_col].to_list()))
+    else:
+        if agg_func == 'median':
+            return df.groupby(groupby_col)[agg_col].median()
+        elif agg_func == 'mean':
+            return df.groupby(groupby_col)[agg_col].mean()
+        else:
+            raise ValueError(f"Unsupported aggregation function: {agg_func}")
+
+
+def _get_unique_values(df, column):
+    """Get unique values from a column, handling both Polars and Pandas."""
+    if _is_polars(df):
+        return df[column].unique().to_list()
+    else:
+        return df[column].unique()
+
+
 def plot_histograms(
     data_df,
     feature,
@@ -307,8 +466,12 @@ def plot_histograms(
     """
     Plot histograms with flexible color options and customization.
     
+    Compatible with both Polars and Pandas DataFrames.
+    
     Parameters
     ----------
+    data_df : DataFrame (Polars or Pandas)
+        Input dataframe containing the data to plot.
     palette : str or list, default "colorblind"
         Color palette for categories. Can be:
         - String: palette name ('colorblind' uses Wong 2011, 'Dark2', 'Set2', etc.)
@@ -317,6 +480,9 @@ def plot_histograms(
     
     (Other parameters documented elsewhere)
     """
+    # Detect dataframe type
+    is_polars_df = _is_polars(data_df)
+    
     if master_dir is None:
         master_dir = "plots"
 
@@ -335,14 +501,28 @@ def plot_histograms(
 
     if log_scale:
         new_feature = "log_" + feature
-        if (data_df[feature] <= 0).any():
-            raise ValueError(f"All values of {feature} must be positive for log scale.")
-        if log_base == 10:
-            data_df[new_feature] = np.log10(data_df[feature])
-        elif log_base == 2:
-            data_df[new_feature] = np.log2(data_df[feature])
+        # Check for non-positive values
+        if is_polars_df:
+            has_nonpositive = (data_df[feature] <= 0).any()
+            if has_nonpositive:
+                num_negative = (data_df[feature] <= 0).sum()
+                min_val = data_df[feature].min()
+                max_val = data_df[feature].max()
         else:
-            data_df[new_feature] = np.log(data_df[feature]) / np.log(log_base)
+            has_nonpositive = (data_df[feature] <= 0).any()
+            if has_nonpositive:
+                num_negative = (data_df[feature] <= 0).sum()
+                min_val = data_df[feature].min()
+                max_val = data_df[feature].max()
+                
+        if has_nonpositive:
+            print(f"⚠️  Skipping histogram for '{feature}': Cannot use log scale with {num_negative} non-positive values (log requires all positive values).")
+            print(f"   Min value: {min_val}, Max value: {max_val}")
+            print(f"   Consider using log_scale=False or filtering data to positive values only.")
+            plt.close('all')  # Clean up any matplotlib artifacts
+            return None
+            
+        data_df = _create_log_column(data_df, feature, new_feature, log_base)
         feature_to_plot = new_feature
         x_label = f"log{log_base}({feature})" if log_axis_label != "actual" else feature
     else:
@@ -355,26 +535,12 @@ def plot_histograms(
     axis_background = figure_background
 
     if separate is not None:
-        if not pd.api.types.is_categorical_dtype(data_df[separate]):
-            data_df[separate] = data_df[separate].astype("category")
-        if order is not None:
-            data_df[separate] = pd.Categorical(
-                data_df[separate], categories=order, ordered=True
-            )
-        unique_categories = data_df[separate].cat.categories
+        unique_categories = _get_unique_categories(data_df, separate, order)
     else:
         unique_categories = [None]
 
     color_palette = _process_palette(palette, len(unique_categories))
 
-    # # Create a color mapping for conditions based on the provided dictionary
-    # color_mapping = {}
-    # for i, category in enumerate(unique_categories):
-    #     if category in condition_colors:
-    #         color_mapping[category] = condition_colors[category]
-    #     else:
-    #         color_mapping[category] = color_palette[i % len(color_palette)]  # Assign fallback colors if not in the dict
-    #
     # Ensure condition_colors is not None
     if condition_colors is None:
         condition_colors = {}
@@ -389,9 +555,9 @@ def plot_histograms(
     if x_range is not None:
         global_lower_bound, global_upper_bound = x_range
     else:
-        global_lower_bound = data_df[feature_to_plot].min()
+        global_lower_bound = _column_min(data_df, feature_to_plot)
         global_upper_bound = (
-            xlimit if xlimit is not None else data_df[feature_to_plot].max()
+            xlimit if xlimit is not None else _column_max(data_df, feature_to_plot)
         )
 
     # fig, ax = plt.subplots(figsize=figsize, facecolor=figure_background)
@@ -411,14 +577,29 @@ def plot_histograms(
 
     for i, category in enumerate(unique_categories):
         ax = axes[i] if (small_multiples and separate) else axes[0]
-        subsetvalues = (
-            data_df[data_df[separate] == category][feature_to_plot]
-            if category
-            else data_df[feature_to_plot]
-        )
-        subsetvalues = subsetvalues[
-            (subsetvalues >= global_lower_bound) & (subsetvalues <= global_upper_bound)
-        ]
+        
+        # Get subset values
+        if category:
+            subset_df = _filter_dataframe(data_df, separate, category)
+            if is_polars_df:
+                subsetvalues_col = subset_df[feature_to_plot]
+            else:
+                subsetvalues_col = subset_df[feature_to_plot]
+        else:
+            subsetvalues_col = data_df[feature_to_plot]
+        
+        # Filter by range
+        if is_polars_df:
+            filtered_df = _filter_range(
+                pl.DataFrame({feature_to_plot: subsetvalues_col}),
+                feature_to_plot,
+                global_lower_bound,
+                global_upper_bound
+            )
+            subsetvalues = _to_numpy(filtered_df[feature_to_plot])
+        else:
+            mask = (subsetvalues_col >= global_lower_bound) & (subsetvalues_col <= global_upper_bound)
+            subsetvalues = subsetvalues_col[mask].values
 
         ax.set_facecolor(axis_background)
         bin_edges = np.linspace(global_lower_bound, global_upper_bound, bins + 1)
@@ -447,7 +628,12 @@ def plot_histograms(
                 label=category,
             )
 
-        avg_value = subsetvalues.mean() if average == "mean" else subsetvalues.median()
+        # Calculate average
+        if average == "mean":
+            avg_value = np.mean(subsetvalues)
+        else:
+            avg_value = np.median(subsetvalues)
+            
         annotation_value = (
             log_base**avg_value
             if log_scale and log_axis_label == "actual"
@@ -652,7 +838,12 @@ def plot_histograms_threshold(
     if log_scale:
         new_feature = "log_" + feature
         if (data_df[feature] <= 0).any():
-            raise ValueError(f"All values of {feature} must be positive for log scale.")
+            num_negative = (data_df[feature] <= 0).sum()
+            print(f"⚠️  Skipping histogram for '{feature}': Cannot use log scale with {num_negative} non-positive values (log requires all positive values).")
+            print(f"   Min value: {data_df[feature].min()}, Max value: {data_df[feature].max()}")
+            print(f"   Consider using log_scale=False or filtering data to positive values only.")
+            plt.close('all')  # Clean up any matplotlib artifacts
+            return None
         if log_base == 10:
             data_df[new_feature] = np.log10(data_df[feature])
         elif log_base == 2:
@@ -2461,13 +2652,16 @@ def plot_boxplots_svg(
     export_format="png",
     return_svg=False,
     annotatemultiplier=0.95,
+    annotation_decimals=2,
 ):
     """
     Plot boxplots for the specified feature against a categorical x_category with custom order and styling options.
 
+    Compatible with both Polars and Pandas DataFrames.
+
     Parameters
     ----------
-    data_df : DataFrame
+    data_df : DataFrame (Polars or Pandas)
         DataFrame containing the data.
     feature : str
         The feature to plot on the y-axis.
@@ -2513,6 +2707,8 @@ def plot_boxplots_svg(
         File format to export the figure ('png' or 'svg'). Default is 'png'.
     return_svg : bool, optional
         If True and export_format is 'svg', returns the post-processed SVG image data as a string.
+    annotation_decimals : int, optional
+        Number of decimal places to display for annotated median values. Default is 2.
 
     Returns
     -------
@@ -2521,6 +2717,18 @@ def plot_boxplots_svg(
         Otherwise, returns None.
 
     """
+    # Detect dataframe type and convert if needed
+    is_polars_df = _is_polars(data_df)
+    
+    # For seaborn plotting, we need pandas DataFrame
+    # Store the original for median calculation if using polars
+    original_df = data_df
+    if is_polars_df:
+        # Convert to pandas for seaborn - only select needed columns for efficiency
+        plot_df = data_df.select([x_category, feature]).to_pandas()
+    else:
+        plot_df = data_df
+    
     # Validate and apply background color
     if is_color_like(background):
         figure_background = background
@@ -2540,15 +2748,23 @@ def plot_boxplots_svg(
         "notebook", rc={"xtick.labelsize": font_size, "ytick.labelsize": font_size}
     )
 
+    # Get number of categories
+    if order is not None:
+        n_categories = len(order)
+    else:
+        if is_polars_df:
+            n_categories = original_df[x_category].n_unique()
+        else:
+            n_categories = len(plot_df[x_category].unique())
+    
     # Process palette to handle both string names and custom color lists
-    n_categories = len(order) if order is not None else len(data_df[x_category].unique())
     processed_palette = _process_palette(palette, n_categories)
 
     if bw:
         boxplot = sns.boxplot(
             x=x_category,
             y=feature,
-            data=data_df,
+            data=plot_df,
             linewidth=1.5,
             showfliers=False,
             color="white",
@@ -2564,7 +2780,7 @@ def plot_boxplots_svg(
         boxplot = sns.boxplot(
             x=x_category,
             y=feature,
-            data=data_df,
+            data=plot_df,
             palette=processed_palette,
             order=order,
             showfliers=False,
@@ -2581,7 +2797,7 @@ def plot_boxplots_svg(
         sns.stripplot(
             x=x_category,
             y=feature,
-            data=data_df,
+            data=plot_df,
             color=line_color,
             size=dotsize,
             order=order,
@@ -2617,15 +2833,21 @@ def plot_boxplots_svg(
             spine.set_alpha(0.5)
 
     if annotate_median:
-        medians = data_df.groupby(x_category)[feature].median()
+        # Calculate medians using the helper function
+        medians_dict = _groupby_agg(original_df, x_category, feature, 'median')
         current_y_max = plt.ylim()[1]
-        sorted_medians = medians.reindex(order) if order else medians
-        for i, median in enumerate(sorted_medians):
-            # plt.text(i, current_y_max * 0.965, f'{median:.2f}',
+        
+        # Sort medians by order if provided
+        if order:
+            sorted_medians_list = [medians_dict[cat] for cat in order if cat in medians_dict]
+        else:
+            sorted_medians_list = list(medians_dict.values())
+            
+        for i, median in enumerate(sorted_medians_list):
             plt.text(
                 i,
                 current_y_max * annotatemultiplier,
-                f"{median:.2f}",
+                f"{median:.{annotation_decimals}f}",
                 horizontalalignment="center",
                 size=font_size,
                 color=line_color,
@@ -9015,6 +9237,665 @@ def gallery_of_tracks(
     }
 
 
+def gallery_of_tracks_v4(
+    instant_df,
+    color_by="simple_threshold",
+    num_tracks=20,
+    colormap="Dark2",
+    custom_colors=None,
+    figsize=(12, 12),
+    transparent_background=True,
+    show_annotations=False,
+    annotation="default",  # NEW: str | list[str] | callable | "default"
+    annotation_color="white",
+    text_size=10,
+    export_format="svg",
+    save_path=None,
+    show_plot=True,
+    order=None,
+    track_length_frames=60,
+    spacing_factor=1.2,
+    line_width=1.5,
+    grid_cols=None,
+    dpi=200,
+    subplot_size_um=None,
+):
+    """
+    Create a gallery of tracks distributed in a grid layout with consistent scaling.
+    ...
+    Parameters
+    ----------
+    ...
+    show_annotations : bool, default False
+        Whether to show track annotations
+    annotation : str | list[str] | callable | "default", default "default"
+        What to annotate inside each subplot.
+        - If a format string, it will be formatted with variables:
+          {category}, {unique_id}, {window_uid} (if present), {segment_length},
+          {start_frame}, {end_frame}.
+        - If a list/tuple of column names, their values (from the segment) are joined with ' | '.
+        - If a callable, it must be: fn(segment_dataframe, meta_dict) -> str
+        - "default" shows "{category}\n{unique_id}" (previous behavior).
+    annotation_color : str, default "white"
+        Color for annotations
+    ...
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import random
+    from matplotlib import cm
+
+    # Auto-detect dataframe type and convert to pandas for compatibility
+    is_polars = hasattr(instant_df, 'schema')
+    if is_polars:
+        import polars as pl
+        df = instant_df.to_pandas()
+    else:
+        df = instant_df.copy()
+
+    # Ensure required columns exist
+    required_cols = ['unique_id', 'x_um', 'y_um', 'frame']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+
+    if color_by not in df.columns:
+        raise ValueError(f"Column '{color_by}' not found in dataframe")
+
+    # Get categories for coloring
+    categories = order if order else sorted(df[color_by].unique())
+    print(f"Gallery categories in order: {categories}")
+
+    # Set up color mapping
+    if custom_colors is not None:
+        colors = [custom_colors[i % len(custom_colors)] for i in range(len(categories))]
+    elif colormap == "colorblind":
+        colorblind_colors = [
+            '#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161',
+            '#FBAFE4', '#949494', '#ECE133', '#56B4E9', '#D55E00'
+        ]
+        colors = [colorblind_colors[i % len(colorblind_colors)] for i in range(len(categories))]
+    elif colormap == "Dark2":
+        cmap = cm.get_cmap("Dark2", len(categories))
+        colors = cmap(np.linspace(0, 1, len(categories)))
+    else:
+        colors = plt.get_cmap(colormap, len(categories)).colors
+
+    category_color_map = {cat: colors[i] for i, cat in enumerate(categories)}
+
+    # Collect track segments for each category
+    all_track_segments = []
+    track_info = []
+
+    for category in categories:
+        cat_df = df[df[color_by] == category]
+        unique_ids = cat_df['unique_id'].unique()
+
+        selected_ids = random.sample(list(unique_ids), min(num_tracks, len(unique_ids)))
+
+        for unique_id in selected_ids:
+            track_data = cat_df[cat_df['unique_id'] == unique_id].sort_values('frame')
+
+            if len(track_data) >= track_length_frames:
+                max_start = len(track_data) - track_length_frames
+                start_idx = random.randint(0, max_start) if max_start > 0 else 0
+                track_segment = track_data.iloc[start_idx:start_idx + track_length_frames]
+            else:
+                track_segment = track_data
+
+            if len(track_segment) >= 10:
+                all_track_segments.append(track_segment)
+                track_info.append((category, unique_id, len(track_segment)))
+
+    if not all_track_segments:
+        raise ValueError("No valid track segments found")
+
+    print(f"Collected {len(all_track_segments)} tracks total")
+
+    # Calculate subplot size
+    if subplot_size_um is not None:
+        subplot_size = subplot_size_um
+        print(f"Using manual subplot size: {subplot_size:.2f} μm")
+    else:
+        max_extent = 0
+        for segment in all_track_segments:
+            x_range = segment['x_um'].max() - segment['x_um'].min()
+            y_range = segment['y_um'].max() - segment['y_um'].min()
+            extent = max(x_range, y_range)
+            max_extent = max(max_extent, extent)
+        subplot_size = max_extent * spacing_factor
+        print(f"Using calculated subplot size: {subplot_size:.2f} μm")
+
+    # Calculate grid layout
+    total_tracks = len(all_track_segments)
+    if grid_cols is None:
+        grid_cols = int(np.ceil(np.sqrt(total_tracks)))
+    grid_rows = int(np.ceil(total_tracks / grid_cols))
+    print(f"Grid layout: {grid_rows} rows × {grid_cols} columns")
+
+    # Dynamic figsize
+    if figsize is None:
+        subplot_size_inches = 2.0
+        figsize = (grid_cols * subplot_size_inches, grid_rows * subplot_size_inches)
+        print(f"Using dynamic figsize: {figsize}")
+
+    # Create figure
+    figure_background = "none" if transparent_background else "white"
+    axis_background = (0, 0, 0, 0) if transparent_background else "white"
+
+    fig, axes = plt.subplots(
+        grid_rows, grid_cols,
+        figsize=figsize,
+        facecolor=figure_background
+    )
+
+    # Normalize axes to 1D list
+    if grid_rows == 1 and grid_cols == 1:
+        axes = [axes]
+    else:
+        axes = np.array(axes).flatten()
+
+    fig.subplots_adjust(wspace=0.02, hspace=0.02)
+
+    plotted_tracks = []
+
+    # --- Annotation setup (NEW) ---
+    def _make_annotation_text(segment, meta):
+        """
+        segment: pd.DataFrame for this plotted segment
+        meta: dict with keys: category, unique_id, segment_length, start_frame, end_frame, window_uid (if present)
+        """
+        if not show_annotations:
+            return None
+
+        # Callable user function
+        if callable(annotation):
+            try:
+                return str(annotation(segment, meta))
+            except Exception as e:
+                return f"(annotation error: {e})"
+
+        # List/tuple of columns -> join their values from the segment (first non-null)
+        if isinstance(annotation, (list, tuple)):
+            vals = []
+            for col in annotation:
+                if col in segment.columns:
+                    val = segment[col].iloc[0]
+                else:
+                    val = meta.get(col, None)
+                vals.append(f"{col}={val}")
+            return " | ".join(vals)
+
+        # Format string or "default"
+        if isinstance(annotation, str):
+            if annotation == "default":
+                return f"{meta['category']}\n{meta['unique_id']}"
+            # Build context for formatting
+            ctx = dict(meta)  # start with meta
+            # Allow direct column access if user wrote {some_col}
+            # Pull first element for each column name present
+            for col in segment.columns:
+                if col not in ctx:
+                    try:
+                        ctx[col] = segment[col].iloc[0]
+                    except Exception:
+                        pass
+            try:
+                return annotation.format(**ctx)
+            except KeyError as e:
+                return f"(missing {e.args[0]} in annotation)"
+            except Exception as e:
+                return f"(annotation error: {e})"
+
+        # Fallback
+        return f"{meta['category']}\n{meta['unique_id']}"
+
+    # Plot each track
+    for idx, (segment, (category, unique_id, segment_length)) in enumerate(zip(all_track_segments, track_info)):
+        if idx >= len(axes):
+            break
+
+        ax = axes[idx]
+
+        x_coords = segment['x_um'].values
+        y_coords = segment['y_um'].values
+
+        x_center = x_coords.mean()
+        y_center = y_coords.mean()
+
+        color = category_color_map[category]
+        ax.plot(x_coords, y_coords, color=color, linewidth=line_width, alpha=0.8)
+
+        half_size = subplot_size / 2
+        ax.set_xlim(x_center - half_size, x_center + half_size)
+        ax.set_ylim(y_center - half_size, y_center + half_size)
+        ax.set_aspect('equal')
+
+        ax.axis('off')
+        ax.set_facecolor(axis_background)
+
+        # Build meta for annotation formatting
+        start_frame = int(segment['frame'].min())
+        end_frame = int(segment['frame'].max())
+        # window_uid = None
+        # if 'window_uid' in segment.columns:
+        #     try:
+        #         window_uid = segment['window_uid'].iloc[0]
+        #     except Exception:
+        #         pass
+        # --- NEW: support multiple window_uids if segment crosses windows ---
+        window_uid = None
+        window_uids = None
+        if 'window_uid' in segment.columns:
+            vals = segment['window_uid'].dropna().astype(str)
+            if len(vals) > 0:
+                window_uids = sorted(vals.unique())
+                window_uid = ", ".join(window_uids)   # show all windows in this segment
+
+
+        meta = {
+            'category': category,
+            'unique_id': unique_id,
+            'segment_length': int(segment_length),
+            'start_frame': start_frame,
+            'end_frame': end_frame,
+            'window_uid': window_uid,
+            'window_uids': window_uids
+        }
+
+        ann_text = _make_annotation_text(segment, meta)
+        if show_annotations and ann_text:
+            ax.text(
+                0.5, 0.95, ann_text,
+                transform=ax.transAxes,
+                ha='center', va='top',
+                fontsize=text_size,
+                color=annotation_color,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor='black', alpha=0.7)
+            )
+
+        plotted_tracks.append({
+            'category': category,
+            'unique_id': unique_id,
+            'segment_length': segment_length,
+            'x_center': x_center,
+            'y_center': y_center,
+            'subplot_index': idx,
+            'start_frame': start_frame,
+            'end_frame': end_frame,
+            'window_uid': window_uid
+        })
+
+    # Hide any unused subplots
+    for idx in range(len(all_track_segments), len(axes)):
+        axes[idx].axis('off')
+        axes[idx].set_facecolor(axis_background)
+
+    # Title
+    category_counts = {}
+    for category, _, _ in track_info:
+        category_counts[category] = category_counts.get(category, 0) + 1
+
+    title_text = f"Gallery of Tracks (colored by {color_by})\n"
+    title_text += " | ".join([f"{cat}: {count}" for cat, count in category_counts.items()])
+
+    fig.suptitle(
+        title_text,
+        fontsize=text_size + 2,
+        color=annotation_color if transparent_background else "black",
+        y=0.98
+    )
+
+    # Save
+    if save_path is None:
+        save_path = f"gallery_of_tracks_{color_by}.{export_format}"
+
+    plt.savefig(
+        save_path,
+        format=export_format,
+        dpi=dpi,
+        bbox_inches='tight',
+        transparent=transparent_background,
+        facecolor=figure_background
+    )
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+
+    return {
+        'plotted_tracks': plotted_tracks,
+        'category_counts': category_counts,
+        'total_tracks': len(all_track_segments),
+        'subplot_size_um': subplot_size,
+        'grid_dimensions': (grid_rows, grid_cols),
+        'save_path': save_path,
+        'categories': categories
+    }
+
+
+
+def plot_stacked_bar_percentage(
+    df,
+    x_category,
+    stack_category,
+    unique_id_col='unique_id',
+    x_order=None,
+    stack_order=None,
+    palette='colorblind',
+    figsize=(10, 6),
+    title=None,
+    xlabel=None,
+    ylabel='Percentage (%)',
+    show_percentages=True,
+    percentage_threshold=5.0,
+    font_size=12,
+    transparent_background=False,
+    line_color='black',
+    grid=True,
+    save_path=None,
+    export_format='png',
+    return_svg=False,
+    show_plot=True,
+    dpi=300,
+):
+    """
+    Create a 100% stacked bar chart showing distribution of stack_category within each x_category.
+    
+    Automatically handles counting unique tracks and calculating percentages.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame or pl.DataFrame
+        Input dataframe (accepts both pandas and polars).
+    x_category : str
+        Column name for x-axis categories (e.g., 'mol', 'condition').
+    stack_category : str
+        Column name for stacking categories (e.g., 'gate_name', 'cluster_id').
+    unique_id_col : str, optional
+        Column name containing unique track IDs. Default is 'unique_id'.
+    x_order : list, optional
+        Order of categories on x-axis. Default is None (sorted).
+    stack_order : list, optional
+        Order of stacking categories (bottom to top). Default is None (sorted).
+    palette : str or list, optional
+        Color palette. Can be 'colorblind', 'raiders'/'raiders_colors2', seaborn palette name,
+        or list of colors. Default is 'colorblind'.
+    figsize : tuple, optional
+        Figure size (width, height). Default is (10, 6).
+    title : str, optional
+        Plot title. Auto-generated if None.
+    xlabel : str, optional
+        X-axis label. Uses x_category if None.
+    ylabel : str, optional
+        Y-axis label. Default is 'Percentage (%)'.
+    show_percentages : bool, optional
+        Whether to show percentage labels on bars. Default is True.
+    percentage_threshold : float, optional
+        Minimum percentage to show label (avoids cluttering). Default is 5.0.
+    font_size : int, optional
+        Base font size. Default is 12.
+    transparent_background : bool, optional
+        Transparent background. Default is False.
+    line_color : str, optional
+        Color for text and lines. Default is 'black'.
+    grid : bool, optional
+        Whether to show y-axis gridlines. Default is True.
+    save_path : str, optional
+        Path to save figure. Default is None (no save).
+    export_format : str, optional
+        Export format ('png' or 'svg'). Default is 'png'.
+    return_svg : bool, optional
+        Return SVG string if export_format='svg'. Default is False.
+    show_plot : bool, optional
+        Whether to display plot. Default is True.
+    dpi : int, optional
+        Resolution for saved figure. Default is 300.
+    
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        Figure object.
+    ax : matplotlib.axes.Axes
+        Axes object.
+    summary_df : pd.DataFrame
+        Summary dataframe with percentages and counts.
+    svg_data : str (optional)
+        SVG string if return_svg=True and export_format='svg'.
+    
+    Examples
+    --------
+    >>> # Basic usage
+    >>> fig, ax, summary = spt.plot_stacked_bar_percentage(
+    ...     df, x_category='mol', stack_category='gate_name'
+    ... )
+    
+    >>> # With custom colors and order
+    >>> fig, ax, summary = spt.plot_stacked_bar_percentage(
+    ...     df,
+    ...     x_category='condition',
+    ...     stack_category='cluster_id',
+    ...     stack_order=['0', '1', '2', '3'],
+    ...     palette=['#0173B2', '#DE8F05', '#029E73', '#CC78BC']
+    ... )
+    """
+    # Detect and convert Polars DataFrames
+    try:
+        import polars as pl
+        is_polars_input = isinstance(df, pl.DataFrame)
+    except ImportError:
+        is_polars_input = False
+    
+    if is_polars_input:
+        # Use polars for efficient computation
+        # Get unique tracks per category combination
+        counts = (
+            df
+            .group_by([x_category, stack_category, unique_id_col])
+            .agg(pl.len().alias('n_windows'))
+            .group_by([x_category, stack_category])
+            .agg([
+                pl.col(unique_id_col).n_unique().alias('n_tracks'),
+                pl.col('n_windows').sum().alias('total_windows')
+            ])
+        )
+        
+        # Calculate totals per x_category
+        totals = (
+            counts
+            .group_by(x_category)
+            .agg(pl.col('n_tracks').sum().alias('total_tracks'))
+        )
+        
+        # Join and calculate percentages
+        summary_df = (
+            counts
+            .join(totals, on=x_category, how='left')
+            .with_columns([
+                (pl.col('n_tracks') / pl.col('total_tracks') * 100).alias('percentage')
+            ])
+            .sort([x_category, stack_category])
+            .to_pandas()
+        )
+    else:
+        # Use pandas
+        # Get unique tracks per category combination
+        counts = (
+            df.groupby([x_category, stack_category])[unique_id_col]
+            .nunique()
+            .reset_index()
+            .rename(columns={unique_id_col: 'n_tracks'})
+        )
+        
+        # Calculate totals per x_category
+        totals = (
+            counts.groupby(x_category)['n_tracks']
+            .sum()
+            .reset_index()
+            .rename(columns={'n_tracks': 'total_tracks'})
+        )
+        
+        # Join and calculate percentages
+        summary_df = counts.merge(totals, on=x_category)
+        summary_df['percentage'] = (summary_df['n_tracks'] / summary_df['total_tracks'] * 100)
+        summary_df = summary_df.sort_values([x_category, stack_category])
+    
+    # Determine orders
+    if x_order is None:
+        x_order = sorted(summary_df[x_category].unique())
+    if stack_order is None:
+        stack_order = sorted(summary_df[stack_category].unique())
+    
+    # Get colors
+    if palette == 'colorblind':
+        colors = [
+            '#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161',
+            '#FBAFE4', '#949494', '#ECE133', '#56B4E9', '#D55E00'
+        ]
+    elif palette == 'raiders' or palette == 'raiders_colors2':
+        colors = ['#ed1e24', '#DE8F05', '#6cc176', '#95d6d7']
+    elif isinstance(palette, (list, tuple)):
+        colors = palette
+    else:
+        # Try seaborn palette
+        try:
+            import seaborn as sns
+            colors = sns.color_palette(palette, n_colors=len(stack_order))
+        except:
+            colors = plt.cm.tab10(np.linspace(0, 1, len(stack_order)))
+    
+    # Ensure enough colors
+    while len(colors) < len(stack_order):
+        colors = colors * 2
+    colors = colors[:len(stack_order)]
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    if transparent_background:
+        fig.patch.set_facecolor('none')
+        ax.set_facecolor((0, 0, 0, 0))
+    
+    # Prepare data for stacking
+    x_pos = np.arange(len(x_order))
+    width = 0.6
+    bottom = np.zeros(len(x_order))
+    
+    # Create stacked bars
+    for i, stack_val in enumerate(stack_order):
+        stack_data = summary_df[summary_df[stack_category] == stack_val]
+        
+        # Get percentages for each x category
+        percentages = []
+        for x_val in x_order:
+            match = stack_data[stack_data[x_category] == x_val]
+            pct = match['percentage'].values[0] if len(match) > 0 else 0
+            percentages.append(pct)
+        
+        # Plot bar segment
+        bars = ax.bar(
+            x_pos, percentages, width,
+            bottom=bottom,
+            label=str(stack_val),
+            color=colors[i],
+            edgecolor='white',
+            linewidth=0.5
+        )
+        
+        # Add percentage labels
+        if show_percentages:
+            for j, (x_val, pct) in enumerate(zip(x_order, percentages)):
+                if pct > percentage_threshold:
+                    ax.text(
+                        x_pos[j],
+                        bottom[j] + pct/2,
+                        f'{pct:.1f}%',
+                        ha='center',
+                        va='center',
+                        fontsize=font_size - 2,
+                        fontweight='bold',
+                        color='white'
+                    )
+        
+        bottom += percentages
+    
+    # Styling
+    if xlabel is None:
+        xlabel = x_category
+    if title is None:
+        title = f'{stack_category} Distribution by {x_category} (100% Stacked)'
+    
+    ax.set_xlabel(xlabel, fontsize=font_size + 2, fontweight='bold', color=line_color)
+    ax.set_ylabel(ylabel, fontsize=font_size + 2, fontweight='bold', color=line_color)
+    ax.set_title(title, fontsize=font_size + 4, fontweight='bold', pad=20, color=line_color)
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(x_order, fontsize=font_size, color=line_color)
+    ax.set_ylim(0, 100)
+    ax.set_yticks(np.arange(0, 101, 20))
+    ax.tick_params(colors=line_color)
+    
+    # Legend
+    ax.legend(
+        title=stack_category,
+        bbox_to_anchor=(1.05, 1),
+        loc='upper left',
+        fontsize=font_size - 2,
+        title_fontsize=font_size
+    )
+    
+    # Grid
+    if grid:
+        ax.grid(True, alpha=0.3, axis='y', linestyle='--', color=line_color)
+    
+    # Spines
+    for spine in ax.spines.values():
+        spine.set_edgecolor(line_color)
+    
+    plt.tight_layout()
+    
+    # Save if requested
+    svg_data = None
+    if save_path is not None:
+        ext = export_format.lower()
+        if ext not in ['png', 'svg']:
+            print("Invalid export format. Defaulting to 'png'.")
+            ext = 'png'
+        
+        # Generate filename if directory provided
+        if os.path.isdir(save_path):
+            filename = f"{x_category}_by_{stack_category}_stacked.{ext}"
+            full_path = os.path.join(save_path, filename)
+        else:
+            # Use as full path, adjust extension
+            base, _ = os.path.splitext(save_path)
+            full_path = f"{base}.{ext}"
+        
+        if ext == 'svg':
+            import io
+            buf = io.BytesIO()
+            plt.savefig(buf, format='svg', dpi=dpi, bbox_inches='tight',
+                       transparent=transparent_background)
+            buf.seek(0)
+            svg_data = buf.read().decode('utf-8')
+            
+            with open(full_path, 'w') as f:
+                f.write(svg_data)
+        else:
+            plt.savefig(full_path, dpi=dpi, bbox_inches='tight',
+                       transparent=transparent_background)
+        
+        print(f"✅ Saved to: {full_path}")
+    
+    if show_plot:
+        plt.show()
+    
+    if return_svg and svg_data is not None:
+        return fig, ax, summary_df, svg_data
+    else:
+        return fig, ax, summary_df
+
+
 def create_test_track_data_polars(n_tracks=10, track_length=50, plot_size=8):
     """
     Create simulated track data in Polars format for testing.
@@ -9084,6 +9965,7 @@ def plot_xy_heatmap(
     y_col,
     plot_type='hexbin',
     color_by=None,
+    order=None,
     small_multiples=False,
     shared_scale=True,
     gridsize=50,
@@ -9096,6 +9978,7 @@ def plot_xy_heatmap(
     ylabel=None,
     scale_data=False,
     scale_method='standard',
+    scaler=None,
     scale_group_by=None,
     xlim=None,
     ylim=None,
@@ -9108,6 +9991,17 @@ def plot_xy_heatmap(
     return_svg=False,
     contour_levels=None,
     contour_cmap='viridis',
+    gates=None,
+    gate_order=None,
+    gate_colors='black',
+    gate_linewidth=2,
+    gate_alpha=0.1,
+    gate_edge_alpha=1.0,
+    gate_text_size=10,
+    gate_label_border=True,
+    gate_linestyle='--',
+    gate_fill_color=None,
+    gate_label_position='auto',
     **kwargs
 ):
     """
@@ -9115,8 +10009,8 @@ def plot_xy_heatmap(
     
     Parameters
     ----------
-    df : pd.DataFrame
-        DataFrame containing the data to plot.
+    df : pd.DataFrame or pl.DataFrame
+        DataFrame containing the data to plot. Accepts both pandas and polars.
     x_col : str
         Column name for x-axis.
     y_col : str
@@ -9130,6 +10024,11 @@ def plot_xy_heatmap(
         Column name to color/separate data by. If None, pools all data together.
         If specified, colors scatter plots by category or creates small multiples
         when small_multiples=True. Default is None.
+    order : list, optional
+        Custom order for categories when using color_by parameter. If None, 
+        categories will be sorted alphabetically. If provided, should be a list 
+        of category values in the desired display order. Only categories present 
+        in both the order list and the data will be plotted. Default is None.
     small_multiples : bool, optional
         If True and color_by is provided, creates separate subplots for each category.
         If False, plots all data together (colored by category for scatter).
@@ -9143,12 +10042,20 @@ def plot_xy_heatmap(
     figsize : tuple, optional
         Figure size (width, height) in inches. Default is (8, 6).
     cmap : str or list of str, optional
-        Colormap(s) for hexbin plots. 
-        - For single hexbin: string colormap name (default: 'inferno')
-        - For small multiples hexbin: list of colormaps, one per subplot
-          (default: ['inferno', 'viridis', 'plasma', 'magma', 'cividis', 'hot'])
-        - Ignored for scatter plots (uses categorical colors)
-        Good hexbin colormaps: 'inferno', 'hot', 'plasma', 'magma', 'viridis', 'cividis'.
+        Colormap(s) for plots. 
+        - For hexbin plots:
+          * Single hexbin: string colormap name (default: 'inferno')
+          * Small multiples hexbin: list of colormaps, one per subplot
+            (default: ['inferno', 'viridis', 'plasma', 'magma', 'cividis', 'hot'])
+        - For scatter plots:
+          * Continuous color_by (numeric, >20 unique values): colormap name 
+            (default: 'viridis'), displays with colorbar
+          * Categorical color_by: converts colormap to discrete colors, or pass 
+            list of colors directly
+          * Special value 'colorblind': Wong 2011 colorblind-friendly palette
+          * No color_by: ignored (uses default color)
+        Good colormaps: 'colorblind' (recommended!), 'viridis', 'plasma', 
+        'inferno', 'magma', 'cividis', 'coolwarm', 'RdYlBu', 'tab10', 'Set2'.
     alpha : float, optional
         Transparency for scatter plots. Default is 0.6.
     s : float or int, optional
@@ -9162,10 +10069,15 @@ def plot_xy_heatmap(
     scale_data : bool, optional
         If True, applies scaling to x_col and y_col before plotting. Default is False.
     scale_method : str, optional
-        Scaling method to use if scale_data=True. Default is 'standard'.
+        Scaling method to use if scale_data=True and scaler is None. Default is 'standard'.
         Options: 'standard', 'minmax', 'robust', 'standard_minmax', etc.
+    scaler : sklearn scaler object, optional
+        Pre-fitted scaler to use for transforming data. If provided, this scaler
+        will be used instead of fitting a new one (CRITICAL for Option A gating).
+        The scaler must have a .transform() method and be already fitted.
+        Default is None.
     scale_group_by : str or list of str, optional
-        Group by column(s) for scaling. Default is None.
+        Group by column(s) for scaling. Only used if scaler is None. Default is None.
     xlim : tuple, optional
         X-axis limits (xmin, xmax). Default is None (auto).
     ylim : tuple, optional
@@ -9198,6 +10110,49 @@ def plot_xy_heatmap(
     contour_cmap : str, optional
         Colormap for contour lines when contour_levels is specified.
         Default is 'viridis'.
+    gates : ROIManager or list, optional
+        Gates to draw on the plot. Can be:
+        - An ROIManager object (e.g., from interactive_roi_gating_with_capture)
+        - A list of gate dictionaries with 'coordinates', 'type', and optional 'name'
+        Default is None (no gates drawn).
+    gate_order : list of str, optional
+        Order of gate names for color assignment. If provided, gates will be colored
+        in this order. Only gates present in both gate_order and the data will be drawn.
+        This ensures consistent color mapping across multiple plots. Default is None
+        (uses order from ROIManager or alphabetical by gate name).
+    gate_colors : str or list of str, optional
+        Color(s) for gate edges/borders. Can be a single color or list of colors.
+        Good options for dashed lines: 'black', 'darkgray', 'navy', 'darkgreen',
+        'darkred', 'purple'. Default is 'black'.
+    gate_linewidth : float, optional
+        Line width for gate borders. Default is 2.
+    gate_alpha : float, optional
+        Transparency for gate fill (0-1). Set to 0 for no fill. Default is 0.1.
+        This does NOT affect edge transparency - edges use gate_edge_alpha.
+    gate_edge_alpha : float, optional
+        Transparency for gate edges/borders (0-1). Default is 1.0 (fully opaque).
+        Keep at 1.0 for clear, visible gate boundaries.
+    gate_text_size : float, optional
+        Font size for gate labels. Default is 10.
+    gate_label_border : bool, optional
+        Whether to draw a border around gate label text boxes. Default is True.
+    gate_linestyle : str, optional
+        Line style for gate borders. Options: '-' (solid), '--' (dashed), 
+        '-.' (dash-dot), ':' (dotted). Default is '--' (dashed).
+    gate_fill_color : str or None, optional
+        Fill color for gates. If None, uses same color as edge with alpha.
+        Set to 'none' for transparent fill. Good options: 'lightgray', 'lightblue',
+        'lightyellow', 'white', or 'none'. Default is None (uses edge color).
+    gate_label_position : str, optional
+        Label position strategy. Options:
+        - 'auto': Smart positioning based on gate location (recommended)
+          * Gates closer to left side (0) → label at top-left corner
+          * Gates closer to right side (1) → label at top-right corner
+          * Always positions at top of gate for visibility
+        - 'top-left': Always top-left corner
+        - 'top-right': Always top-right corner
+        - 'center': Center of gate
+        Default is 'auto'.
     **kwargs
         Additional keyword arguments passed to plotting functions.
     
@@ -9215,12 +10170,30 @@ def plot_xy_heatmap(
     >>> # Simple hexbin plot (all data pooled)
     >>> fig, ax = plot_xy_heatmap(df, 'x_um', 'y_um')
     
-    >>> # Scatter plot colored by category
+    >>> # Scatter plot colored by category (automatic colors)
     >>> fig, ax = plot_xy_heatmap(df, 'speed', 'D', plot_type='scatter', color_by='mol')
+    
+    >>> # Scatter plot with colorblind-friendly palette (recommended!)
+    >>> fig, ax = plot_xy_heatmap(df, 'speed', 'D', plot_type='scatter', 
+    ...                            color_by='mol', cmap='colorblind')
+    
+    >>> # Scatter plot with other custom colormap for categories
+    >>> fig, ax = plot_xy_heatmap(df, 'speed', 'D', plot_type='scatter', 
+    ...                            color_by='mol', cmap='Set2')
+    
+    >>> # Scatter plot with continuous colormap (for numeric color_by)
+    >>> fig, ax = plot_xy_heatmap(df, 'x_um', 'y_um', plot_type='scatter',
+    ...                            color_by='speed', cmap='plasma')
     
     >>> # Small multiples by condition
     >>> fig, axes = plot_xy_heatmap(df, 'x_um', 'y_um', 
     ...                              color_by='condition',
+    ...                              small_multiples=True)
+    
+    >>> # Small multiples with custom order
+    >>> fig, axes = plot_xy_heatmap(df, 'x_um', 'y_um', 
+    ...                              color_by='condition',
+    ...                              order=['control', 'drug1', 'drug2'],
     ...                              small_multiples=True)
     
     >>> # With data scaling
@@ -9228,19 +10201,71 @@ def plot_xy_heatmap(
     ...                            scale_data=True,
     ...                            scale_method='standard_minmax')
     
+    >>> # With gates (dashed lines, no fill, opaque edges)
+    >>> fig, ax = plot_xy_heatmap(df, 'x_um', 'y_um',
+    ...                            gates=roi_manager,
+    ...                            gate_colors='black',
+    ...                            gate_linestyle='--',
+    ...                            gate_fill_color='none',
+    ...                            gate_linewidth=2,
+    ...                            gate_edge_alpha=1.0)  # Opaque edges (default)
+    
+    >>> # With gates (transparent fill, smart auto label positioning, separate alphas)
+    >>> fig, ax = plot_xy_heatmap(df, 'x_um', 'y_um',
+    ...                            gates=roi_manager,
+    ...                            gate_colors='navy',
+    ...                            gate_fill_color='lightblue',
+    ...                            gate_alpha=0.15,          # Fill transparency
+    ...                            gate_edge_alpha=1.0,      # Opaque edges
+    ...                            gate_label_position='auto')  # Smart: left gates→top-left, right gates→top-right
+    
+    >>> # With gates (no label borders for clean look)
+    >>> fig, ax = plot_xy_heatmap(df, 'x_um', 'y_um',
+    ...                            gates=roi_manager,
+    ...                            gate_colors='black',
+    ...                            gate_linestyle='--',
+    ...                            gate_fill_color='none',
+    ...                            gate_label_border=False)  # No borders around labels
+    
+    >>> # With gates (consistent color mapping across plots)
+    >>> gate_names = ['Low_Speed', 'Medium_Speed', 'High_Speed', 'Very_High']
+    >>> gate_colors = ['#0173B2', '#DE8F05', '#029E73', '#CC78BC']
+    >>> fig, ax = plot_xy_heatmap(df, 'x_um', 'y_um',
+    ...                            gates=roi_manager,
+    ...                            gate_order=gate_names,  # Consistent order
+    ...                            gate_colors=gate_colors,  # Matches order
+    ...                            gate_linestyle='--')
+    
     """
-    # Create a copy of the dataframe to avoid modifying the original
-    plot_df = df.copy()
+    # Detect and convert Polars DataFrames to Pandas for plotting
+    # Matplotlib requires pandas/numpy for plotting operations
+    try:
+        import polars as pl
+        is_polars_input = isinstance(df, pl.DataFrame)
+    except ImportError:
+        is_polars_input = False
+    
+    if is_polars_input:
+        # Convert to pandas for plotting (matplotlib requires pandas/numpy)
+        plot_df = df.to_pandas()
+    else:
+        # Create a copy of the dataframe to avoid modifying the original
+        plot_df = df.copy()
     
     # Apply scaling if requested
     if scale_data:
-        plot_df = center_scale_data(
-            plot_df,
-            columns=[x_col, y_col],
-            method=scale_method,
-            group_by=scale_group_by,
-            copy=False
-        )
+        if scaler is not None:
+            # Use the provided scaler (OPTION A - for population-level gating)
+            plot_df[[x_col, y_col]] = scaler.transform(plot_df[[x_col, y_col]])
+        else:
+            # Fit a new scaler on this data (default behavior)
+            plot_df = center_scale_data(
+                plot_df,
+                columns=[x_col, y_col],
+                method=scale_method,
+                group_by=scale_group_by,
+                copy=False
+            )
     
     # Set default labels
     if xlabel is None:
@@ -9293,7 +10318,13 @@ def plot_xy_heatmap(
     
     # Determine if we need subplots based on color_by and small_multiples
     if color_by is not None and small_multiples:
-        categories = sorted(plot_df[color_by].unique())
+        if order is not None:
+            # Use custom order, filtering to only include categories present in data
+            unique_vals = set(plot_df[color_by].unique())
+            categories = [cat for cat in order if cat in unique_vals]
+        else:
+            # Default: sort alphabetically
+            categories = sorted(plot_df[color_by].unique())
         n_cats = len(categories)
         
         # Always create vertical stack of plots for small multiples
@@ -9361,8 +10392,36 @@ def plot_xy_heatmap(
                 
             elif plot_type == 'scatter':
                 # For scatter in small multiples, use uniform single color per subplot
-                # Use same color palette as non-multiples but cycle through colors
-                color_palette = plt.cm.tab10(idx % 10)
+                # Get color from specified palette or use default
+                if cmap == 'colorblind':
+                    # Use Wong 2011 colorblind-friendly palette
+                    colorblind_colors = [
+                        '#0173B2',  # Blue
+                        '#DE8F05',  # Orange  
+                        '#029E73',  # Green
+                        '#CC78BC',  # Purple
+                        '#CA9161',  # Brown
+                        '#FBAFE4',  # Pink
+                        '#949494',  # Gray
+                        '#ECE133',  # Yellow
+                        '#56B4E9',  # Sky blue
+                        '#D55E00'   # Vermillion
+                    ]
+                    color_palette = colorblind_colors[idx % len(colorblind_colors)]
+                elif cmap is not None and isinstance(cmap, (list, tuple)):
+                    # Custom list of colors
+                    color_palette = cmap[idx % len(cmap)]
+                elif cmap is not None and isinstance(cmap, str):
+                    # Try to use as colormap
+                    try:
+                        colormap = plt.cm.get_cmap(cmap)
+                        color_palette = colormap(idx / n_cats)
+                    except:
+                        color_palette = plt.cm.tab10(idx % 10)
+                else:
+                    # Default to tab10
+                    color_palette = plt.cm.tab10(idx % 10)
+                
                 ax.scatter(cat_df[x_col], cat_df[y_col], s=s, alpha=alpha, 
                           color=color_palette, **kwargs)
                 
@@ -9424,19 +10483,85 @@ def plot_xy_heatmap(
             
         elif plot_type == 'scatter':
             if color_by is not None and color_by in plot_df.columns:
-                # Color by specified column
-                unique_colors = sorted(plot_df[color_by].unique())
-                for color_val in unique_colors:
-                    color_df = plot_df[plot_df[color_by] == color_val]
-                    ax.scatter(
-                        color_df[x_col],
-                        color_df[y_col],
+                # Check if color_by is numeric (continuous) or categorical
+                is_numeric_color = np.issubdtype(plot_df[color_by].dtype, np.number)
+                n_unique = plot_df[color_by].nunique()
+                
+                # Treat as continuous if numeric and many unique values
+                if is_numeric_color and n_unique > 20:
+                    # Continuous coloring with colormap
+                    scatter_cmap = cmap if cmap is not None else 'viridis'
+                    scatter = ax.scatter(
+                        plot_df[x_col],
+                        plot_df[y_col],
+                        c=plot_df[color_by],
                         s=s,
                         alpha=alpha,
-                        label=str(color_val),
+                        cmap=scatter_cmap,
                         **kwargs
                     )
-                ax.legend(title=color_by, bbox_to_anchor=(1.05, 1), loc='upper left')
+                    cbar = plt.colorbar(scatter, ax=ax, label=color_by)
+                    cbar.ax.yaxis.set_tick_params(color=line_color)
+                    cbar.ax.yaxis.label.set_color(line_color)
+                    plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color=line_color)
+                else:
+                    # Categorical coloring
+                    if order is not None:
+                        # Use custom order, filtering to only include categories present in data
+                        unique_vals = set(plot_df[color_by].unique())
+                        unique_colors = [cat for cat in order if cat in unique_vals]
+                    else:
+                        # Default: sort alphabetically
+                        unique_colors = sorted(plot_df[color_by].unique())
+                    
+                    # Get colors from colormap if provided, otherwise use default palette
+                    if cmap is not None:
+                        # Handle special palette names
+                        if cmap == 'colorblind':
+                            # Use Wong 2011 colorblind-friendly palette
+                            colors = [
+                                '#0173B2',  # Blue
+                                '#DE8F05',  # Orange  
+                                '#029E73',  # Green
+                                '#CC78BC',  # Purple
+                                '#CA9161',  # Brown
+                                '#FBAFE4',  # Pink
+                                '#949494',  # Gray
+                                '#ECE133',  # Yellow
+                                '#56B4E9',  # Sky blue
+                                '#D55E00'   # Vermillion
+                            ]
+                        elif isinstance(cmap, str):
+                            # Try to get it as a matplotlib colormap
+                            try:
+                                colormap = plt.cm.get_cmap(cmap)
+                                colors = [colormap(i / len(unique_colors)) for i in range(len(unique_colors))]
+                            except ValueError:
+                                # If not a valid colormap, try as seaborn palette
+                                try:
+                                    import seaborn as sns
+                                    colors = sns.color_palette(cmap, n_colors=len(unique_colors))
+                                except:
+                                    # Fall back to default
+                                    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+                        else:
+                            colors = cmap  # Assume it's a list of colors
+                    else:
+                        # Use matplotlib's default color cycle
+                        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+                    
+                    for idx, color_val in enumerate(unique_colors):
+                        color_df = plot_df[plot_df[color_by] == color_val]
+                        ax.scatter(
+                            color_df[x_col],
+                            color_df[y_col],
+                            s=s,
+                            alpha=alpha,
+                            color=colors[idx % len(colors)],
+                            label=str(color_val),
+                            **kwargs
+                        )
+                    ax.legend(title=color_by, bbox_to_anchor=(1.05, 1), loc='upper left')
                 
                 # Add contours if requested (on all data)
                 if contour_levels is not None:
@@ -9444,6 +10569,7 @@ def plot_xy_heatmap(
                                         levels=contour_levels, cmap_name=contour_cmap)
             else:
                 # Single color scatter (pool all data)
+                # For single scatter without color_by, cmap is not used
                 ax.scatter(plot_df[x_col], plot_df[y_col], s=s, alpha=alpha, **kwargs)
                 
                 # Add contours if requested
@@ -9467,6 +10593,227 @@ def plot_xy_heatmap(
         for spine in ax.spines.values():
             spine.set_edgecolor(line_color)
         axes = ax
+    
+    # Draw gates if provided
+    if gates is not None:
+        # Handle both ROIManager object and list of gate dictionaries
+        gate_list = []
+        if hasattr(gates, 'rois'):  # ROIManager object
+            # If scale_data is False and ROIManager has a scaler, we need to inverse transform
+            # the gate coordinates to match the unscaled plot
+            if not scale_data and hasattr(gates, 'scaler') and gates.scaler is not None:
+                gate_list = gates.get_inverse_transformed_gates()
+            else:
+                gate_list = gates.rois
+        elif isinstance(gates, list):  # List of gate dicts
+            gate_list = gates
+        else:
+            print(f"Warning: gates parameter type not recognized. Expected ROIManager or list.")
+        
+        # Apply gate_order if provided
+        if gate_order is not None:
+            # Create mapping of gate names to gates
+            gate_dict = {gate.get('name', f"Gate {i}"): gate for i, gate in enumerate(gate_list)}
+            # Reorder gates according to gate_order, filtering to only include present gates
+            ordered_gates = []
+            for gate_name in gate_order:
+                if gate_name in gate_dict:
+                    ordered_gates.append(gate_dict[gate_name])
+            gate_list = ordered_gates
+        
+        # Draw gates on all axes
+        axes_to_draw = [axes] if not isinstance(axes, np.ndarray) else axes.flatten()
+        
+        from matplotlib.patches import Rectangle
+        from matplotlib.patches import Polygon as MplPolygon
+        import matplotlib.colors as mcolors
+        
+        for ax_obj in axes_to_draw:
+            # Get axis limits for smart positioning
+            x_lim = ax_obj.get_xlim()
+            y_lim = ax_obj.get_ylim()
+            x_range = x_lim[1] - x_lim[0]
+            y_range = y_lim[1] - y_lim[0]
+            x_mid = (x_lim[0] + x_lim[1]) / 2
+            y_mid = (y_lim[0] + y_lim[1]) / 2
+            
+            for i, gate in enumerate(gate_list):
+                coords = gate.get('coordinates', [])
+                gate_name = gate.get('name', f"Gate {i}")
+                
+                if not coords:
+                    continue
+                
+                # Determine gate edge color
+                if isinstance(gate_colors, str):
+                    edge_color_base = gate_colors
+                elif isinstance(gate_colors, list):
+                    edge_color_base = gate_colors[i % len(gate_colors)]
+                else:
+                    edge_color_base = 'black'
+                
+                # Convert edge color to RGBA with edge_alpha baked in
+                edge_rgba = mcolors.to_rgba(edge_color_base, alpha=gate_edge_alpha)
+                
+                # Determine gate fill color with fill_alpha baked in
+                if gate_fill_color == 'none':
+                    fill_rgba = 'none'
+                elif gate_fill_color is not None:
+                    # Convert fill color to RGBA with gate_alpha baked in
+                    fill_rgba = mcolors.to_rgba(gate_fill_color, alpha=gate_alpha)
+                else:
+                    # Use edge color with gate_alpha for fill
+                    fill_rgba = mcolors.to_rgba(edge_color_base, alpha=gate_alpha)
+                
+                # Draw based on gate type
+                if gate.get('type') == 'rect':
+                    # Rectangle gate
+                    x0, y0 = coords[0]
+                    x1, y1 = coords[2]  # Opposite corner
+                    width = x1 - x0
+                    height = y1 - y0
+                    
+                    rect = Rectangle(
+                        (x0, y0), width, height,
+                        linewidth=gate_linewidth,
+                        edgecolor=edge_rgba,  # RGBA with edge_alpha baked in
+                        facecolor=fill_rgba,  # RGBA with fill_alpha baked in (or 'none')
+                        linestyle=gate_linestyle,
+                        label=gate_name
+                    )
+                    # Don't set alpha parameter - it would multiply with the baked-in alphas!
+                    ax_obj.add_patch(rect)
+                    
+                    # Smart label positioning
+                    gate_center_x = x0 + width / 2
+                    gate_center_y = y0 + height / 2
+                    
+                    if gate_label_position == 'auto':
+                        # Smart positioning based on gate proximity to 0 and 1 on axes
+                        # Calculate how close gate is to min (0-like) vs max (1-like) on each axis
+                        
+                        # For X-axis: determine if gate is closer to left (0) or right (1)
+                        dist_to_left = gate_center_x - x_lim[0]
+                        dist_to_right = x_lim[1] - gate_center_x
+                        
+                        # For Y-axis: we always want labels at TOP of gates for visibility
+                        # but adjust horizontal position based on X proximity
+                        
+                        if dist_to_left < dist_to_right:
+                            # Gate closer to left/0 side → label at top-left
+                            label_x = x0 + width * 0.05
+                            ha = 'left'
+                        else:
+                            # Gate closer to right/1 side → label at top-right
+                            label_x = x1 - width * 0.05
+                            ha = 'right'
+                        
+                        # Always put labels at top of gate for better visibility
+                        label_y = y1 - height * 0.05
+                        va = 'top'
+                    elif gate_label_position == 'top-left':
+                        label_x = x0 + width * 0.05
+                        label_y = y1 - height * 0.05
+                        ha = 'left'
+                        va = 'top'
+                    elif gate_label_position == 'top-right':
+                        label_x = x1 - width * 0.05
+                        label_y = y1 - height * 0.05
+                        ha = 'right'
+                        va = 'top'
+                    elif gate_label_position == 'center':
+                        label_x = gate_center_x
+                        label_y = gate_center_y
+                        ha = 'center'
+                        va = 'center'
+                    else:
+                        # Default to top-left
+                        label_x = x0 + width * 0.05
+                        label_y = y1 - height * 0.05
+                        ha = 'left'
+                        va = 'top'
+                    
+                    # Add label
+                    if gate_label_border:
+                        label_bbox = dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, 
+                                         edgecolor=edge_color_base, linewidth=1)
+                    else:
+                        label_bbox = dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, 
+                                         edgecolor='none', linewidth=0)
+                    
+                    ax_obj.text(
+                        label_x,
+                        label_y,
+                        gate_name,
+                        fontsize=gate_text_size,
+                        color=edge_color_base,  # Use base color for text
+                        fontweight='bold',
+                        ha=ha,
+                        va=va,
+                        bbox=label_bbox
+                    )
+                else:
+                    # Polygon gate
+                    polygon = MplPolygon(
+                        coords,
+                        linewidth=gate_linewidth,
+                        edgecolor=edge_rgba,  # RGBA with edge_alpha baked in
+                        facecolor=fill_rgba,  # RGBA with fill_alpha baked in (or 'none')
+                        linestyle=gate_linestyle,
+                        label=gate_name
+                    )
+                    # Don't set alpha parameter - it would multiply with the baked-in alphas!
+                    ax_obj.add_patch(polygon)
+                    
+                    # Add label for polygon
+                    xs, ys = zip(*coords)
+                    cx, cy = np.mean(xs), np.mean(ys)
+                    
+                    # Smart positioning for polygon
+                    if gate_label_position == 'auto':
+                        # Use same logic as rectangles: proximity to left vs right
+                        dist_to_left = cx - x_lim[0]
+                        dist_to_right = x_lim[1] - cx
+                        
+                        if dist_to_left < dist_to_right:
+                            # Polygon closer to left/0 side → position label to left
+                            ha = 'right'
+                            label_offset_x = -0.02 * x_range
+                        else:
+                            # Polygon closer to right/1 side → position label to right
+                            ha = 'left'
+                            label_offset_x = 0.02 * x_range
+                        
+                        # Position slightly above centroid
+                        va = 'bottom'
+                        label_offset_y = 0.02 * y_range
+                        
+                        label_x = cx + label_offset_x
+                        label_y = cy + label_offset_y
+                    else:
+                        label_x = cx
+                        label_y = cy
+                        ha = 'center'
+                        va = 'center'
+                    
+                    if gate_label_border:
+                        label_bbox = dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, 
+                                         edgecolor=edge_color_base, linewidth=1)
+                    else:
+                        label_bbox = dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, 
+                                         edgecolor='none', linewidth=0)
+                    
+                    ax_obj.text(
+                        label_x,
+                        label_y,
+                        gate_name,
+                        fontsize=gate_text_size,
+                        color=edge_color_base,  # Use base color for text
+                        fontweight='bold',
+                        ha=ha,
+                        va=va,
+                        bbox=label_bbox
+                    )
     
     # Set overall title
     if title is not None:
@@ -10089,5 +11436,1314 @@ def load_roi_coordinates(filename, save_path=None):
     print(f"   {len(roi_coords)} vertices")
     
     return roi_coords
+
+
+def interactive_roi_gating_with_capture(
+    df,
+    x_col,
+    y_col,
+    color_by=None,
+    scale_data=False,
+    scale_method='standard',
+    scaler=None,
+    roi_manager=None,
+    title=None,
+    point_size=3,
+    opacity=0.6,
+    contour_density=True,
+    n_contours=10,
+    contour_colorscale='Viridis',
+    height=700,
+    width=900,
+    show_legend=True,
+    sample_frac=None,
+    colorscale='Plotly',
+):
+    """
+    Interactive FACS-style gating plot with automatic ROI coordinate capture.
+    
+    This enhanced version uses FigureWidget to automatically capture drawn ROI coordinates
+    in real-time, making it easy to extract gated data without manual coordinate entry.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame or pl.DataFrame
+        DataFrame containing the data to plot. Accepts both pandas and polars.
+    x_col : str
+        Column name for x-axis.
+    y_col : str
+        Column name for y-axis.
+    color_by : str, optional
+        Column name to color points by. If None, all points are the same color.
+    scale_data : bool, optional
+        If True, applies scaling to x_col and y_col before plotting. Default is False.
+    scale_method : str, optional
+        Scaling method if scale_data=True. Options: 'standard', 'minmax', 
+        'robust', 'standard_minmax'. Default is 'standard'.
+    scaler : sklearn scaler object, optional
+        Pre-fitted scaler to use for transforming data. If provided, this scaler
+        will be stored in the ROIManager and used for on-the-fly transformations
+        when classifying new data. This allows gates defined in scaled space to
+        be applied to unscaled data efficiently.
+    roi_manager : ROIManager, optional
+        Pre-initialized ROIManager object to use. If provided, this manager will
+        be used instead of creating a new one. This allows you to set up gates
+        programmatically before displaying the plot, or to reuse the same manager
+        across multiple plots. Default is None (creates a new manager).
+    title : str, optional
+        Plot title. Default is auto-generated.
+    point_size : int, optional
+        Size of scatter points. Default is 3.
+    opacity : float, optional
+        Opacity of scatter points (0-1). Default is 0.6.
+    contour_density : bool, optional
+        If True, adds density contours. Default is True.
+    n_contours : int, optional
+        Number of contour levels if contour_density=True. Default is 10.
+    contour_colorscale : str, optional
+        Colorscale for contours. Default is 'Viridis'.
+    height : int, optional
+        Plot height in pixels. Default is 700.
+    width : int, optional
+        Plot width in pixels. Default is 900.
+    show_legend : bool, optional
+        Whether to show legend. Default is True.
+    sample_frac : float, optional
+        Fraction of data to plot (for large datasets). Default is None.
+    colorscale : str, optional
+        Colorscale for continuous color_by values. Default is 'Plotly'.
+    
+    Returns
+    -------
+    fig : plotly.graph_objects.FigureWidget
+        Interactive FigureWidget with ROI capture capabilities.
+    roi_manager : ROIManager
+        Manager object containing captured ROI coordinates and extraction methods.
+        Access via: roi_manager.get_all_rois(), roi_manager.extract_data()
+    
+    Examples
+    --------
+    >>> # Example 1: Basic usage with automatic ROI manager creation
+    >>> fig, roi_manager = spt.interactive_roi_gating_with_capture(
+    ...     df, 'x', 'y', color_by='mol', scale_data=True
+    ... )
+    >>> display(fig)
+    >>> 
+    >>> # Example 2: With fitted scaler
+    >>> from sklearn.preprocessing import StandardScaler
+    >>> from sklearn.pipeline import Pipeline
+    >>> scaler = Pipeline([('std', StandardScaler()), ('minmax', MinMaxScaler())])
+    >>> scaler.fit(df[['x', 'y']])
+    >>> fig, roi_manager = spt.interactive_roi_gating_with_capture(
+    ...     df, 'x', 'y', color_by='mol', scale_data=True, scaler=scaler
+    ... )
+    >>> display(fig)
+    >>> 
+    >>> # Example 3: Pre-create ROI manager and add gates programmatically
+    >>> # Create manager separately
+    >>> roi_manager = spt.ROIManager(df, 'x', 'y', scaler=scaler)
+    >>> # Add gates before plotting
+    >>> roi_manager.add_rectangle_gate(x_min=0.0, x_max=0.3, y_min=0.0, y_max=0.2, name='Gate1')
+    >>> roi_manager.add_rectangle_gate(x_min=0.5, x_max=1.0, y_min=0.5, y_max=1.0, name='Gate2')
+    >>> # Now create the plot with the pre-configured manager
+    >>> fig, roi_manager = spt.interactive_roi_gating_with_capture(
+    ...     df, 'x', 'y', color_by='mol', scale_data=True, roi_manager=roi_manager
+    ... )
+    >>> display(fig)
+    >>> 
+    >>> # After drawing (or using pre-defined gates), get all ROIs
+    >>> rois = roi_manager.get_all_rois()
+    >>> print(f"Captured {len(rois)} ROIs")
+    >>> 
+    >>> # Extract data for a specific ROI
+    >>> gated_df = roi_manager.extract_data(roi_index=0)
+    >>> 
+    >>> # Or extract data for all ROIs
+    >>> all_gated_data = roi_manager.extract_all_data()
+    >>> 
+    >>> # Apply gates to NEW data (scaler transforms automatically!)
+    >>> df_classified = roi_manager.classify_data(new_df)
+    >>> 
+    >>> # Save ROIs
+    >>> roi_manager.save_all_rois('my_gates', save_path='./gates/')
+    """
+    try:
+        import plotly.graph_objects as go
+        import plotly.express as px
+    except ImportError:
+        raise ImportError(
+            "Plotly is required for interactive gating. "
+            "Install with: pip install plotly"
+        )
+    
+    # Detect and convert Polars DataFrames
+    try:
+        import polars as pl
+        is_polars_input = isinstance(df, pl.DataFrame)
+    except ImportError:
+        is_polars_input = False
+    
+    if is_polars_input:
+        # Convert to pandas for Plotly
+        df_pandas = df.to_pandas()
+    else:
+        df_pandas = df
+    
+    # Create or use provided ROI manager
+    if roi_manager is None:
+        # Create ROI manager to store captured coordinates
+        # If a scaler is provided, store it for on-the-fly transformations
+        # Pass the original df (can be polars or pandas) - ROIManager handles both
+        roi_manager = ROIManager(df, x_col, y_col, scaler=scaler)
+    else:
+        # Use provided ROI manager, but update its dataframe and columns
+        roi_manager.df = df
+        roi_manager.x_col = x_col
+        roi_manager.y_col = y_col
+        # Update scaler if one was provided (otherwise keep the manager's scaler)
+        if scaler is not None:
+            roi_manager.scaler = scaler
+    
+    # Create a copy and apply scaling if requested
+    plot_df = df_pandas.copy()
+    
+    if sample_frac is not None:
+        if 0 < sample_frac < 1:
+            plot_df = plot_df.sample(frac=sample_frac, random_state=42)
+            print(f"📊 Sampled {len(plot_df):,} points ({sample_frac*100:.1f}% of data)")
+    
+    if scale_data:
+        # If a scaler was provided, use it; otherwise use center_scale_data
+        if scaler is not None:
+            plot_df[[x_col, y_col]] = scaler.transform(plot_df[[x_col, y_col]])
+            print(f"✓ Data scaled using provided scaler")
+        else:
+            plot_df = center_scale_data(
+                plot_df,
+                columns=[x_col, y_col],
+                method=scale_method,
+                copy=False
+            )
+            print(f"✓ Data scaled using '{scale_method}' method")
+    
+    roi_manager._plot_df = plot_df  # Store for later extraction
+    
+    # Set default title
+    if title is None:
+        title = f"{y_col} vs {x_col}"
+        if color_by:
+            title += f" (colored by {color_by})"
+    
+    # Create FigureWidget instead of Figure for callbacks
+    fig = go.FigureWidget()
+    
+    # Determine if color_by is categorical or continuous
+    is_categorical = False
+    if color_by is not None:
+        if plot_df[color_by].dtype == 'object' or plot_df[color_by].nunique() < 20:
+            is_categorical = True
+    
+    # Add scatter plot (same as before)
+    if color_by is None:
+        fig.add_trace(go.Scattergl(
+            x=plot_df[x_col],
+            y=plot_df[y_col],
+            mode='markers',
+            marker=dict(
+                size=point_size,
+                color='#636EFA',
+                opacity=opacity,
+                line=dict(width=0)
+            ),
+            name='Data',
+            showlegend=show_legend,
+            hovertemplate=(
+                f'{x_col}: %{{x:.3f}}<br>'
+                f'{y_col}: %{{y:.3f}}<br>'
+                '<extra></extra>'
+            )
+        ))
+    elif is_categorical:
+        categories = sorted(plot_df[color_by].unique())
+        colors = px.colors.qualitative.Plotly
+        if len(categories) > len(colors):
+            colors = px.colors.qualitative.Dark24
+        
+        for i, cat in enumerate(categories):
+            cat_df = plot_df[plot_df[color_by] == cat]
+            fig.add_trace(go.Scattergl(
+                x=cat_df[x_col],
+                y=cat_df[y_col],
+                mode='markers',
+                marker=dict(
+                    size=point_size,
+                    color=colors[i % len(colors)],
+                    opacity=opacity,
+                    line=dict(width=0)
+                ),
+                name=str(cat),
+                showlegend=show_legend,
+                hovertemplate=(
+                    f'{color_by}: {cat}<br>'
+                    f'{x_col}: %{{x:.3f}}<br>'
+                    f'{y_col}: %{{y:.3f}}<br>'
+                    '<extra></extra>'
+                )
+            ))
+    else:
+        fig.add_trace(go.Scattergl(
+            x=plot_df[x_col],
+            y=plot_df[y_col],
+            mode='markers',
+            marker=dict(
+                size=point_size,
+                color=plot_df[color_by],
+                colorscale=colorscale,
+                opacity=opacity,
+                showscale=True,
+                colorbar=dict(title=color_by),
+                line=dict(width=0)
+            ),
+            name='Data',
+            showlegend=False,
+            hovertemplate=(
+                f'{x_col}: %{{x:.3f}}<br>'
+                f'{y_col}: %{{y:.3f}}<br>'
+                f'{color_by}: %{{marker.color:.3f}}<br>'
+                '<extra></extra>'
+            )
+        ))
+    
+    # Add density contours if requested
+    if contour_density:
+        try:
+            from scipy.stats import gaussian_kde
+            
+            x_data = plot_df[x_col].values
+            y_data = plot_df[y_col].values
+            
+            mask = ~(np.isnan(x_data) | np.isnan(y_data))
+            x_data = x_data[mask]
+            y_data = y_data[mask]
+            
+            if len(x_data) > 10:
+                x_min, x_max = x_data.min(), x_data.max()
+                y_min, y_max = y_data.min(), y_data.max()
+                x_range = x_max - x_min
+                y_range = y_max - y_min
+                
+                x_min -= x_range * 0.05
+                x_max += x_range * 0.05
+                y_min -= y_range * 0.05
+                y_max += y_range * 0.05
+                
+                x_grid = np.linspace(x_min, x_max, 100)
+                y_grid = np.linspace(y_min, y_max, 100)
+                xx, yy = np.meshgrid(x_grid, y_grid)
+                
+                positions = np.vstack([xx.ravel(), yy.ravel()])
+                kernel = gaussian_kde(np.vstack([x_data, y_data]))
+                density = np.reshape(kernel(positions).T, xx.shape)
+                
+                fig.add_trace(go.Contour(
+                    x=x_grid,
+                    y=y_grid,
+                    z=density,
+                    colorscale=contour_colorscale,
+                    opacity=0.4,
+                    ncontours=n_contours,
+                    showscale=False,
+                    hoverinfo='skip',
+                    line=dict(width=1),
+                    name='Density'
+                ))
+        except Exception as e:
+            print(f"Warning: Could not add density contours: {e}")
+    
+    # Update layout with drawing tools
+    fig.update_layout(
+        title=dict(
+            text=title,
+            x=0.5,
+            xanchor='center',
+            font=dict(size=16)
+        ),
+        xaxis=dict(
+            title=x_col,
+            showgrid=True,
+            gridcolor='lightgray',
+            zeroline=True,
+            zerolinecolor='lightgray'
+        ),
+        yaxis=dict(
+            title=y_col,
+            showgrid=True,
+            gridcolor='lightgray',
+            zeroline=True,
+            zerolinecolor='lightgray'
+        ),
+        height=height,
+        width=width,
+        hovermode='closest',
+        dragmode='drawclosedpath',
+        newshape=dict(
+            line=dict(color='red', width=3),
+            fillcolor='rgba(255, 0, 0, 0.1)',
+            opacity=0.5
+        ),
+        modebar_add=[
+            'drawclosedpath',
+            'drawopenpath', 
+            'drawrect',
+            'eraseshape'
+        ],
+        template='plotly_white',
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="right",
+            x=0.99
+        )
+    )
+    
+    # Add callback to capture drawn shapes
+    def on_relayout(layout, shapes_data):
+        """Callback function to capture ROI coordinates when shapes are drawn."""
+        if 'shapes' in layout:
+            roi_manager.update_rois(layout['shapes'])
+    
+    fig.layout.on_change(on_relayout, 'shapes')
+    
+    # Store figure in manager for manual capture
+    roi_manager._fig = fig
+    
+    print("\n" + "="*80)
+    print("🎨 INTERACTIVE GATING PLOT WITH AUTO-CAPTURE")
+    print("="*80)
+    print(f"📊 Plotting {len(plot_df):,} points")
+    print(f"📈 X-axis: {x_col}")
+    print(f"📈 Y-axis: {y_col}")
+    if color_by:
+        print(f"🎨 Colored by: {color_by}")
+    print("\n" + "─"*80)
+    print("🖱️  HOW TO USE:")
+    print("─"*80)
+    print("1. Click 'Draw rectangle' or 'Draw closed shape' in the toolbar")
+    print("2. Draw your ROI on the plot:")
+    print("   - Rectangle: Click and drag")
+    print("   - Polygon: Click points, double-click to close")
+    print("3. After drawing, run: roi_manager.capture_rois()")
+    print("4. Then extract data: roi_manager.extract_all_data()")
+    print("─"*80)
+    print("💡 TIP: If auto-capture doesn't work, use roi_manager.capture_rois()")
+    print("="*80 + "\n")
+    
+    return fig, roi_manager
+
+
+class ROIManager:
+    """
+    Manager class for storing and manipulating captured ROI coordinates.
+    
+    Supports on-the-fly data scaling using a fitted scaler object. This allows
+    gates to be defined in scaled space while working with unscaled data, without
+    needing to store scaled columns in the dataframe.
+    """
+    
+    def __init__(self, df, x_col, y_col, scaler=None):
+        """
+        Initialize ROIManager.
+        
+        Parameters
+        ----------
+        df : pd.DataFrame or pl.DataFrame
+            Input dataframe
+        x_col : str
+            Column name for x-axis
+        y_col : str
+            Column name for y-axis
+        scaler : sklearn scaler object, optional
+            Pre-fitted scaler for transforming data (e.g., fitted StandardScaler
+            or custom pipeline). If provided, gates are assumed to be in scaled
+            space, and data will be transformed before checking gate membership.
+            The scaler must have a .transform() method and be already fitted.
+        """
+        self.df = df
+        self.x_col = x_col
+        self.y_col = y_col
+        self.scaler = scaler  # Store the fitted scaler
+        self._plot_df = df  # Will be updated with scaled/sampled data
+        self._fig = None  # Will store the figure for manual capture
+        self.rois = []
+    
+    def capture_rois(self):
+        """
+        Manually capture ROIs from the figure.
+        
+        Use this method after drawing your ROIs if automatic capture doesn't work.
+        This is the most reliable method to ensure your ROIs are captured.
+        
+        Returns
+        -------
+        int
+            Number of ROIs captured.
+        
+        Examples
+        --------
+        >>> # After drawing ROIs on the plot
+        >>> roi_manager.capture_rois()
+        ✅ Captured 2 ROI(s)
+        """
+        if self._fig is None:
+            print("❌ No figure available for capture.")
+            print("   Make sure you ran the cell that creates the figure first.")
+            return 0
+        
+        # Access shapes from figure layout
+        try:
+            shapes = self._fig.layout.shapes
+            
+            # Convert tuple to list if needed
+            if shapes is None:
+                shapes_list = []
+            elif isinstance(shapes, tuple):
+                shapes_list = list(shapes)
+            else:
+                shapes_list = shapes
+                
+            if len(shapes_list) > 0:
+                print(f"🔍 Found {len(shapes_list)} shape(s) in the figure...")
+                self.update_rois(shapes_list)
+                return len(self.rois)
+            else:
+                print("⚠️  No shapes found in the figure yet.")
+                print("\n📝 INSTRUCTIONS:")
+                print("   1. Look at the plot above")
+                print("   2. Find the toolbar at the TOP-RIGHT")
+                print("   3. Click the 'Draw rectangle' button (looks like a box 📦)")
+                print("   4. Click and DRAG on the plot to draw a rectangle")
+                print("   5. The rectangle should appear (might be faint)")
+                print("   6. Run this cell again to capture it")
+                print("\n💡 TIP: The shapes are stored in fig.layout.shapes")
+                print(f"   Current shapes: {self._fig.layout.shapes}")
+                return 0
+                
+        except Exception as e:
+            print(f"❌ Error accessing shapes: {e}")
+            print(f"   Figure type: {type(self._fig)}")
+            print(f"   Has layout: {hasattr(self._fig, 'layout')}")
+            if hasattr(self._fig, 'layout'):
+                print(f"   Layout type: {type(self._fig.layout)}")
+                print(f"   Has shapes: {hasattr(self._fig.layout, 'shapes')}")
+                if hasattr(self._fig.layout, 'shapes'):
+                    print(f"   Shapes: {self._fig.layout.shapes}")
+            return 0
+        
+    def update_rois(self, shapes):
+        """Update ROIs from Plotly shapes."""
+        self.rois = []
+        for shape in shapes:
+            if shape['type'] in ['rect', 'path']:
+                coords = self._extract_coordinates(shape)
+                if coords:
+                    self.rois.append({
+                        'type': shape['type'],
+                        'coordinates': coords,
+                        'shape': shape
+                    })
+        print(f"✅ Captured {len(self.rois)} ROI(s)")
+    
+    def _extract_coordinates(self, shape):
+        """Extract coordinates from a Plotly shape."""
+        if shape['type'] == 'rect':
+            # Rectangle: convert to polygon coordinates
+            x0, y0 = shape['x0'], shape['y0']
+            x1, y1 = shape['x1'], shape['y1']
+            return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+        
+        elif shape['type'] == 'path':
+            # Parse SVG path string
+            path_str = shape['path']
+            coords = []
+            
+            # Simple parser for M (move) and L (line) commands
+            import re
+            # Extract M and L commands with coordinates
+            commands = re.findall(r'[ML]\s*([-\d.]+)[,\s]+([-\d.]+)', path_str)
+            for cmd, x, y in commands:
+                coords.append((float(x), float(y)))
+            
+            return coords if coords else None
+        
+        return None
+    
+    def get_all_rois(self):
+        """Get list of all captured ROI coordinates."""
+        return [roi['coordinates'] for roi in self.rois]
+    
+    def get_roi(self, roi_index):
+        """Get specific ROI by index."""
+        if 0 <= roi_index < len(self.rois):
+            return self.rois[roi_index]['coordinates']
+        else:
+            raise IndexError(f"ROI index {roi_index} out of range (0-{len(self.rois)-1})")
+    
+    def extract_data(self, roi_index=0, use_original_df=False):
+        """
+        Extract data points within a specific ROI.
+        
+        Parameters
+        ----------
+        roi_index : int
+            Index of the ROI to extract (0-based). Default is 0.
+        use_original_df : bool
+            If True, applies ROI to original unscaled/unsampled df.
+            If False, applies to the plot dataframe. Default is False.
+        
+        Returns
+        -------
+        pd.DataFrame or pl.DataFrame
+            Filtered dataframe with points inside the ROI. Returns same type as input.
+        """
+        try:
+            from shapely.geometry import Point, Polygon
+        except ImportError:
+            raise ImportError("Shapely required: pip install shapely")
+        
+        roi_coords = self.get_roi(roi_index)
+        polygon = Polygon(roi_coords)
+        
+        target_df = self.df if use_original_df else self._plot_df
+        
+        # Detect if target is Polars DataFrame
+        try:
+            import polars as pl
+            is_polars = isinstance(target_df, pl.DataFrame)
+        except ImportError:
+            is_polars = False
+        
+        # Get x and y values
+        if is_polars:
+            x_vals = target_df[self.x_col].to_list()
+            y_vals = target_df[self.y_col].to_list()
+        else:
+            x_vals = target_df[self.x_col]
+            y_vals = target_df[self.y_col]
+        
+        # Create mask
+        points = [Point(x, y) for x, y in zip(x_vals, y_vals)]
+        mask = [polygon.contains(point) for point in points]
+        
+        # Filter based on dataframe type
+        if is_polars:
+            # Polars requires .filter() method with a Series
+            import polars as pl
+            mask_series = pl.Series("mask", mask)
+            filtered_df = target_df.filter(mask_series)
+        else:
+            # Pandas supports boolean indexing
+            filtered_df = target_df[mask].copy()
+        
+        print(f"✅ ROI {roi_index}: {len(filtered_df):,} / {len(target_df):,} points "
+              f"({len(filtered_df)/len(target_df)*100:.1f}%)")
+        
+        return filtered_df
+    
+    def extract_all_data(self, use_original_df=False):
+        """
+        Extract data for all ROIs.
+        
+        Returns
+        -------
+        list of pd.DataFrame
+            List of filtered dataframes, one per ROI.
+        """
+        return [self.extract_data(i, use_original_df) for i in range(len(self.rois))]
+    
+    def save_all_rois(self, base_filename, save_path=None):
+        """Save all ROI coordinates to separate files."""
+        if save_path is None:
+            save_path = '.'
+        
+        os.makedirs(save_path, exist_ok=True)
+        
+        for i, roi_coords in enumerate(self.get_all_rois()):
+            filename = f"{base_filename}_roi{i}"
+            save_roi_coordinates(roi_coords, filename, save_path)
+        
+        print(f"✅ Saved {len(self.rois)} ROI(s) to {save_path}")
+    
+    def show_shapes(self):
+        """
+        Debug method to show what shapes are currently in the figure.
+        
+        Use this to troubleshoot if capture_rois() isn't finding your shapes.
+        """
+        if self._fig is None:
+            print("No figure stored.")
+            return
+        
+        print("\n" + "="*80)
+        print("DEBUG: Figure Shapes Information")
+        print("="*80)
+        print(f"Figure type: {type(self._fig)}")
+        print(f"Has layout: {hasattr(self._fig, 'layout')}")
+        
+        if hasattr(self._fig, 'layout'):
+            print(f"Has shapes attribute: {hasattr(self._fig.layout, 'shapes')}")
+            if hasattr(self._fig.layout, 'shapes'):
+                shapes = self._fig.layout.shapes
+                print(f"Shapes type: {type(shapes)}")
+                print(f"Number of shapes: {len(shapes) if shapes else 0}")
+                if shapes:
+                    print("\nShapes content:")
+                    for i, shape in enumerate(shapes):
+                        print(f"\n  Shape {i}:")
+                        print(f"    Type: {shape.get('type', 'unknown')}")
+                        if shape.get('type') == 'rect':
+                            print(f"    Coordinates: ({shape.get('x0')}, {shape.get('y0')}) to ({shape.get('x1')}, {shape.get('y1')})")
+                        elif shape.get('type') == 'path':
+                            print(f"    Path: {shape.get('path', 'N/A')[:100]}...")
+                else:
+                    print("  Shapes is None or empty")
+        print("="*80 + "\n")
+    
+    def add_rectangle_gate(self, x_min, x_max, y_min, y_max, name=None):
+        """
+        Manually add a rectangular gate by specifying its bounds.
+        
+        This is the SIMPLE, WORKING alternative to interactive drawing.
+        
+        Parameters
+        ----------
+        x_min : float
+            Minimum x coordinate
+        x_max : float
+            Maximum x coordinate  
+        y_min : float
+            Minimum y coordinate
+        y_max : float
+            Maximum y coordinate
+        name : str, optional
+            Name for this gate
+            
+        Examples
+        --------
+        >>> # Look at your plot and identify the rectangle bounds
+        >>> roi_manager.add_rectangle_gate(x_min=0.0, x_max=0.3, y_min=0.0, y_max=0.2)
+        >>> # Add another gate
+        >>> roi_manager.add_rectangle_gate(x_min=0.5, x_max=1.0, y_min=0.5, y_max=1.0)
+        >>> # Extract data
+        >>> all_data = roi_manager.extract_all_data()
+        """
+        coords = [(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)]
+        
+        gate = {
+            'type': 'rect',
+            'coordinates': coords,
+            'shape': {
+                'type': 'rect',
+                'x0': x_min,
+                'y0': y_min,
+                'x1': x_max,
+                'y1': y_max
+            }
+        }
+        
+        if name:
+            gate['name'] = name
+            
+        self.rois.append(gate)
+        
+        print(f"✅ Added rectangular gate: x=[{x_min:.3f}, {x_max:.3f}], y=[{y_min:.3f}, {y_max:.3f}]")
+        print(f"   Total gates: {len(self.rois)}")
+        return len(self.rois) - 1  # Return index of added gate
+    
+    def clear_gates(self):
+        """Remove all gates."""
+        n = len(self.rois)
+        self.rois = []
+        print(f"🗑️  Cleared {n} gate(s)")
+    
+    def add_polygon_gate(self, coordinates, name=None):
+        """
+        Manually add a polygonal gate by specifying its vertices.
+        
+        This allows you to define arbitrary polygon shapes programmatically.
+        
+        Parameters
+        ----------
+        coordinates : list of tuples
+            List of (x, y) coordinate tuples defining the polygon vertices.
+            Example: [(0.1, 0.2), (0.5, 0.2), (0.5, 0.8), (0.1, 0.8)]
+        name : str, optional
+            Name for this gate
+            
+        Examples
+        --------
+        >>> # Triangle gate
+        >>> roi_manager.add_polygon_gate([(0, 0), (1, 0), (0.5, 1)], name='triangle')
+        >>> 
+        >>> # Complex polygon
+        >>> coords = [(0.1, 0.2), (0.5, 0.1), (0.8, 0.5), (0.4, 0.9), (0.1, 0.6)]
+        >>> roi_manager.add_polygon_gate(coords, name='pentagonal_gate')
+        """
+        if len(coordinates) < 3:
+            raise ValueError("Polygon must have at least 3 vertices")
+        
+        gate = {
+            'type': 'path',
+            'coordinates': coordinates,
+            'shape': {
+                'type': 'path',
+                'path': self._coords_to_svg_path(coordinates)
+            }
+        }
+        
+        if name:
+            gate['name'] = name
+            
+        self.rois.append(gate)
+        
+        print(f"✅ Added polygon gate with {len(coordinates)} vertices")
+        if name:
+            print(f"   Name: {name}")
+        print(f"   Total gates: {len(self.rois)}")
+        return len(self.rois) - 1  # Return index of added gate
+    
+    def _coords_to_svg_path(self, coordinates):
+        """Convert coordinate list to SVG path string."""
+        if not coordinates:
+            return ""
+        path_parts = [f"M {coordinates[0][0]},{coordinates[0][1]}"]
+        for x, y in coordinates[1:]:
+            path_parts.append(f"L {x},{y}")
+        path_parts.append("Z")  # Close the path
+        return " ".join(path_parts)
+    
+    def add_diagonal_separator(self, point1, point2, xlim, ylim, 
+                                buffer=0.01, names=None):
+        """
+        Add two ROIs separated by a diagonal line.
+        
+        This creates two polygonal regions: one "below/left" and one "above/right" 
+        of the diagonal line you specify. Perfect for separating two populations!
+        
+        Parameters
+        ----------
+        point1 : tuple
+            (x, y) coordinates of first point on the line
+        point2 : tuple
+            (x, y) coordinates of second point on the line
+        xlim : tuple
+            (xmin, xmax) limits of your plot
+        ylim : tuple
+            (ymin, ymax) limits of your plot
+        buffer : float, optional
+            Small buffer distance perpendicular to the line (prevents overlap).
+            Default is 0.01. Set to 0 for no gap.
+        names : tuple of str, optional
+            (name_below, name_above) - Names for the two gates.
+            Default is ('below_line', 'above_line')
+            
+        Returns
+        -------
+        tuple
+            (index_below, index_above) - Indices of the two created gates
+            
+        Examples
+        --------
+        >>> # Simple diagonal from bottom-left to top-right
+        >>> roi_manager.add_diagonal_separator(
+        ...     point1=(0.0, 0.0), 
+        ...     point2=(1.0, 1.0),
+        ...     xlim=(0, 1),
+        ...     ylim=(0, 1),
+        ...     names=('low_pop', 'high_pop')
+        ... )
+        >>> 
+        >>> # Custom diagonal after looking at your plot
+        >>> roi_manager.add_diagonal_separator(
+        ...     point1=(0.2, 0.1), 
+        ...     point2=(0.8, 0.9),
+        ...     xlim=(0, 1),
+        ...     ylim=(0, 1),
+        ...     buffer=0.02,
+        ...     names=('immobile', 'mobile')
+        ... )
+        >>> 
+        >>> # Extract the separated populations
+        >>> pop_below = roi_manager.extract_data(roi_index=0)
+        >>> pop_above = roi_manager.extract_data(roi_index=1)
+        """
+        x1, y1 = point1
+        x2, y2 = point2
+        xmin, xmax = xlim
+        ymin, ymax = ylim
+        
+        if names is None:
+            names = ('below_line', 'above_line')
+        
+        # Calculate perpendicular offset vector for buffer
+        dx = x2 - x1
+        dy = y2 - y1
+        length = np.sqrt(dx**2 + dy**2)
+        
+        if length == 0:
+            raise ValueError("point1 and point2 must be different")
+        
+        # Perpendicular unit vector (rotated 90 degrees)
+        perp_x = -dy / length
+        perp_y = dx / length
+        
+        # Create buffered line points
+        # Line offset "below" (negative perpendicular direction)
+        line_below = [
+            (x1 - buffer * perp_x, y1 - buffer * perp_y),
+            (x2 - buffer * perp_x, y2 - buffer * perp_y)
+        ]
+        
+        # Line offset "above" (positive perpendicular direction)
+        line_above = [
+            (x1 + buffer * perp_x, y1 + buffer * perp_y),
+            (x2 + buffer * perp_x, y2 + buffer * perp_y)
+        ]
+        
+        # Create polygon for "below" region
+        # Strategy: Find where line intersects the plot boundaries and build polygon
+        below_coords = self._create_half_plane_polygon(
+            line_below, xlim, ylim, side='below', 
+            perp_vector=(-perp_x, -perp_y)
+        )
+        
+        # Create polygon for "above" region
+        above_coords = self._create_half_plane_polygon(
+            line_above, xlim, ylim, side='above',
+            perp_vector=(perp_x, perp_y)
+        )
+        
+        # Add both gates
+        idx_below = self.add_polygon_gate(below_coords, name=names[0])
+        idx_above = self.add_polygon_gate(above_coords, name=names[1])
+        
+        print(f"\n📐 Diagonal separator created:")
+        print(f"   Line from ({x1:.3f}, {y1:.3f}) to ({x2:.3f}, {y2:.3f})")
+        print(f"   Gate '{names[0]}': {len(below_coords)} vertices (index {idx_below})")
+        print(f"   Gate '{names[1]}': {len(above_coords)} vertices (index {idx_above})")
+        
+        return idx_below, idx_above
+    
+    def _create_half_plane_polygon(self, line_points, xlim, ylim, side, perp_vector):
+        """
+        Create polygon for half-plane on one side of a line.
+        
+        Parameters
+        ----------
+        line_points : list of 2 tuples
+            [(x1, y1), (x2, y2)] defining the separator line
+        xlim : tuple
+            (xmin, xmax)
+        ylim : tuple
+            (ymin, ymax)
+        side : str
+            'below' or 'above'
+        perp_vector : tuple
+            (px, py) perpendicular vector pointing toward the half-plane
+        """
+        xmin, xmax = xlim
+        ymin, ymax = ylim
+        (x1, y1), (x2, y2) = line_points
+        px, py = perp_vector
+        
+        # Get corners of plot area
+        corners = [
+            (xmin, ymin),
+            (xmax, ymin),
+            (xmax, ymax),
+            (xmin, ymax)
+        ]
+        
+        # Determine which side of the line each corner is on
+        # Using cross product: (point - line_start) × (line_end - line_start)
+        def point_side(px, py):
+            """Positive if left of line, negative if right"""
+            return (px - x1) * (y2 - y1) - (py - y1) * (x2 - x1)
+        
+        # Collect corners on the correct side
+        polygon_points = []
+        
+        # Add line endpoints first
+        polygon_points.append((x1, y1))
+        polygon_points.append((x2, y2))
+        
+        # Add corners that are on the correct side
+        target_sign = 1 if side == 'above' else -1
+        
+        for corner in corners:
+            side_val = point_side(corner[0], corner[1])
+            if (side_val * target_sign) >= 0:  # Same sign or zero
+                polygon_points.append(corner)
+        
+        # Sort points to form a proper polygon (counterclockwise)
+        # Calculate centroid
+        cx = sum(p[0] for p in polygon_points) / len(polygon_points)
+        cy = sum(p[1] for p in polygon_points) / len(polygon_points)
+        
+        # Sort by angle from centroid
+        def angle_from_centroid(point):
+            return np.arctan2(point[1] - cy, point[0] - cx)
+        
+        polygon_points.sort(key=angle_from_centroid)
+        
+        return polygon_points
+    
+    def _transform_data(self, df_pd, x_col, y_col):
+        """
+        Apply scaler transformation to x and y columns if scaler is available.
+        
+        Parameters
+        ----------
+        df_pd : pd.DataFrame
+            Input dataframe (pandas)
+        x_col : str
+            X column name
+        y_col : str
+            Y column name
+            
+        Returns
+        -------
+        x_transformed, y_transformed : arrays
+            Transformed x and y values (or original if no scaler)
+        """
+        if self.scaler is None:
+            return df_pd[x_col].values, df_pd[y_col].values
+        
+        # Transform using the scaler
+        # Scaler expects 2D array
+        data_to_transform = df_pd[[x_col, y_col]].values
+        transformed = self.scaler.transform(data_to_transform)
+        
+        return transformed[:, 0], transformed[:, 1]
+    
+    def get_inverse_transformed_gates(self):
+        """
+        Get gate coordinates in original (unscaled) space.
+        
+        This is useful for plotting gates on unscaled data. If no scaler is set,
+        returns gates as-is.
+        
+        Returns
+        -------
+        list of dict
+            List of gate dictionaries with inverse-transformed coordinates.
+            
+        Examples
+        --------
+        >>> # Get gates in original space for plotting on unscaled data
+        >>> unscaled_gates = roi_manager.get_inverse_transformed_gates()
+        >>> fig = spt.plot_xy_heatmap(df, 'x', 'y', gates=unscaled_gates, scale_data=False)
+        """
+        if self.scaler is None:
+            # No transformation needed
+            return self.rois
+        
+        # Check if scaler has inverse_transform method
+        if not hasattr(self.scaler, 'inverse_transform'):
+            print("Warning: scaler does not have inverse_transform method. Returning gates as-is.")
+            return self.rois
+        
+        # Inverse transform each gate's coordinates
+        inverse_gates = []
+        for gate in self.rois:
+            coords = gate.get('coordinates', [])
+            if not coords:
+                inverse_gates.append(gate)
+                continue
+            
+            # Convert coordinates to array and inverse transform
+            coords_array = np.array(coords)
+            coords_inverse = self.scaler.inverse_transform(coords_array)
+            
+            # Create new gate dict with inverse coordinates
+            inverse_gate = gate.copy()
+            inverse_gate['coordinates'] = [(x, y) for x, y in coords_inverse]
+            
+            # Update shape if it's a rectangle
+            if gate.get('type') == 'rect' and len(coords_inverse) >= 4:
+                inverse_gate['shape'] = {
+                    'type': 'rect',
+                    'x0': coords_inverse[0, 0],
+                    'y0': coords_inverse[0, 1],
+                    'x1': coords_inverse[2, 0],
+                    'y1': coords_inverse[2, 1]
+                }
+            
+            inverse_gates.append(inverse_gate)
+        
+        return inverse_gates
+    
+    def classify_data(self, df, x_col=None, y_col=None, gate_col_name='gate_id', 
+                     gate_name_col='gate_name', return_type=None,
+                     parent_gate_col=None, parent_gate_ids=None, 
+                     not_applicable_label='parent_gate_filtered'):
+        """
+        Classify each row of a dataframe by which gate it belongs to.
+        
+        Adds two new columns with gate classifications:
+        - gate_col_name: integer gate ID (0, 1, 2, ...) or -1 if not in any gate
+        - gate_name_col: gate name (string) or 'ungated' if not in any gate
+        
+        If a scaler is set, data will be transformed on-the-fly before checking
+        gate membership (no need to pre-scale the data).
+        
+        For sequential/hierarchical gating, use different column names for each round
+        (e.g., 'gate_id', 'gate2_id', 'gate3_id') and specify parent gates to 
+        distinguish between "ungated" and "not applicable".
+        
+        Parameters
+        ----------
+        df : pd.DataFrame or pl.DataFrame
+            Input dataframe to classify (in original/unscaled space if using scaler)
+        x_col : str, optional
+            Column name for x coordinate. If None, uses self.x_col
+        y_col : str, optional
+            Column name for y coordinate. If None, uses self.y_col
+        gate_col_name : str, optional
+            Name for the gate ID column. Default is 'gate_id'.
+            Use different names for multiple rounds: 'gate2_id', 'gate3_id', etc.
+        gate_name_col : str, optional
+            Name for the gate name column. Default is 'gate_name'.
+            Use different names for multiple rounds: 'gate2_name', 'gate3_name', etc.
+        return_type : {'pandas', 'polars', None}, optional
+            Return type. If None, returns same type as input.
+        parent_gate_col : str, optional
+            Column name of parent gate (e.g., 'gate_id') for hierarchical gating.
+            If specified, only rows matching parent_gate_ids will be evaluated.
+            Others get not_applicable_label. Default is None (no hierarchical gating).
+        parent_gate_ids : int, list of int, or None, optional
+            Parent gate ID(s) to filter by. Only rows with these parent gate values
+            will be evaluated for current gates. Can be single int or list.
+            Default is None (evaluate all rows).
+        not_applicable_label : str, optional
+            Label for rows that don't match parent gate filter. Default is 
+            'parent_gate_filtered'. Use this to distinguish from 'ungated'.
+            
+        Returns
+        -------
+        pd.DataFrame or pl.DataFrame
+            Dataframe with added gate classification columns
+            
+        Examples
+        --------
+        >>> # Round 1: Gate on speed vs intersections
+        >>> df = roi_manager1.classify_data(df)
+        >>> # Adds: gate_id (0, 1, -1), gate_name
+        >>> 
+        >>> # Round 2: Hierarchical gating ONLY on gate_id==0 population
+        >>> df = roi_manager2.classify_data(
+        ...     df, 
+        ...     gate_col_name='gate2_id',
+        ...     gate_name_col='gate2_name',
+        ...     parent_gate_col='gate_id',    # ← Check parent gate
+        ...     parent_gate_ids=0              # ← Only gate rows where gate_id==0
+        ... )
+        >>> # Result:
+        >>> #   - Rows with gate_id==0: get gate2_id (0, 1, -1) and gate2_name
+        >>> #   - Rows with gate_id!=0: get gate2_id=-1, gate2_name='parent_gate_filtered'
+        >>> 
+        >>> # Round 2 alternative: Gate on multiple parent populations
+        >>> df = roi_manager2.classify_data(
+        ...     df,
+        ...     gate_col_name='gate2_id',
+        ...     gate_name_col='gate2_name', 
+        ...     parent_gate_col='gate_id',
+        ...     parent_gate_ids=[0, 1]        # ← Gate both populations 0 and 1
+        ... )
+        >>> 
+        >>> # Now analyze:
+        >>> # These are in parent gate 0 but not in any gate2
+        >>> ungated_in_parent = df[df['gate2_name'] == 'ungated']
+        >>> # These were filtered out by parent gate
+        >>> not_applicable = df[df['gate2_name'] == 'parent_gate_filtered']
+        """
+        from shapely.geometry import Point, Polygon
+        
+        # Detect input type
+        try:
+            import polars as pl
+            is_polars = isinstance(df, pl.DataFrame)
+        except ImportError:
+            is_polars = False
+        
+        # Convert to pandas for processing
+        if is_polars:
+            df_pd = df.to_pandas()
+        else:
+            df_pd = df.copy()
+        
+        # Use provided columns or fall back to stored ones
+        x_col = x_col or self.x_col
+        y_col = y_col or self.y_col
+        
+        if x_col not in df_pd.columns or y_col not in df_pd.columns:
+            raise ValueError(f"Columns '{x_col}' and/or '{y_col}' not found in dataframe")
+        
+        # Handle parent gate filtering for hierarchical gating
+        if parent_gate_col is not None:
+            if parent_gate_col not in df_pd.columns:
+                raise ValueError(f"Parent gate column '{parent_gate_col}' not found in dataframe")
+            
+            # Normalize parent_gate_ids to list
+            if parent_gate_ids is None:
+                raise ValueError("parent_gate_ids must be specified when using parent_gate_col")
+            if not isinstance(parent_gate_ids, (list, tuple)):
+                parent_gate_ids = [parent_gate_ids]
+            
+            # Create mask for rows that match parent gate
+            in_parent_mask = df_pd[parent_gate_col].isin(parent_gate_ids)
+            
+            # Initialize columns with appropriate defaults
+            df_pd[gate_col_name] = -1
+            df_pd[gate_name_col] = not_applicable_label  # Default for rows NOT in parent
+            
+            # Update only rows in parent gate to 'ungated'
+            df_pd.loc[in_parent_mask, gate_name_col] = 'ungated'
+            
+            print(f"🔍 Hierarchical gating:")
+            print(f"   Parent gate: {parent_gate_col} in {parent_gate_ids}")
+            print(f"   Eligible rows: {in_parent_mask.sum():,} / {len(df_pd):,}")
+            print(f"   Filtered rows labeled as: '{not_applicable_label}'")
+        else:
+            # Standard gating: initialize all as ungated
+            df_pd[gate_col_name] = -1
+            df_pd[gate_name_col] = 'ungated'
+            in_parent_mask = None  # Will gate all rows
+        
+        # Transform data if scaler is available
+        x_transformed, y_transformed = self._transform_data(df_pd, x_col, y_col)
+        
+        # For each gate, check which points are inside
+        for gate_idx, gate in enumerate(self.rois):
+            coords = gate.get('coordinates', [])
+            if not coords:
+                continue
+            
+            # Create polygon from gate coordinates (gates are in transformed space if scaler exists)
+            poly = Polygon(coords)
+            
+            # Check each point using transformed coordinates
+            for idx in range(len(df_pd)):
+                # Skip if hierarchical gating and not in parent gate
+                if in_parent_mask is not None and not in_parent_mask.iloc[idx]:
+                    continue
+                
+                point = Point(x_transformed[idx], y_transformed[idx])
+                if poly.contains(point):
+                    df_pd.iloc[idx, df_pd.columns.get_loc(gate_col_name)] = gate_idx
+                    df_pd.iloc[idx, df_pd.columns.get_loc(gate_name_col)] = gate.get('name', f'Gate {gate_idx}')
+        
+        # Convert back to polars if requested or if input was polars
+        if return_type == 'polars' or (return_type is None and is_polars):
+            try:
+                import polars as pl
+                return pl.from_pandas(df_pd)
+            except ImportError:
+                print("Warning: polars not available, returning pandas DataFrame")
+                return df_pd
+        else:
+            return df_pd
+    
+    def get_gate_summary(self, df, x_col=None, y_col=None):
+        """
+        Get a summary of how many points fall into each gate.
+        
+        If a scaler is set, data will be transformed on-the-fly before checking
+        gate membership.
+        
+        Parameters
+        ----------
+        df : pd.DataFrame or pl.DataFrame
+            Dataframe to analyze (in original/unscaled space if using scaler)
+        x_col : str, optional
+            Column name for x coordinate. If None, uses self.x_col
+        y_col : str, optional
+            Column name for y coordinate. If None, uses self.y_col
+            
+        Returns
+        -------
+        dict
+            Summary statistics for each gate
+            
+        Examples
+        --------
+        >>> summary = roi_manager.get_gate_summary(df)
+        >>> print(summary)
+        {
+            'total_points': 1000,
+            'ungated': 250,
+            'gates': [
+                {'id': 0, 'name': 'low_speed', 'count': 300, 'percent': 30.0},
+                {'id': 1, 'name': 'high_speed', 'count': 450, 'percent': 45.0}
+            ]
+        }
+        """
+        from shapely.geometry import Point, Polygon
+        
+        # Detect input type and convert to pandas if needed
+        try:
+            import polars as pl
+            is_polars = isinstance(df, pl.DataFrame)
+            if is_polars:
+                df_pd = df.to_pandas()
+            else:
+                df_pd = df
+        except ImportError:
+            df_pd = df
+        
+        # Use provided columns or fall back to stored ones
+        x_col = x_col or self.x_col
+        y_col = y_col or self.y_col
+        
+        total_points = len(df_pd)
+        gate_counts = []
+        
+        # Transform data if scaler is available
+        x_transformed, y_transformed = self._transform_data(df_pd, x_col, y_col)
+        
+        # Initialize counters for each gate
+        for gate_idx, gate in enumerate(self.rois):
+            coords = gate.get('coordinates', [])
+            if not coords:
+                continue
+            
+            poly = Polygon(coords)
+            count = 0
+            
+            # Count points in this gate using transformed coordinates
+            for idx in range(len(df_pd)):
+                point = Point(x_transformed[idx], y_transformed[idx])
+                if poly.contains(point):
+                    count += 1
+            
+            gate_counts.append({
+                'id': gate_idx,
+                'name': gate.get('name', f'Gate {gate_idx}'),
+                'count': count,
+                'percent': (count / total_points * 100) if total_points > 0 else 0
+            })
+        
+        # Calculate ungated
+        gated_total = sum(g['count'] for g in gate_counts)
+        ungated_count = total_points - gated_total
+        
+        return {
+            'total_points': total_points,
+            'ungated': ungated_count,
+            'ungated_percent': (ungated_count / total_points * 100) if total_points > 0 else 0,
+            'gates': gate_counts
+        }
+    
+    def __repr__(self):
+        return f"ROIManager({len(self.rois)} ROIs captured)"
 
 
