@@ -9259,6 +9259,10 @@ def gallery_of_tracks_v4(
     grid_cols=None,
     dpi=200,
     subplot_size_um=None,
+    show_scale_bar=False,
+    scale_bar_length_um=None,
+    scale_bar_color='white',
+    scale_bar_linewidth=3,
 ):
     """
     Create a gallery of tracks distributed in a grid layout with consistent scaling.
@@ -9278,7 +9282,24 @@ def gallery_of_tracks_v4(
         - "default" shows "{category}\n{unique_id}" (previous behavior).
     annotation_color : str, default "white"
         Color for annotations
-    ...
+    text_size : int, default 10
+        Font size for annotations and scale bar
+    subplot_size_um : float or None, default None
+        Manual subplot size in microns. If None, automatically calculated from largest track extent
+    show_scale_bar : bool, default False
+        Whether to show a scale bar in the bottom-right subplot
+    scale_bar_length_um : float or None, default None
+        Length of scale bar in microns. If None, defaults to subplot_size_um
+    scale_bar_color : str, default 'white'
+        Color of the scale bar and label
+    scale_bar_linewidth : float, default 3
+        Line width of the scale bar
+    
+    Returns
+    -------
+    dict
+        Dictionary with keys: 'plotted_tracks', 'category_counts', 'total_tracks',
+        'subplot_size_um', 'grid_dimensions', 'save_path', 'categories'
     """
     import matplotlib.pyplot as plt
     import numpy as np
@@ -9530,6 +9551,67 @@ def gallery_of_tracks_v4(
     for idx in range(len(all_track_segments), len(axes)):
         axes[idx].axis('off')
         axes[idx].set_facecolor(axis_background)
+
+    # Add scale bar to bottom-right plotted subplot
+    if show_scale_bar and len(all_track_segments) > 0:
+        # Default scale bar length to subplot size
+        if scale_bar_length_um is None:
+            scale_bar_length_um = subplot_size
+        
+        # Get the last plotted subplot (bottom-right with content)
+        last_plot_idx = len(all_track_segments) - 1
+        scale_ax = axes[last_plot_idx]
+        
+        # Get the axis limits
+        xlim = scale_ax.get_xlim()
+        ylim = scale_ax.get_ylim()
+        
+        # Position scale bar at bottom-right (with padding)
+        padding_fraction = 0.1  # 10% padding from edges
+        x_padding = (xlim[1] - xlim[0]) * padding_fraction
+        y_padding = (ylim[1] - ylim[0]) * padding_fraction
+        
+        # Scale bar endpoints
+        scale_bar_x_end = xlim[1] - x_padding
+        scale_bar_x_start = scale_bar_x_end - scale_bar_length_um
+        scale_bar_y = ylim[0] + y_padding
+        
+        # Draw scale bar line
+        scale_ax.plot(
+            [scale_bar_x_start, scale_bar_x_end],
+            [scale_bar_y, scale_bar_y],
+            color=scale_bar_color,
+            linewidth=scale_bar_linewidth,
+            solid_capstyle='butt'
+        )
+        
+        # Add end caps for scale bar
+        cap_height = (ylim[1] - ylim[0]) * 0.02
+        scale_ax.plot(
+            [scale_bar_x_start, scale_bar_x_start],
+            [scale_bar_y - cap_height, scale_bar_y + cap_height],
+            color=scale_bar_color,
+            linewidth=scale_bar_linewidth * 0.7
+        )
+        scale_ax.plot(
+            [scale_bar_x_end, scale_bar_x_end],
+            [scale_bar_y - cap_height, scale_bar_y + cap_height],
+            color=scale_bar_color,
+            linewidth=scale_bar_linewidth * 0.7
+        )
+        
+        # Add scale bar label
+        scale_ax.text(
+            (scale_bar_x_start + scale_bar_x_end) / 2,
+            scale_bar_y + y_padding * 0.5,
+            f'{scale_bar_length_um:.1f} μm',
+            ha='center',
+            va='bottom',
+            color=scale_bar_color,
+            fontsize=text_size,
+            fontweight='bold',
+            bbox=dict(boxstyle="round,pad=0.3", facecolor='black', alpha=0.7)
+        )
 
     # Title
     category_counts = {}
@@ -12745,5 +12827,1741 @@ class ROIManager:
     
     def __repr__(self):
         return f"ROIManager({len(self.rois)} ROIs captured)"
+
+
+
+# ============================================================================
+# STATE TRANSITION VISUALIZATION FUNCTIONS
+# ============================================================================
+
+
+def plot_transition_matrix(
+    transition_result,
+    figsize=(10, 8),
+    cmap='Blues',
+    annot=True,
+    fmt='.2f',
+    cbar_label='Transition Probability',
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True,
+    title=None,
+    show_counts=False,
+    state_order=None
+):
+    """
+    Visualize state transition matrix as a heatmap.
+    
+    Parameters
+    ----------
+    transition_result : dict
+        Result from analyze_state_transitions()
+    figsize : tuple, default=(10, 8)
+        Figure size
+    cmap : str, default='Blues'
+        Colormap for heatmap
+    annot : bool, default=True
+        Whether to annotate cells with values
+    fmt : str, default='.2f'
+        Format string for annotations
+    cbar_label : str, default='Transition Probability'
+        Label for colorbar
+    save_path : str, optional
+        Directory to save figure
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI for raster formats
+    transparent_background : bool, default=True
+        Whether to make background transparent
+    title : str, optional
+        Custom title for plot
+    show_counts : bool, default=False
+        Show transition counts instead of probabilities
+    state_order : list, optional
+        List of states in desired order for axes. If None, uses default order.
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    ax : matplotlib.axes.Axes
+        The axes object
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    # Get the appropriate matrix
+    if show_counts:
+        matrix = transition_result['transition_counts']
+        if title is None:
+            title = 'State Transition Counts'
+        cbar_label = 'Number of Transitions'
+        fmt = 'd'
+    else:
+        matrix = transition_result['transition_probabilities']
+        if title is None:
+            title = 'State Transition Probabilities'
+    
+    # Reorder matrix if state_order is provided
+    if state_order is not None:
+        # Filter to only states that exist in the matrix
+        available_states = [s for s in state_order if s in matrix.index and s in matrix.columns]
+        if len(available_states) > 0:
+            matrix = matrix.loc[available_states, available_states]
+        else:
+            print(f"⚠️  Warning: None of the states in state_order found in matrix. Using default order.")
+    
+    # Add group name to title if available
+    if 'group_name' in transition_result and transition_result['group_name'] != 'all':
+        title = f"{title} - {transition_result['group_name']}"
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Create heatmap with larger annotations for publication
+    sns.heatmap(matrix, 
+                annot=annot,
+                fmt=fmt,
+                cmap=cmap,
+                cbar_kws={'label': cbar_label, 'shrink': 0.8},
+                square=True,
+                linewidths=0.5,
+                linecolor='gray',
+                ax=ax,
+                vmin=0,
+                vmax=1 if not show_counts else None,
+                annot_kws={'size': 14})  # Larger annotation text
+    
+    # Larger axis labels for publication
+    ax.set_xlabel('To State', fontsize=16, fontweight='bold')
+    ax.set_ylabel('From State', fontsize=16, fontweight='bold')
+    ax.set_title(title, fontsize=18, fontweight='bold', pad=20)
+    
+    # Rotate labels with larger font
+    plt.setp(ax.get_xticklabels(), rotation=45, ha='right', rotation_mode='anchor', fontsize=14)
+    plt.setp(ax.get_yticklabels(), rotation=0, fontsize=14)
+    
+    # Larger colorbar label
+    cbar = ax.collections[0].colorbar
+    cbar.ax.tick_params(labelsize=12)
+    cbar.set_label(cbar_label, size=14, weight='bold')
+    
+    # Add statistics text with larger font
+    stats = transition_result['stats']
+    stats_text = (f"Tracks: {stats['n_tracks']:,}\n"
+                 f"Transitions: {stats['n_transitions']:,}\n"
+                 f"Avg/track: {stats['avg_transitions_per_track']:.1f}")
+    
+    ax.text(1.15, 0.5, stats_text, transform=ax.transAxes,
+            verticalalignment='center',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+            fontsize=13)
+    
+    plt.tight_layout()
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
+    
+    # Save
+    if save_path:
+        group_suffix = f"_{transition_result['group_name']}" if 'group_name' in transition_result else ""
+        matrix_type = "counts" if show_counts else "probabilities"
+        filename = f"transition_matrix_{matrix_type}{group_suffix}.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', 
+                   transparent=transparent_background)
+        print(f"✅ Saved transition matrix to: {full_path}")
+    
+    return fig, ax
+
+
+def plot_transition_sankey(
+    transition_result,
+    min_transition_count=5,
+    figsize=(12, 8),
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    title=None
+):
+    """
+    Create a Sankey diagram showing state transitions.
+    
+    Parameters
+    ----------
+    transition_result : dict
+        Result from analyze_state_transitions()
+    min_transition_count : int, default=5
+        Minimum number of transitions to show
+    figsize : tuple, default=(12, 8)
+        Figure size
+    save_path : str, optional
+        Directory to save figure
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI for raster formats
+    title : str, optional
+        Custom title
+        
+    Returns
+    -------
+    fig : plotly.graph_objects.Figure
+        The plotly figure object
+    """
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        raise ImportError("Sankey diagram requires plotly. Install with: pip install plotly")
+    
+    # Get transition data
+    transitions = transition_result['transitions_summary']
+    transitions = transitions[transitions['count'] >= min_transition_count].copy()
+    
+    # Get unique states
+    all_states = sorted(set(transitions['from_state'].unique()) | set(transitions['to_state'].unique()))
+    state_to_idx = {state: idx for idx, state in enumerate(all_states)}
+    
+    # Prepare Sankey data
+    source = [state_to_idx[s] for s in transitions['from_state']]
+    target = [state_to_idx[s] + len(all_states) for s in transitions['to_state']]  # Offset target indices
+    values = transitions['count'].tolist()
+    
+    # Create labels (source + target)
+    labels = list(all_states) + list(all_states)
+    
+    # Create color palette
+    import matplotlib.cm as cm
+    colors_norm = plt.Normalize(vmin=0, vmax=len(all_states)-1)
+    colors = [f"rgba{tuple(int(x*255) for x in cm.Set3(colors_norm(i))[:3]) + (0.6,)}" 
+              for i in range(len(all_states))]
+    
+    # Assign colors to links based on source state
+    link_colors = [colors[src] for src in source]
+    
+    # Create Sankey diagram
+    fig = go.Figure(data=[go.Sankey(
+        node=dict(
+            pad=15,
+            thickness=20,
+            line=dict(color="black", width=0.5),
+            label=labels,
+            color=colors + colors
+        ),
+        link=dict(
+            source=source,
+            target=target,
+            value=values,
+            color=link_colors
+        )
+    )])
+    
+    # Update layout
+    if title is None:
+        title = 'State Transition Flow'
+    if 'group_name' in transition_result and transition_result['group_name'] != 'all':
+        title = f"{title} - {transition_result['group_name']}"
+    
+    fig.update_layout(
+        title=title,
+        font=dict(size=12),
+        height=figsize[1]*100,
+        width=figsize[0]*100
+    )
+    
+    # Save
+    if save_path:
+        group_suffix = f"_{transition_result['group_name']}" if 'group_name' in transition_result else ""
+        filename = f"transition_sankey{group_suffix}.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        
+        if export_format == 'html':
+            fig.write_html(full_path)
+        else:
+            fig.write_image(full_path, format=export_format)
+        
+        print(f"✅ Saved Sankey diagram to: {full_path}")
+    
+    return fig
+
+
+def plot_dwell_time_distributions(
+    dwell_result,
+    figsize=(12, 6),
+    color_palette=None,
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True,
+    bins=None
+):
+    """
+    Plot distributions of dwell times for each state.
+    
+    Parameters
+    ----------
+    dwell_result : dict
+        Result from analyze_state_dwell_times()
+    figsize : tuple, default=(12, 6)
+        Figure size
+    color_palette : list, optional
+        Colors for different states
+    save_path : str, optional
+        Directory to save figure
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI for raster formats
+    transparent_background : bool, default=True
+        Whether to make background transparent
+    bins : int or list, optional
+        Histogram bins
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    ax : matplotlib.axes.Axes
+        The axes object
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    dwell_df = dwell_result['dwell_times']
+    summary_stats = dwell_result['summary_stats']
+    
+    if len(dwell_df) == 0:
+        print("No dwell time data to plot")
+        return None, None
+    
+    # Get unique states
+    states = sorted(dwell_df['state'].unique())
+    
+    # Set colors
+    if color_palette is None:
+        color_palette = sns.color_palette("colorblind", len(states))
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Plot distributions
+    for idx, state in enumerate(states):
+        state_data = dwell_df[dwell_df['state'] == state]['dwell_windows']
+        
+        ax.hist(state_data, bins=bins if bins else 'auto',
+                alpha=0.6, label=state, color=color_palette[idx],
+                edgecolor='black', linewidth=0.5)
+    
+    ax.set_xlabel('Dwell Time (windows)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Frequency', fontsize=12, fontweight='bold')
+    ax.set_title('State Dwell Time Distributions', fontsize=14, fontweight='bold')
+    ax.legend(title='State', fontsize=10)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
+    
+    # Save
+    if save_path:
+        group_suffix = f"_{dwell_result['group_name']}" if 'group_name' in dwell_result else ""
+        filename = f"dwell_time_distributions{group_suffix}.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', 
+                   transparent=transparent_background)
+        print(f"✅ Saved dwell time distributions to: {full_path}")
+    
+    return fig, ax
+
+
+def plot_transition_counts_comparison(
+    transition_counts_df,
+    x='mol',
+    hue='n_unique_states',
+    y='n_transitions',
+    figsize=(10, 6),
+    palette=None,
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True
+):
+    """
+    Compare transition counts across groups (e.g., molecules).
+    
+    Parameters
+    ----------
+    transition_counts_df : pd.DataFrame or pl.DataFrame
+        Result from count_state_transitions_per_track()
+    x : str, default='mol'
+        Column for x-axis grouping
+    hue : str, default='n_unique_states'
+        Column for color grouping
+    y : str, default='n_transitions'
+        Column for y-axis values
+    figsize : tuple, default=(10, 6)
+        Figure size
+    palette : str or list, optional
+        Color palette
+    save_path : str, optional
+        Directory to save figure
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI for raster formats
+    transparent_background : bool, default=True
+        Whether to make background transparent
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    ax : matplotlib.axes.Axes
+        The axes object
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    # Convert to pandas if needed
+    if isinstance(transition_counts_df, pl.DataFrame):
+        df = transition_counts_df.to_pandas()
+    else:
+        df = transition_counts_df
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Create boxplot
+    sns.boxplot(data=df, x=x, y=y, hue=hue, ax=ax, palette=palette)
+    
+    ax.set_xlabel(x.capitalize(), fontsize=12, fontweight='bold')
+    ax.set_ylabel(y.replace('_', ' ').title(), fontsize=12, fontweight='bold')
+    ax.set_title(f'{y.replace("_", " ").title()} by {x.capitalize()}', 
+                fontsize=14, fontweight='bold')
+    ax.legend(title=hue.replace('_', ' ').title(), fontsize=9)
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    plt.tight_layout()
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
+    
+    # Save
+    if save_path:
+        filename = f"transition_counts_comparison_{x}.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', 
+                   transparent=transparent_background)
+        print(f"✅ Saved transition counts comparison to: {full_path}")
+    
+    return fig, ax
+
+
+# ============================================================================
+# SIMILARITY ANALYSIS VISUALIZATIONS
+# ============================================================================
+
+
+def plot_between_molecule_similarity_heatmap(
+    between_mol_result,
+    figsize=(8, 7),
+    cmap='RdYlGn',
+    annot=True,
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True
+):
+    """
+    Plot heatmap of between-molecule similarity scores.
+    
+    Parameters
+    ----------
+    between_mol_result : dict
+        Result from calculate_between_molecule_similarity()
+    figsize : tuple, default=(8, 7)
+        Figure size
+    cmap : str, default='RdYlGn'
+        Colormap
+    annot : bool, default=True
+        Annotate cells with values
+    save_path : str, optional
+        Directory to save figure
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI
+    transparent_background : bool, default=True
+        Transparent background
+        
+    Returns
+    -------
+    fig, ax
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    similarity_df = between_mol_result['similarity_matrix']
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    sns.heatmap(similarity_df, 
+                annot=annot,
+                fmt='.3f',
+                cmap=cmap,
+                vmin=0,
+                vmax=1,
+                square=True,
+                linewidths=0.5,
+                cbar_kws={'label': 'Similarity Score'},
+                ax=ax)
+    
+    ax.set_title(f"Between-Molecule Similarity\n({between_mol_result['stats']['method']})",
+                fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
+    
+    if save_path:
+        filename = f"between_molecule_similarity_heatmap.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', transparent=transparent_background)
+        print(f"✅ Saved to: {full_path}")
+    
+    return fig, ax
+
+
+def plot_similarity_dendrogram(
+    similarity_result,
+    method='average',
+    metric='precomputed',
+    figsize=(10, 6),
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True
+):
+    """
+    Plot dendrogram showing hierarchical clustering based on similarity.
+    
+    Parameters
+    ----------
+    similarity_result : dict
+        Result from calculate_between_molecule_similarity() or calculate_track_similarity()
+    method : str, default='average'
+        Linkage method ('single', 'complete', 'average', 'ward')
+    metric : str, default='precomputed'
+        Distance metric
+    figsize : tuple, default=(10, 6)
+        Figure size
+    save_path : str, optional
+        Directory to save
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI
+    transparent_background : bool, default=True
+        Transparent background
+        
+    Returns
+    -------
+    fig, ax, linkage_matrix
+    """
+    from scipy.cluster.hierarchy import dendrogram, linkage
+    from scipy.spatial.distance import squareform
+    import matplotlib.pyplot as plt
+    
+    # Get distance matrix
+    distance_matrix = similarity_result['distance_matrix'].values
+    
+    # Convert to condensed distance matrix for linkage
+    condensed_dist = squareform(distance_matrix, checks=False)
+    
+    # Perform hierarchical clustering
+    linkage_matrix = linkage(condensed_dist, method=method)
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    dendrogram(linkage_matrix,
+              labels=similarity_result['distance_matrix'].index.tolist(),
+              ax=ax)
+    
+    ax.set_title(f"Hierarchical Clustering Dendrogram\n(method={method})",
+                fontsize=14, fontweight='bold')
+    ax.set_xlabel('Molecule / Superwindow', fontsize=12)
+    ax.set_ylabel('Distance', fontsize=12)
+    
+    plt.tight_layout()
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
+    
+    if save_path:
+        filename = f"similarity_dendrogram_{method}.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', transparent=transparent_background)
+        print(f"✅ Saved to: {full_path}")
+    
+    return fig, ax, linkage_matrix
+
+
+def plot_similarity_mds(
+    similarity_result,
+    n_components=2,
+    figsize=(10, 8),
+    color_by=None,
+    palette=None,
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True
+):
+    """
+    Plot MDS (Multidimensional Scaling) of similarity matrix.
+    
+    Visualizes similarities in 2D space where similar items are close together.
+    
+    Parameters
+    ----------
+    similarity_result : dict
+        Result from calculate_between_molecule_similarity() or calculate_track_similarity()
+    n_components : int, default=2
+        Number of dimensions (2 or 3)
+    figsize : tuple, default=(10, 8)
+        Figure size
+    color_by : pd.Series or list, optional
+        Color points by this variable
+    palette : str or list, optional
+        Color palette
+    save_path : str, optional
+        Directory to save
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI
+    transparent_background : bool, default=True
+        Transparent background
+        
+    Returns
+    -------
+    fig, ax, embedding
+    """
+    from sklearn.manifold import MDS
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    # Get distance matrix
+    distance_matrix = similarity_result['distance_matrix'].values
+    labels = similarity_result['distance_matrix'].index.tolist()
+    
+    # Perform MDS
+    mds = MDS(n_components=n_components, dissimilarity='precomputed', random_state=42)
+    embedding = mds.fit_transform(distance_matrix)
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    if color_by is not None:
+        if isinstance(color_by, str) and color_by in ['mol', 'molecule']:
+            # Extract molecule names from labels
+            colors = [label.split('_')[0] if '_' in label else label for label in labels]
+        else:
+            colors = color_by
+        
+        unique_colors = list(set(colors))
+        if palette is None:
+            palette = sns.color_palette("husl", len(unique_colors))
+        
+        color_map = {col: palette[i] for i, col in enumerate(unique_colors)}
+        point_colors = [color_map[c] for c in colors]
+        
+        scatter = ax.scatter(embedding[:, 0], embedding[:, 1], 
+                            c=point_colors, s=100, alpha=0.7, edgecolors='k')
+        
+        # Legend
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor=color_map[c], label=c) for c in unique_colors]
+        ax.legend(handles=legend_elements, title='Molecule', loc='best')
+    else:
+        ax.scatter(embedding[:, 0], embedding[:, 1], s=100, alpha=0.7, edgecolors='k')
+    
+    # Annotate points
+    for i, label in enumerate(labels):
+        ax.annotate(label, (embedding[i, 0], embedding[i, 1]),
+                   xytext=(5, 5), textcoords='offset points',
+                   fontsize=8, alpha=0.7)
+    
+    ax.set_xlabel('MDS Dimension 1', fontsize=12, fontweight='bold')
+    ax.set_ylabel('MDS Dimension 2', fontsize=12, fontweight='bold')
+    ax.set_title(f'MDS Plot of Molecular Similarity\n(Stress: {mds.stress_:.3f})',
+                fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
+    
+    if save_path:
+        filename = f"similarity_mds.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', transparent=transparent_background)
+        print(f"✅ Saved to: {full_path}")
+    
+    return fig, ax, embedding
+
+
+def plot_similarity_umap(
+    similarity_result,
+    n_neighbors=15,
+    min_dist=0.1,
+    figsize=(10, 8),
+    color_by=None,
+    palette=None,
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True
+):
+    """
+    Plot UMAP of similarity matrix.
+    
+    UMAP (Uniform Manifold Approximation and Projection) preserves both
+    local and global structure better than MDS.
+    
+    Parameters
+    ----------
+    similarity_result : dict
+        Result from similarity calculation
+    n_neighbors : int, default=15
+        UMAP n_neighbors parameter
+    min_dist : float, default=0.1
+        UMAP min_dist parameter
+    figsize : tuple, default=(10, 8)
+        Figure size
+    color_by : pd.Series or list or str, optional
+        Color points by this variable. If 'mol', extracts from labels.
+    palette : str or list, optional
+        Color palette
+    save_path : str, optional
+        Directory to save
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI
+    transparent_background : bool, default=True
+        Transparent background
+        
+    Returns
+    -------
+    fig, ax, embedding
+    """
+    try:
+        import umap
+    except ImportError:
+        raise ImportError("UMAP requires 'umap-learn' package. Install with: pip install umap-learn")
+    
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    # Get distance matrix
+    distance_matrix = similarity_result['distance_matrix'].values
+    labels = similarity_result['distance_matrix'].index.tolist()
+    
+    # Perform UMAP
+    reducer = umap.UMAP(n_neighbors=n_neighbors, min_dist=min_dist, 
+                       metric='precomputed', random_state=42)
+    embedding = reducer.fit_transform(distance_matrix)
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    if color_by is not None:
+        if isinstance(color_by, str) and color_by in ['mol', 'molecule']:
+            # Extract molecule names from labels
+            colors = [label.split('_')[0] if '_' in label else label for label in labels]
+        else:
+            colors = color_by
+        
+        unique_colors = list(set(colors))
+        if palette is None:
+            palette = sns.color_palette("husl", len(unique_colors))
+        
+        color_map = {col: palette[i] for i, col in enumerate(unique_colors)}
+        point_colors = [color_map[c] for c in colors]
+        
+        scatter = ax.scatter(embedding[:, 0], embedding[:, 1], 
+                            c=point_colors, s=100, alpha=0.7, edgecolors='k')
+        
+        # Legend
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor=color_map[c], label=c) for c in unique_colors]
+        ax.legend(handles=legend_elements, title='Molecule', loc='best')
+    else:
+        ax.scatter(embedding[:, 0], embedding[:, 1], s=100, alpha=0.7, edgecolors='k')
+    
+    # Optionally annotate points (can be crowded)
+    if len(labels) <= 50:  # Only annotate if not too many points
+        for i, label in enumerate(labels):
+            ax.annotate(label, (embedding[i, 0], embedding[i, 1]),
+                       xytext=(5, 5), textcoords='offset points',
+                       fontsize=8, alpha=0.7)
+    
+    ax.set_xlabel('UMAP Dimension 1', fontsize=12, fontweight='bold')
+    ax.set_ylabel('UMAP Dimension 2', fontsize=12, fontweight='bold')
+    ax.set_title(f'UMAP Plot of Molecular Similarity\n(n_neighbors={n_neighbors}, min_dist={min_dist})',
+                fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
+    
+    if save_path:
+        filename = f"similarity_umap.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', transparent=transparent_background)
+        print(f"✅ Saved to: {full_path}")
+    
+    return fig, ax, embedding
+
+
+def plot_similarity_pca(
+    similarity_result,
+    n_components=2,
+    figsize=(10, 8),
+    color_by=None,
+    palette=None,
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True
+):
+    """
+    Plot PCA of similarity matrix.
+    
+    PCA finds principal components that explain variance in similarity.
+    
+    Parameters
+    ----------
+    similarity_result : dict
+        Result from similarity calculation
+    n_components : int, default=2
+        Number of components
+    figsize : tuple, default=(10, 8)
+        Figure size
+    color_by : pd.Series or list or str, optional
+        Color points
+    palette : str or list, optional
+        Color palette
+    save_path : str, optional
+        Directory to save
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI
+    transparent_background : bool, default=True
+        Transparent background
+        
+    Returns
+    -------
+    fig, ax, pca
+    """
+    from sklearn.decomposition import PCA
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    # Get similarity matrix (use similarity, not distance, for PCA)
+    similarity_matrix = similarity_result['similarity_matrix'].values
+    labels = similarity_result['similarity_matrix'].index.tolist()
+    
+    # Perform PCA
+    pca = PCA(n_components=n_components, random_state=42)
+    embedding = pca.fit_transform(similarity_matrix)
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    if color_by is not None:
+        if isinstance(color_by, str) and color_by in ['mol', 'molecule']:
+            colors = [label.split('_')[0] if '_' in label else label for label in labels]
+        else:
+            colors = color_by
+        
+        unique_colors = list(set(colors))
+        if palette is None:
+            palette = sns.color_palette("husl", len(unique_colors))
+        
+        color_map = {col: palette[i] for i, col in enumerate(unique_colors)}
+        point_colors = [color_map[c] for c in colors]
+        
+        scatter = ax.scatter(embedding[:, 0], embedding[:, 1], 
+                            c=point_colors, s=100, alpha=0.7, edgecolors='k')
+        
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor=color_map[c], label=c) for c in unique_colors]
+        ax.legend(handles=legend_elements, title='Molecule', loc='best')
+    else:
+        ax.scatter(embedding[:, 0], embedding[:, 1], s=100, alpha=0.7, edgecolors='k')
+    
+    # Optionally annotate
+    if len(labels) <= 50:
+        for i, label in enumerate(labels):
+            ax.annotate(label, (embedding[i, 0], embedding[i, 1]),
+                       xytext=(5, 5), textcoords='offset points',
+                       fontsize=8, alpha=0.7)
+    
+    var_explained = pca.explained_variance_ratio_
+    ax.set_xlabel(f'PC1 ({var_explained[0]*100:.1f}% variance)', fontsize=12, fontweight='bold')
+    ax.set_ylabel(f'PC2 ({var_explained[1]*100:.1f}% variance)', fontsize=12, fontweight='bold')
+    ax.set_title(f'PCA of Molecular Similarity\n(Total variance: {var_explained.sum()*100:.1f}%)',
+                fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
+    
+    if save_path:
+        filename = f"similarity_pca.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', transparent=transparent_background)
+        print(f"✅ Saved to: {full_path}")
+    
+    return fig, ax, pca
+
+
+def plot_molecule_distance_comparison(
+    between_mol_result,
+    reference_molecule='HTT',
+    figsize=(8, 6),
+    palette=None,
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True
+):
+    """
+    Plot "Who does X resemble?" - distance from reference molecule to others.
+    
+    Parameters
+    ----------
+    between_mol_result : dict
+        Result from calculate_between_molecule_similarity()
+    reference_molecule : str, default='HTT'
+        Reference molecule to compare others to
+    figsize : tuple, default=(8, 6)
+        Figure size
+    palette : list, optional
+        Colors
+    save_path : str, optional
+        Directory to save
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI
+    transparent_background : bool, default=True
+        Transparent background
+        
+    Returns
+    -------
+    fig, ax
+    """
+    import matplotlib.pyplot as plt
+    
+    similarity_df = between_mol_result['similarity_matrix']
+    
+    if reference_molecule not in similarity_df.index:
+        raise ValueError(f"{reference_molecule} not in similarity matrix")
+    
+    # Get similarities to reference molecule
+    similarities = similarity_df.loc[reference_molecule]
+    similarities = similarities[similarities.index != reference_molecule]  # Exclude self
+    similarities = similarities.sort_values(ascending=False)
+    
+    # Plot
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    colors = palette if palette else ['#0173B2', '#DE8F05', '#029E73', '#CC78BC']
+    
+    bars = ax.barh(range(len(similarities)), similarities.values, 
+                  color=colors[:len(similarities)], alpha=0.7, edgecolor='k')
+    
+    ax.set_yticks(range(len(similarities)))
+    ax.set_yticklabels(similarities.index)
+    ax.set_xlabel('Similarity Score', fontsize=12, fontweight='bold')
+    ax.set_title(f'Who Does {reference_molecule} Resemble?\n(Higher = More Similar)',
+                fontsize=14, fontweight='bold')
+    ax.set_xlim(0, 1)
+    ax.grid(True, alpha=0.3, axis='x')
+    
+    # Add value labels
+    for i, (mol, sim) in enumerate(similarities.items()):
+        ax.text(sim + 0.02, i, f'{sim:.3f}', va='center', fontsize=10)
+    
+    plt.tight_layout()
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
+    
+    if save_path:
+        filename = f"molecule_distance_{reference_molecule}.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', transparent=transparent_background)
+        print(f"✅ Saved to: {full_path}")
+    
+    return fig, ax
+
+
+def plot_state_trajectory_blobs(
+    transition_result,
+    superwindow_length=10,
+    n_trajectories=5,
+    figsize=(14, 8),
+    state_colors=None,
+    state_order=None,
+    line_width_scale=5,
+    alpha_base=0.7,
+    save_path=None,
+    export_format='svg',
+    dpi=300
+):
+    """
+    Plot example trajectories with blobs and transition-weighted lines.
+    
+    Parameters
+    ----------
+    transition_result : dict
+        Result from analyze_state_transitions()
+    superwindow_length : int, default=10
+        Length of superwindow
+    n_trajectories : int, default=5
+        Number of example trajectories to show
+    figsize : tuple, default=(14, 8)
+        Figure size
+    state_colors : dict, optional
+        State name -> color mapping
+    state_order : list, optional
+        Custom order for states on y-axis
+    line_width_scale : float, default=5
+        Scale factor for line widths based on transition probability
+    alpha_base : float, default=0.7
+        Base transparency
+    save_path : str, optional
+        Directory to save
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI
+        
+    Returns
+    -------
+    fig, ax
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    prob_matrix = transition_result['transition_probabilities']
+    
+    if state_order is None:
+        states = prob_matrix.index.tolist()
+    else:
+        states = state_order
+    n_states = len(states)
+    
+    if state_colors is None:
+        cmap = plt.cm.Set3
+        state_colors = {state: cmap(i / n_states) for i, state in enumerate(states)}
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Draw background blobs
+    for t in range(superwindow_length):
+        for i, state in enumerate(states):
+            prob = prob_matrix.loc[:, state].mean() if t > 0 else 1.0 / n_states
+            size = prob * 3000
+            ax.scatter(t, i, s=size, c=[state_colors[state]], 
+                      alpha=0.3, edgecolors='k', linewidths=0.5, zorder=1)
+    
+    # Generate and plot example trajectories
+    np.random.seed(42)
+    for traj_idx in range(n_trajectories):
+        current_state = np.random.choice(states)
+        trajectory = [current_state]
+        
+        for t in range(superwindow_length - 1):
+            probs = prob_matrix.loc[current_state].values
+            next_state = np.random.choice(states, p=probs)
+            trajectory.append(next_state)
+            
+            # Get transition probability for line thickness
+            trans_prob = prob_matrix.loc[current_state, next_state]
+            linewidth = 1 + trans_prob * line_width_scale
+            alpha = alpha_base * (0.5 + 0.5 * trans_prob)
+            
+            # Draw line segment
+            y_curr = states.index(current_state)
+            y_next = states.index(next_state)
+            ax.plot([t, t+1], [y_curr, y_next], '-', 
+                   linewidth=linewidth, alpha=alpha, color='black', zorder=5)
+            
+            current_state = next_state
+        
+        # Draw trajectory blobs
+        y_positions = [states.index(s) for s in trajectory]
+        x_positions = list(range(superwindow_length))
+        ax.scatter(x_positions, y_positions, s=150, c='black', 
+                  alpha=0.8, edgecolors='white', linewidths=2, zorder=10)
+    
+    ax.set_yticks(range(n_states))
+    ax.set_yticklabels(states, fontsize=10)
+    ax.set_xlabel('Window Position', fontsize=12, fontweight='bold')
+    ax.set_ylabel('State', fontsize=12, fontweight='bold')
+    ax.set_title(f'Example State Trajectories (n={n_trajectories})\nLine thickness = transition probability',
+                fontsize=14, fontweight='bold')
+    ax.set_xlim(-0.5, superwindow_length - 0.5)
+    ax.set_ylim(-0.5, n_states - 0.5)
+    ax.grid(True, alpha=0.3, axis='x')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        filename = f"state_trajectory_examples.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight')
+        print(f"✅ Saved to: {full_path}")
+    
+    return fig, ax
+
+
+def plot_similarity_space_pca(
+    sequence_df,
+    pca_embedding_col='pca_embedding',
+    color_by='mol',
+    split_by=None,
+    palette='colorblind',
+    figsize=(10, 8),
+    s=50,
+    alpha=0.7,
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True
+):
+    """
+    Plot PCA embedding of DTW similarity space.
+    
+    Parameters
+    ----------
+    sequence_df : pd.DataFrame
+        DataFrame with PCA embeddings
+    pca_embedding_col : str, default='pca_embedding'
+        Column containing PCA coordinates (array of shape (n_components,))
+    color_by : str, default='mol'
+        Column to color points by
+    split_by : str, optional
+        Column to create small multiples (e.g., 'mol')
+    palette : str, dict, or list, default='colorblind'
+        Color palette
+    figsize : tuple, default=(10, 8)
+        Figure size
+    s : float, default=50
+        Point size
+    alpha : float, default=0.7
+        Point transparency
+    save_path : str, optional
+        Save directory
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI
+    transparent_background : bool, default=True
+        Transparent background
+        
+    Returns
+    -------
+    fig, ax or axes
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Extract PCA coordinates
+    pca_coords = np.vstack(sequence_df[pca_embedding_col].values)
+    
+    # Handle colors
+    if palette == 'colorblind':
+        colorblind_palette = ['#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161']
+    else:
+        colorblind_palette = None
+    
+    unique_vals = sequence_df[color_by].unique()
+    
+    if isinstance(palette, dict):
+        color_map = palette
+    elif isinstance(palette, list):
+        color_map = {val: palette[i % len(palette)] for i, val in enumerate(unique_vals)}
+    elif palette == 'colorblind':
+        color_map = {val: colorblind_palette[i % len(colorblind_palette)] 
+                    for i, val in enumerate(unique_vals)}
+    else:
+        cmap = plt.cm.get_cmap(palette)
+        color_map = {val: cmap(i / len(unique_vals)) for i, val in enumerate(unique_vals)}
+    
+    colors = [color_map[val] for val in sequence_df[color_by]]
+    
+    # Create plot(s)
+    if split_by is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        scatter = ax.scatter(pca_coords[:, 0], pca_coords[:, 1], 
+                            c=colors, s=s, alpha=alpha, edgecolors='k', linewidths=0.5)
+        ax.set_xlabel('PC1', fontsize=12, fontweight='bold')
+        ax.set_ylabel('PC2', fontsize=12, fontweight='bold')
+        ax.set_title(f'PCA of DTW Similarity Space\n(colored by {color_by})',
+                    fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        
+        # Legend
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor=color_map[val], label=val) 
+                          for val in unique_vals]
+        ax.legend(handles=legend_elements, title=color_by, loc='best')
+        
+        axes = None
+    else:
+        # Small multiples
+        split_vals = sequence_df[split_by].unique()
+        n_plots = len(split_vals)
+        ncols = min(3, n_plots)
+        nrows = int(np.ceil(n_plots / ncols))
+        
+        fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+        axes = axes.flatten()
+        
+        for i, split_val in enumerate(split_vals):
+            ax = axes[i]
+            mask = sequence_df[split_by] == split_val
+            coords = pca_coords[mask]
+            cols = [colors[j] for j, m in enumerate(mask) if m]
+            
+            ax.scatter(coords[:, 0], coords[:, 1], 
+                      c=cols, s=s, alpha=alpha, edgecolors='k', linewidths=0.5)
+            ax.set_xlabel('PC1', fontweight='bold')
+            ax.set_ylabel('PC2', fontweight='bold')
+            ax.set_title(f'{split_val}', fontweight='bold')
+            ax.grid(True, alpha=0.3)
+        
+        # Hide extra subplots
+        for j in range(i + 1, len(axes)):
+            axes[j].axis('off')
+        
+        fig.suptitle(f'PCA of DTW Similarity (colored by {color_by})',
+                    fontsize=14, fontweight='bold', y=1.0)
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        if axes is None:
+            ax.patch.set_alpha(0)
+        else:
+            for a in axes:
+                a.patch.set_alpha(0)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        suffix = f"_{split_by}" if split_by else ""
+        filename = f"pca_similarity_space{suffix}.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', 
+                   transparent=transparent_background)
+        print(f"✅ Saved to: {full_path}")
+    
+    return fig, ax if axes is None else axes
+
+
+def plot_similarity_space_umap(
+    sequence_df,
+    umap_embedding_col='umap_embedding',
+    color_by='mol',
+    split_by=None,
+    palette='colorblind',
+    figsize=(10, 8),
+    s=50,
+    alpha=0.7,
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True
+):
+    """
+    Plot UMAP embedding of DTW similarity space.
+    
+    Parameters
+    ----------
+    sequence_df : pd.DataFrame
+        DataFrame with UMAP embeddings
+    umap_embedding_col : str, default='umap_embedding'
+        Column containing UMAP coordinates
+    color_by : str, default='mol'
+        Column to color points by
+    split_by : str, optional
+        Column to create small multiples
+    palette : str, dict, or list, default='colorblind'
+        Color palette
+    figsize : tuple, default=(10, 8)
+        Figure size
+    s : float, default=50
+        Point size
+    alpha : float, default=0.7
+        Point transparency
+    save_path : str, optional
+        Save directory
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI
+    transparent_background : bool, default=True
+        Transparent background
+        
+    Returns
+    -------
+    fig, ax or axes
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    umap_coords = np.vstack(sequence_df[umap_embedding_col].values)
+    
+    # Handle colors (same logic as PCA)
+    if palette == 'colorblind':
+        colorblind_palette = ['#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161']
+    else:
+        colorblind_palette = None
+    
+    unique_vals = sequence_df[color_by].unique()
+    
+    if isinstance(palette, dict):
+        color_map = palette
+    elif isinstance(palette, list):
+        color_map = {val: palette[i % len(palette)] for i, val in enumerate(unique_vals)}
+    elif palette == 'colorblind':
+        color_map = {val: colorblind_palette[i % len(colorblind_palette)] 
+                    for i, val in enumerate(unique_vals)}
+    else:
+        cmap = plt.cm.get_cmap(palette)
+        color_map = {val: cmap(i / len(unique_vals)) for i, val in enumerate(unique_vals)}
+    
+    colors = [color_map[val] for val in sequence_df[color_by]]
+    
+    if split_by is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        scatter = ax.scatter(umap_coords[:, 0], umap_coords[:, 1], 
+                            c=colors, s=s, alpha=alpha, edgecolors='k', linewidths=0.5)
+        ax.set_xlabel('UMAP1', fontsize=12, fontweight='bold')
+        ax.set_ylabel('UMAP2', fontsize=12, fontweight='bold')
+        ax.set_title(f'UMAP of DTW Similarity Space\n(colored by {color_by})',
+                    fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor=color_map[val], label=val) 
+                          for val in unique_vals]
+        ax.legend(handles=legend_elements, title=color_by, loc='best')
+        
+        axes = None
+    else:
+        split_vals = sequence_df[split_by].unique()
+        n_plots = len(split_vals)
+        ncols = min(3, n_plots)
+        nrows = int(np.ceil(n_plots / ncols))
+        
+        fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+        axes = axes.flatten()
+        
+        for i, split_val in enumerate(split_vals):
+            ax = axes[i]
+            mask = sequence_df[split_by] == split_val
+            coords = umap_coords[mask]
+            cols = [colors[j] for j, m in enumerate(mask) if m]
+            
+            ax.scatter(coords[:, 0], coords[:, 1], 
+                      c=cols, s=s, alpha=alpha, edgecolors='k', linewidths=0.5)
+            ax.set_xlabel('UMAP1', fontweight='bold')
+            ax.set_ylabel('UMAP2', fontweight='bold')
+            ax.set_title(f'{split_val}', fontweight='bold')
+            ax.grid(True, alpha=0.3)
+        
+        for j in range(i + 1, len(axes)):
+            axes[j].axis('off')
+        
+        fig.suptitle(f'UMAP of DTW Similarity (colored by {color_by})',
+                    fontsize=14, fontweight='bold', y=1.0)
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        if axes is None:
+            ax.patch.set_alpha(0)
+        else:
+            for a in axes:
+                a.patch.set_alpha(0)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        suffix = f"_{split_by}" if split_by else ""
+        filename = f"umap_similarity_space{suffix}.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', 
+                   transparent=transparent_background)
+        print(f"✅ Saved to: {full_path}")
+    
+    return fig, ax if axes is None else axes
+
+
+def plot_representative_sequences(
+    clustered_df,
+    sequence_col='state_sequence',
+    cluster_col='superwindow_cluster',
+    group_by='mol',
+    n_superwindows_per_cluster=3,
+    state_order=None,
+    state_colors='colorblind',
+    figsize=(18, 12),
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True,
+    show_superwindow_id=False,
+    superwindow_id_col='superwindow_id',
+    id_fontsize=6,
+    id_color='gray'
+):
+    """
+    Plot representative sequences from each cluster to verify similarity.
+    
+    Parameters
+    ----------
+    clustered_df : pd.DataFrame
+        DataFrame with cluster labels (from add_dtw_clusters)
+    sequence_col : str, default='state_sequence'
+        Column with state sequences
+    cluster_col : str, default='superwindow_cluster'
+        Column with cluster labels
+    group_by : str, default='mol'
+        Column to group by (e.g., 'mol')
+    n_superwindows_per_cluster : int, default=3
+        Number of example sequences to show per cluster
+    state_order : list, optional
+        Custom state order
+    state_colors : str, dict, or list, default='colorblind'
+        State colors
+    figsize : tuple, default=(18, 12)
+        Figure size
+    save_path : str, optional
+        Save directory
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI
+    transparent_background : bool, default=True
+        Transparent background
+    show_superwindow_id : bool, default=False
+        Whether to annotate each subplot with the superwindow_id
+    superwindow_id_col : str, default='superwindow_id'
+        Column name for superwindow_id
+    id_fontsize : int, default=6
+        Font size for superwindow_id annotation
+    id_color : str, default='gray'
+        Color for superwindow_id annotation
+        
+    Returns
+    -------
+    tuple
+        (fig, axes, plotted_superwindow_ids, state_colors_dict)
+        - fig: matplotlib figure
+        - axes: matplotlib axes array
+        - plotted_superwindow_ids: list of superwindow_ids that were plotted
+        - state_colors_dict: dict mapping state -> color
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Track superwindow_ids that are plotted
+    plotted_superwindow_ids = []
+    
+    # Get all states
+    all_states = set()
+    for seq in clustered_df[sequence_col]:
+        if isinstance(seq, list):
+            all_states.update(seq)
+        else:
+            all_states.update(list(seq))
+    
+    if state_order is None:
+        states = sorted(all_states)
+    else:
+        states = state_order
+    
+    n_states = len(states)
+    
+    # Handle colors
+    if state_colors == 'colorblind':
+        colorblind_palette = ['#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161', 
+                             '#FBAFE4', '#949494', '#ECE133', '#56B4E9', '#D55E00']
+        state_colors = {state: colorblind_palette[i % len(colorblind_palette)] 
+                       for i, state in enumerate(states)}
+    elif isinstance(state_colors, list):
+        state_colors = {state: state_colors[i % len(state_colors)] 
+                       for i, state in enumerate(states)}
+    elif state_colors is None:
+        cmap = plt.cm.Set3
+        state_colors = {state: cmap(i / n_states) for i, state in enumerate(states)}
+    
+    # Get groups and clusters
+    groups = sorted(clustered_df[group_by].unique())
+    n_clusters = clustered_df[cluster_col].nunique()
+    
+    # Create subplot grid: rows = groups, cols = clusters * n_examples
+    n_cols = n_clusters * n_superwindows_per_cluster
+    fig, axes = plt.subplots(len(groups), n_cols, 
+                            figsize=figsize, squeeze=False)
+    
+    for group_idx, group_val in enumerate(groups):
+        group_data = clustered_df[clustered_df[group_by] == group_val]
+        
+        col_idx = 0
+        for cluster_id in range(n_clusters):
+            cluster_data = group_data[group_data[cluster_col] == cluster_id]
+            
+            # Sample n examples from this cluster
+            n_available = len(cluster_data)
+            n_to_show = min(n_superwindows_per_cluster, n_available)
+            
+            if n_to_show > 0:
+                examples = cluster_data.sample(n=n_to_show, random_state=42)
+            else:
+                examples = cluster_data
+            
+            for ex_idx, (_, row) in enumerate(examples.iterrows()):
+                ax = axes[group_idx, col_idx]
+                sequence = row[sequence_col]
+                
+                # Track this superwindow_id
+                sw_id = None
+                if superwindow_id_col in row.index:
+                    sw_id = row[superwindow_id_col]
+                    plotted_superwindow_ids.append(sw_id)
+                
+                # Convert to list if needed
+                if not isinstance(sequence, list):
+                    sequence = list(sequence)
+                
+                # Plot sequence
+                for t, state in enumerate(sequence):
+                    if state in states:
+                        y_pos = states.index(state)
+                        ax.scatter(t, y_pos, s=200, c=[state_colors[state]], 
+                                 edgecolors='k', linewidths=1.5, zorder=5)
+                        
+                        if t < len(sequence) - 1:
+                            next_state = sequence[t + 1]
+                            if next_state in states:
+                                y_next = states.index(next_state)
+                                ax.plot([t, t+1], [y_pos, y_next], 'k-', 
+                                       linewidth=1.5, alpha=0.5, zorder=3)
+                
+                # Formatting
+                ax.set_yticks(range(n_states))
+                ax.set_yticklabels(states if col_idx == 0 else [], fontsize=8)
+                ax.set_xlim(-0.5, len(sequence) - 0.5)
+                ax.set_ylim(-0.5, n_states - 0.5)
+                ax.grid(True, alpha=0.2, axis='x')
+                
+                # Add superwindow_id annotation
+                if show_superwindow_id and sw_id is not None:
+                    ax.text(0.5, -0.15, sw_id, transform=ax.transAxes,
+                           fontsize=id_fontsize, color=id_color,
+                           ha='center', va='top', style='italic')
+                
+                # Title only on first row
+                if group_idx == 0:
+                    if ex_idx == 0:
+                        ax.set_title(f'Cluster {cluster_id}\n(n={n_available})', 
+                                   fontsize=9, fontweight='bold')
+                    else:
+                        ax.set_title(f'Example {ex_idx+1}', fontsize=8)
+                
+                # Y-label on first column
+                if col_idx == 0:
+                    ax.set_ylabel(f'{group_val}', fontsize=10, fontweight='bold')
+                
+                col_idx += 1
+            
+            # Fill remaining columns for this cluster if not enough examples
+            for _ in range(n_to_show, n_superwindows_per_cluster):
+                axes[group_idx, col_idx].axis('off')
+                col_idx += 1
+    
+    plt.suptitle(f'Representative Sequences per Cluster\n({n_superwindows_per_cluster} examples each)', 
+                fontsize=14, fontweight='bold', y=0.995)
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        for ax_row in axes:
+            for ax in ax_row:
+                ax.patch.set_alpha(0)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        filename = f"representative_sequences_n{n_superwindows_per_cluster}.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', 
+                   transparent=transparent_background)
+        print(f"✅ Saved to: {full_path}")
+    
+    print(f"\n✅ Plotted {len(plotted_superwindow_ids)} superwindows")
+    print(f"   Use these IDs to filter instant_df for matching gallery visualization")
+    
+    return fig, axes, plotted_superwindow_ids, state_colors
+
+
+def plot_transition_probabilities_stacked(
+    transition_results_dict,
+    state_order=None,
+    figsize=(12, 6),
+    state_colors='colorblind',
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True
+):
+    """
+    Stacked bar chart showing transition probabilities for each molecule.
+    
+    Parameters
+    ----------
+    transition_results_dict : dict
+        Dict of molecule -> transition_result
+    state_order : list, optional
+        Custom state order
+    figsize : tuple, default=(12, 6)
+        Figure size
+    state_colors : str, dict, or list, default='colorblind'
+        'colorblind' for colorblind-friendly palette,
+        dict mapping state -> color,
+        or list of hex codes
+    save_path : str, optional
+        Save directory
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI
+    transparent_background : bool, default=True
+        Transparent background
+        
+    Returns
+    -------
+    fig, axes
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Get all unique states
+    all_states = set()
+    for result in transition_results_dict.values():
+        all_states.update(result['transition_probabilities'].index)
+    
+    if state_order is None:
+        states = sorted(all_states)
+    else:
+        states = state_order
+    
+    n_states = len(states)
+    molecules = list(transition_results_dict.keys())
+    
+    # Handle color specification
+    if state_colors == 'colorblind':
+        colorblind_palette = ['#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161', 
+                             '#FBAFE4', '#949494', '#ECE133', '#56B4E9', '#D55E00']
+        state_colors = {state: colorblind_palette[i % len(colorblind_palette)] 
+                       for i, state in enumerate(states)}
+    elif isinstance(state_colors, list):
+        state_colors = {state: state_colors[i % len(state_colors)] 
+                       for i, state in enumerate(states)}
+    elif state_colors is None:
+        cmap = plt.cm.Set3
+        state_colors = {state: cmap(i / n_states) for i, state in enumerate(states)}
+    
+    # Create figure
+    fig, axes = plt.subplots(1, len(molecules), figsize=figsize, sharey=True)
+    if len(molecules) == 1:
+        axes = [axes]
+    
+    for mol_idx, (mol, result) in enumerate(transition_results_dict.items()):
+        ax = axes[mol_idx]
+        prob_matrix = result['transition_probabilities']
+        
+        bar_width = 0.8
+        x_pos = np.arange(n_states)
+        
+        bottom = np.zeros(n_states)
+        for to_state in states:
+            values = [prob_matrix.loc[from_state, to_state] 
+                     if from_state in prob_matrix.index and to_state in prob_matrix.columns 
+                     else 0 for from_state in states]
+            ax.bar(x_pos, values, bar_width, bottom=bottom, 
+                  label=to_state, color=state_colors[to_state], 
+                  edgecolor='white', linewidth=1)
+            bottom += values
+        
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(states, rotation=45, ha='right', fontsize=9)
+        ax.set_title(mol, fontsize=12, fontweight='bold')
+        ax.set_ylim(0, 1)
+        
+        if mol_idx == 0:
+            ax.set_ylabel('Transition Probability', fontsize=11, fontweight='bold')
+        
+        ax.set_xlabel('From State', fontsize=10, fontweight='bold')
+    
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, title='To State', 
+              bbox_to_anchor=(1.05, 0.5), loc='center left', fontsize=9)
+    
+    fig.suptitle('State Transition Probabilities (Stacked)', 
+                fontsize=14, fontweight='bold', y=1.02)
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        for ax in axes:
+            ax.patch.set_alpha(0)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        filename = f"transition_probabilities_stacked.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', 
+                   transparent=transparent_background)
+        print(f"✅ Saved to: {full_path}")
+    
+    return fig, axes
 
 

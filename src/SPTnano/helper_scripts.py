@@ -5293,3 +5293,2156 @@ def balance_classes_for_pca(
         df_balanced = pl.from_pandas(df_balanced)
     
     return df_balanced, report
+
+
+# ============================================================================
+# STATE TRANSITION ANALYSIS FUNCTIONS
+# ============================================================================
+
+
+def plot_windows_per_track_histogram(
+    windowed_df,
+    group_by='mol',
+    unique_id_col='unique_id',
+    save_path=None,
+    figsize=(12, 6),
+    color_palette=None,
+    transparent_background=True,
+    bins=None,
+    max_windows=None,
+    export_format='svg',
+    dpi=300
+):
+    """
+    Create histograms showing the distribution of number of time windows per track.
+    
+    Parameters
+    ----------
+    windowed_df : pl.DataFrame or pd.DataFrame
+        Windowed dataframe with one row per time window
+    group_by : str, default='mol'
+        Column name to separate histograms by (e.g., 'mol', 'type', 'group')
+    unique_id_col : str, default='unique_id'
+        Column name containing unique track IDs
+    save_path : str, optional
+        Directory to save the figure
+    figsize : tuple, default=(12, 6)
+        Figure size (width, height)
+    color_palette : list, optional
+        List of colors for different groups
+    transparent_background : bool, default=True
+        Whether to make background transparent
+    bins : int or list, optional
+        Histogram bins. If None, uses automatic binning
+    max_windows : int, optional
+        Maximum number of windows to display on x-axis
+    export_format : str, default='svg'
+        Export format ('svg', 'png', 'pdf')
+    dpi : int, default=300
+        DPI for raster formats
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    ax : matplotlib.axes.Axes or list of Axes
+        The axes object(s)
+    stats : dict
+        Dictionary containing statistics for each group
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    # Convert to pandas if polars
+    is_polars = isinstance(windowed_df, pl.DataFrame)
+    if is_polars:
+        df = windowed_df.to_pandas()
+    else:
+        df = windowed_df.copy()
+    
+    # Count windows per track for each group
+    if group_by:
+        groups = df[group_by].unique()
+        n_groups = len(groups)
+        
+        # Create subplots
+        n_cols = min(3, n_groups)
+        n_rows = int(np.ceil(n_groups / n_cols))
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
+        axes = axes.flatten()
+        
+        # Hide extra subplots
+        for idx in range(n_groups, len(axes)):
+            axes[idx].set_visible(False)
+    else:
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+        axes = [ax]
+        groups = [None]
+        n_groups = 1
+    
+    # Set colors
+    if color_palette is None:
+        color_palette = sns.color_palette("colorblind", n_groups)
+    
+    stats = {}
+    
+    for idx, group in enumerate(groups):
+        if group is not None:
+            group_df = df[df[group_by] == group]
+            title = f"{group_by}: {group}"
+        else:
+            group_df = df
+            title = "All tracks"
+        
+        # Count windows per track
+        windows_per_track = group_df.groupby(unique_id_col).size()
+        
+        # Store statistics
+        stats[str(group)] = {
+            'n_tracks': len(windows_per_track),
+            'mean_windows': windows_per_track.mean(),
+            'median_windows': windows_per_track.median(),
+            'std_windows': windows_per_track.std(),
+            'min_windows': windows_per_track.min(),
+            'max_windows': windows_per_track.max(),
+            'total_windows': windows_per_track.sum()
+        }
+        
+        # Create histogram
+        ax = axes[idx]
+        
+        if bins is None:
+            bins_to_use = range(1, int(windows_per_track.max()) + 2)
+        else:
+            bins_to_use = bins
+        
+        ax.hist(windows_per_track, bins=bins_to_use, 
+                color=color_palette[idx], alpha=0.7, edgecolor='black', linewidth=0.5)
+        
+        # Add statistics text
+        stats_text = (f"n={stats[str(group)]['n_tracks']:,} tracks\n"
+                     f"μ={stats[str(group)]['mean_windows']:.1f} windows\n"
+                     f"median={stats[str(group)]['median_windows']:.0f}")
+        
+        ax.text(0.95, 0.95, stats_text, transform=ax.transAxes,
+                verticalalignment='top', horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                fontsize=9)
+        
+        ax.set_xlabel('Number of time windows per track', fontsize=10)
+        ax.set_ylabel('Number of tracks', fontsize=10)
+        ax.set_title(title, fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        
+        if max_windows:
+            ax.set_xlim(0, max_windows)
+    
+    plt.tight_layout()
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        for ax in axes[:n_groups]:
+            ax.patch.set_alpha(0)
+    
+    # Save
+    if save_path:
+        filename = f"windows_per_track_by_{group_by}.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', 
+                   transparent=transparent_background)
+        print(f"✅ Saved histogram to: {full_path}")
+    
+    return fig, axes[:n_groups], stats
+
+
+def create_state_sequence_dataframe(
+    windowed_df,
+    state_col='final_population',
+    unique_id_col='unique_id',
+    time_col='time_window',
+    additional_cols=None
+):
+    """
+    Create a dataframe with state sequences for each track.
+    
+    Parameters
+    ----------
+    windowed_df : pl.DataFrame or pd.DataFrame
+        Windowed dataframe with state assignments
+    state_col : str, default='final_population'
+        Column containing state classifications
+    unique_id_col : str, default='unique_id'
+        Column containing unique track IDs
+    time_col : str, default='time_window'
+        Column containing time window index
+    additional_cols : list, optional
+        Additional metadata columns to include (e.g., ['mol', 'type', 'group'])
+        
+    Returns
+    -------
+    pl.DataFrame or pd.DataFrame
+        Dataframe with columns: unique_id, state_sequence, n_windows, [additional_cols]
+        state_sequence is a list of states in temporal order
+    """
+    is_polars = isinstance(windowed_df, pl.DataFrame)
+    
+    if is_polars:
+        # Sort by track and time
+        df_sorted = windowed_df.sort([unique_id_col, time_col])
+        
+        # Group by track and collect states in order
+        agg_exprs = [
+            pl.col(state_col).alias('state_sequence'),
+            pl.col(state_col).len().alias('n_windows')
+        ]
+        
+        # Add additional columns
+        if additional_cols:
+            for col in additional_cols:
+                agg_exprs.append(pl.col(col).first().alias(col))
+        
+        sequence_df = df_sorted.group_by(unique_id_col).agg(agg_exprs)
+        
+        # IMPORTANT: Convert Polars lists to Python lists for compatibility
+        # This ensures the sequences work with downstream analysis functions
+        sequence_df = sequence_df.with_columns(
+            pl.col('state_sequence').map_elements(
+                lambda x: list(x) if x is not None else None,
+                return_dtype=pl.Object
+            )
+        )
+        
+    else:
+        # Pandas version
+        df_sorted = windowed_df.sort_values([unique_id_col, time_col])
+        
+        # Group by track
+        grouped = df_sorted.groupby(unique_id_col)
+        
+        # Aggregate
+        agg_dict = {
+            state_col: lambda x: list(x),
+            'n_windows': (state_col, 'count')
+        }
+        
+        if additional_cols:
+            for col in additional_cols:
+                agg_dict[col] = (col, 'first')
+        
+        sequence_df = grouped.agg(**agg_dict).reset_index()
+        sequence_df = sequence_df.rename(columns={state_col: 'state_sequence'})
+    
+    return sequence_df
+
+
+def analyze_state_transitions(
+    windowed_df,
+    state_col='final_population',
+    unique_id_col='unique_id',
+    time_col='time_window',
+    group_by=None,
+    normalize=True,
+    min_windows=2
+):
+    """
+    Analyze state transitions within tracks to find which states transition to which.
+    
+    Parameters
+    ----------
+    windowed_df : pl.DataFrame or pd.DataFrame
+        Windowed dataframe with state assignments
+    state_col : str, default='final_population'
+        Column containing state classifications
+    unique_id_col : str, default='unique_id'
+        Column containing unique track IDs
+    time_col : str, default='time_window'
+        Column containing time window index
+    group_by : str, optional
+        Column to group analysis by (e.g., 'mol', 'type')
+    normalize : bool, default=True
+        Whether to normalize transition counts to probabilities
+    min_windows : int, default=2
+        Minimum number of windows required for a track to be included
+        
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - 'transition_matrix': DataFrame with transition counts/probabilities
+        - 'transition_pairs': DataFrame with all observed transitions
+        - 'stats': Dictionary with summary statistics
+        - If group_by: separate results for each group
+    """
+    is_polars = isinstance(windowed_df, pl.DataFrame)
+    
+    if is_polars:
+        df = windowed_df.to_pandas()
+    else:
+        df = windowed_df.copy()
+    
+    # Filter tracks with minimum windows
+    track_counts = df.groupby(unique_id_col).size()
+    valid_tracks = track_counts[track_counts >= min_windows].index
+    df = df[df[unique_id_col].isin(valid_tracks)]
+    
+    def _analyze_group(group_df, group_name="all"):
+        """Helper function to analyze transitions for a group"""
+        
+        # Sort by track and time
+        group_df = group_df.sort_values([unique_id_col, time_col])
+        
+        # Get all states
+        all_states = sorted(group_df[state_col].unique())
+        
+        # Initialize transition matrix
+        transition_counts = pd.DataFrame(0, 
+                                        index=all_states, 
+                                        columns=all_states,
+                                        dtype=int)
+        
+        # Track individual transitions
+        transition_list = []
+        
+        # Iterate through each track
+        for track_id, track_data in group_df.groupby(unique_id_col):
+            states = track_data[state_col].tolist()
+            
+            # Count transitions
+            for i in range(len(states) - 1):
+                from_state = states[i]
+                to_state = states[i + 1]
+                transition_counts.loc[from_state, to_state] += 1
+                transition_list.append({
+                    'from_state': from_state,
+                    'to_state': to_state,
+                    'track_id': track_id,
+                    'window_index': i
+                })
+        
+        # Create transition pairs dataframe
+        transition_pairs = pd.DataFrame(transition_list)
+        
+        # Calculate statistics
+        total_transitions = transition_counts.sum().sum()
+        n_tracks = group_df[unique_id_col].nunique()
+        
+        # Normalize if requested
+        if normalize:
+            # Normalize by row (from-state) to get transition probabilities
+            row_sums = transition_counts.sum(axis=1)
+            transition_probs = transition_counts.div(row_sums, axis=0).fillna(0)
+        else:
+            transition_probs = transition_counts
+        
+        # Find most common transitions
+        flat_transitions = []
+        for from_state in all_states:
+            for to_state in all_states:
+                count = transition_counts.loc[from_state, to_state]
+                if count > 0:
+                    prob = transition_probs.loc[from_state, to_state]
+                    flat_transitions.append({
+                        'from_state': from_state,
+                        'to_state': to_state,
+                        'count': count,
+                        'probability': prob,
+                        'is_self_transition': from_state == to_state
+                    })
+        
+        transitions_summary = pd.DataFrame(flat_transitions).sort_values(
+            'count', ascending=False
+        )
+        
+        # Calculate state persistence (probability of staying in same state)
+        persistence = {}
+        for state in all_states:
+            if state in transition_probs.index:
+                persistence[state] = transition_probs.loc[state, state]
+            else:
+                persistence[state] = 0.0
+        
+        # Statistics
+        stats = {
+            'n_tracks': n_tracks,
+            'n_transitions': total_transitions,
+            'n_states': len(all_states),
+            'states': all_states,
+            'avg_transitions_per_track': total_transitions / n_tracks if n_tracks > 0 else 0,
+            'state_persistence': persistence,
+            'most_common_transition': transitions_summary.iloc[0].to_dict() if len(transitions_summary) > 0 else None
+        }
+        
+        return {
+            'transition_matrix': transition_probs if normalize else transition_counts,
+            'transition_counts': transition_counts,
+            'transition_probabilities': transition_probs,
+            'transitions_summary': transitions_summary,
+            'transition_pairs': transition_pairs,
+            'stats': stats,
+            'group_name': group_name
+        }
+    
+    # Analyze by group or all together
+    if group_by and group_by in df.columns:
+        results = {}
+        for group_name, group_df in df.groupby(group_by):
+            results[group_name] = _analyze_group(group_df, str(group_name))
+        return results
+    else:
+        return _analyze_group(df)
+
+
+def create_fixed_length_superwindows(
+    windowed_df,
+    superwindow_length=10,
+    state_col='final_population',
+    unique_id_col='unique_id',
+    time_col='time_window',
+    window_uid_col='window_uid',
+    additional_cols=None,
+    min_superwindows=1
+):
+    """
+    Create fixed-length superwindows from longer tracks.
+    
+    Terminology:
+    - Segment: Adjacent frames in instant_df
+    - Window: Time window in windowed_df (made from segments)
+    - Superwindow: Collection of consecutive windows (this function creates these)
+    
+    This function divides each track into non-overlapping superwindows of a fixed length.
+    For example, with superwindow_length=10:
+    - Superwindow 0: windows 0-9
+    - Superwindow 1: windows 10-19
+    - Superwindow 2: windows 20-29
+    - etc.
+    
+    This ensures all superwindows have the same temporal coverage for fair comparison.
+    
+    Parameters
+    ----------
+    windowed_df : pl.DataFrame or pd.DataFrame
+        Windowed dataframe with state assignments
+    superwindow_length : int, default=10
+        Number of windows per superwindow
+    state_col : str, default='final_population'
+        Column containing state classifications
+    unique_id_col : str, default='unique_id'
+        Column containing unique track IDs
+    time_col : str, default='time_window'
+        Column containing time window index
+    window_uid_col : str, default='window_uid'
+        Column containing unique window identifiers
+    additional_cols : list, optional
+        Additional metadata columns to include
+    min_superwindows : int, default=1
+        Minimum number of complete superwindows required to include a track
+        
+    Returns
+    -------
+    pl.DataFrame or pd.DataFrame
+        Dataframe with columns:
+        - superwindow_id: Unique identifier for each superwindow (original_id + "_sw" + number)
+        - original_track_id: Original track identifier
+        - superwindow_number: Which superwindow this is (0, 1, 2, ...)
+        - state_sequence: List of states in this superwindow
+        - window_uids: List of window_uid values in this superwindow
+        - n_windows: Number of windows (always = superwindow_length)
+        - [additional_cols]: Metadata from original track
+    """
+    is_polars = isinstance(windowed_df, pl.DataFrame)
+    
+    if is_polars:
+        df = windowed_df.to_pandas()
+        return_polars = True
+    else:
+        df = windowed_df.copy()
+        return_polars = False
+    
+    # Sort by track and time
+    df = df.sort_values([unique_id_col, time_col])
+    
+    superwindows = []
+    
+    for track_id, track_data in df.groupby(unique_id_col):
+        states = track_data[state_col].tolist()
+        window_uids = track_data[window_uid_col].tolist()
+        n_windows = len(states)
+        
+        # Calculate number of complete superwindows
+        n_complete_superwindows = n_windows // superwindow_length
+        
+        # Skip if not enough superwindows
+        if n_complete_superwindows < min_superwindows:
+            continue
+        
+        # Extract metadata
+        metadata = {}
+        if additional_cols:
+            for col in additional_cols:
+                metadata[col] = track_data[col].iloc[0]
+        
+        # Create superwindows
+        for sw_num in range(n_complete_superwindows):
+            start_idx = sw_num * superwindow_length
+            end_idx = start_idx + superwindow_length
+            
+            superwindow_states = states[start_idx:end_idx]
+            superwindow_window_uids = window_uids[start_idx:end_idx]
+            
+            superwindow_record = {
+                'superwindow_id': f"{track_id}_sw{sw_num}",
+                'original_track_id': track_id,
+                'superwindow_number': sw_num,
+                'state_sequence': superwindow_states,
+                'window_uids': superwindow_window_uids,
+                'n_windows': len(superwindow_states)
+            }
+            
+            # Add metadata
+            superwindow_record.update(metadata)
+            
+            superwindows.append(superwindow_record)
+    
+    # Create dataframe
+    superwindow_df = pd.DataFrame(superwindows)
+    
+    # Print summary
+    n_original_tracks = df[unique_id_col].nunique()
+    n_superwindows = len(superwindow_df)
+    n_tracks_used = superwindow_df['original_track_id'].nunique()
+    
+    print(f"\n{'='*80}")
+    print(f"FIXED-LENGTH SUPERWINDOW CREATION")
+    print(f"{'='*80}")
+    print(f"Superwindow length: {superwindow_length} windows")
+    print(f"Original tracks: {n_original_tracks:,}")
+    print(f"Tracks with ≥{min_superwindows} superwindow(s): {n_tracks_used:,}")
+    print(f"Total superwindows created: {n_superwindows:,}")
+    print(f"Avg superwindows per track: {n_superwindows / n_tracks_used:.1f}")
+    
+    # Show distribution of superwindows per track
+    sws_per_track = superwindow_df.groupby('original_track_id').size()
+    print(f"\nSuperwindows per track:")
+    print(f"  Min: {sws_per_track.min()}")
+    print(f"  Max: {sws_per_track.max()}")
+    print(f"  Mean: {sws_per_track.mean():.1f}")
+    print(f"  Median: {sws_per_track.median():.0f}")
+    print(f"{'='*80}\n")
+    
+    # Convert back to polars if needed
+    if return_polars:
+        superwindow_df = pl.from_pandas(superwindow_df)
+        
+        # IMPORTANT: Ensure state_sequence and window_uids are Python lists, not Polars lists
+        # This ensures compatibility with downstream analysis functions
+        superwindow_df = superwindow_df.with_columns([
+            pl.col('state_sequence').map_elements(
+                lambda x: list(x) if x is not None else None,
+                return_dtype=pl.Object
+            ),
+            pl.col('window_uids').map_elements(
+                lambda x: list(x) if x is not None else None,
+                return_dtype=pl.Object
+            )
+        ])
+    
+    return superwindow_df
+
+
+def calculate_between_molecule_similarity(
+    sequence_df,
+    molecule_col='mol',
+    sequence_col='state_sequence',
+    unique_id_col='unique_id',
+    method='damerau_levenshtein',
+    normalize=True,
+    sample_size_per_mol=50,
+    random_seed=42
+):
+    """
+    Calculate pairwise similarity BETWEEN molecules (not within).
+    
+    This compares superwindows from different molecules to determine which
+    molecules have similar behavioral patterns.
+    
+    Parameters
+    ----------
+    sequence_df : pl.DataFrame or pd.DataFrame
+        Dataframe with state sequences
+    molecule_col : str, default='mol'
+        Column containing molecule identifiers
+    sequence_col : str, default='state_sequence'
+        Column containing state sequences
+    unique_id_col : str, default='unique_id'
+        Column with unique track/superwindow IDs
+    method : str, default='damerau_levenshtein'
+        Distance metric ('damerau_levenshtein', 'levenshtein', 'dtw')
+    normalize : bool, default=True
+        Normalize distances by sequence length
+    sample_size_per_mol : int, default=50
+        Sample this many superwindows per molecule
+    random_seed : int, default=42
+        Random seed for reproducibility
+        
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - 'pairwise_similarities': Dict of mol1-mol2 pairs → similarity score
+        - 'distance_matrix': DataFrame with molecules on both axes
+        - 'similarity_matrix': DataFrame with similarities
+        - 'sample_ids': Dict of which superwindows were sampled per molecule
+        - 'stats': Summary statistics
+    """
+    is_polars = isinstance(sequence_df, pl.DataFrame)
+    if is_polars:
+        df = sequence_df.to_pandas()
+    else:
+        df = sequence_df.copy()
+    
+    # Get unique molecules
+    molecules = sorted(df[molecule_col].unique())
+    n_mols = len(molecules)
+    
+    print(f"\n{'='*80}")
+    print(f"BETWEEN-MOLECULE SIMILARITY ANALYSIS")
+    print(f"{'='*80}")
+    print(f"Method: {method}")
+    print(f"Molecules: {', '.join(molecules)}")
+    print(f"Sample size per molecule: {sample_size_per_mol}")
+    
+    # Sample superwindows from each molecule
+    sampled_data = {}
+    sample_ids = {}
+    
+    for mol in molecules:
+        mol_data = df[df[molecule_col] == mol]
+        
+        if len(mol_data) > sample_size_per_mol:
+            mol_sample = mol_data.sample(n=sample_size_per_mol, random_state=random_seed)
+        else:
+            mol_sample = mol_data
+        
+        sampled_data[mol] = mol_sample
+        sample_ids[mol] = mol_sample[unique_id_col].tolist()
+        
+        print(f"  {mol}: {len(mol_sample)} superwindows sampled")
+    
+    # Calculate pairwise similarities between all molecule pairs
+    print(f"\nCalculating between-molecule similarities...")
+    
+    pairwise_results = {}
+    distance_matrix = np.zeros((n_mols, n_mols))
+    
+    for i, mol1 in enumerate(molecules):
+        for j, mol2 in enumerate(molecules):
+            if i == j:
+                # Within-molecule similarity
+                if method == 'dtw':
+                    result = calculate_similarity_with_dtw(
+                        sampled_data[mol1],
+                        sequence_col=sequence_col,
+                        unique_id_col=unique_id_col,
+                        sample_size=None,  # Already sampled
+                        random_seed=random_seed
+                    )
+                else:
+                    result = calculate_track_similarity(
+                        sampled_data[mol1],
+                        sequence_col=sequence_col,
+                        unique_id_col=unique_id_col,
+                        method=method,
+                        normalize=normalize,
+                        sample_size=None  # Already sampled
+                    )
+                similarity = result['stats']['avg_similarity']
+                distance = result['stats']['avg_distance']
+            else:
+                # Between-molecule similarity
+                # Concatenate samples from both molecules
+                combined_df = pd.concat([sampled_data[mol1], sampled_data[mol2]])
+                
+                # Calculate all pairwise distances
+                seqs1 = sampled_data[mol1][sequence_col].tolist()
+                seqs2 = sampled_data[mol2][sequence_col].tolist()
+                
+                # Convert to string representation for distance calculation
+                all_states = set()
+                for seq in seqs1 + seqs2:
+                    if isinstance(seq, (list, tuple)):
+                        all_states.update(seq)
+                    else:
+                        all_states.update(list(seq))
+                
+                all_states.discard(None)
+                state_to_char = {state: chr(65 + idx) for idx, state in enumerate(sorted(all_states))}
+                
+                # Convert sequences to strings
+                str_seqs1 = []
+                for seq in seqs1:
+                    if not isinstance(seq, list):
+                        seq = list(seq)
+                    str_seqs1.append(''.join([state_to_char[s] for s in seq if s is not None]))
+                
+                str_seqs2 = []
+                for seq in seqs2:
+                    if not isinstance(seq, list):
+                        seq = list(seq)
+                    str_seqs2.append(''.join([state_to_char[s] for s in seq if s is not None]))
+                
+                # Calculate cross-molecule distances
+                distances = []
+                
+                if method == 'dtw':
+                    from dtaidistance import dtw
+                    for s1 in str_seqs1:
+                        for s2 in str_seqs2:
+                            # Convert strings to numeric sequences
+                            num_seq1 = [ord(c) for c in s1]
+                            num_seq2 = [ord(c) for c in s2]
+                            dist = dtw.distance(num_seq1, num_seq2)
+                            if normalize:
+                                max_len = max(len(s1), len(s2))
+                                dist = dist / max_len if max_len > 0 else 0
+                            distances.append(dist)
+                else:
+                    # Use Levenshtein distance
+                    if method == 'damerau_levenshtein':
+                        from pyxdameraulevenshtein import damerau_levenshtein_distance as dist_func
+                    else:
+                        from Levenshtein import distance as dist_func
+                    
+                    for s1 in str_seqs1:
+                        for s2 in str_seqs2:
+                            dist = dist_func(s1, s2)
+                            if normalize:
+                                max_len = max(len(s1), len(s2))
+                                dist = dist / max_len if max_len > 0 else 0
+                            distances.append(dist)
+                
+                distance = np.mean(distances)
+                similarity = 1 - distance if normalize else 1 - (distance / np.max(distances))
+            
+            distance_matrix[i, j] = distance
+            pairwise_results[f"{mol1}-{mol2}"] = {
+                'distance': distance,
+                'similarity': similarity,
+                'n_comparisons': len(sampled_data[mol1]) * len(sampled_data[mol2]) if i != j else len(sampled_data[mol1]) * (len(sampled_data[mol1]) - 1) / 2
+            }
+    
+    # Create dataframes
+    distance_df = pd.DataFrame(distance_matrix, index=molecules, columns=molecules)
+    similarity_matrix = 1 - distance_matrix
+    similarity_df = pd.DataFrame(similarity_matrix, index=molecules, columns=molecules)
+    
+    # Summary statistics
+    print(f"\n{'='*80}")
+    print(f"RESULTS:")
+    print(f"{'='*80}")
+    print("\nSimilarity Matrix:")
+    print(similarity_df.round(3))
+    
+    # Find most/least similar pairs
+    pairs = []
+    for i, mol1 in enumerate(molecules):
+        for j, mol2 in enumerate(molecules):
+            if i < j:  # Upper triangle only
+                pairs.append({
+                    'mol1': mol1,
+                    'mol2': mol2,
+                    'similarity': similarity_matrix[i, j],
+                    'distance': distance_matrix[i, j]
+                })
+    
+    pairs_df = pd.DataFrame(pairs).sort_values('similarity', ascending=False)
+    
+    print("\nMolecule Pairs (sorted by similarity):")
+    for idx, row in pairs_df.iterrows():
+        print(f"  {row['mol1']} ↔ {row['mol2']}: {row['similarity']:.3f}")
+    
+    stats = {
+        'n_molecules': n_mols,
+        'molecules': molecules,
+        'sample_size_per_mol': sample_size_per_mol,
+        'method': method,
+        'most_similar_pair': pairs_df.iloc[0][['mol1', 'mol2']].tolist(),
+        'most_similar_score': pairs_df.iloc[0]['similarity'],
+        'least_similar_pair': pairs_df.iloc[-1][['mol1', 'mol2']].tolist(),
+        'least_similar_score': pairs_df.iloc[-1]['similarity']
+    }
+    
+    return {
+        'pairwise_similarities': pairwise_results,
+        'distance_matrix': distance_df,
+        'similarity_matrix': similarity_df,
+        'sample_ids': sample_ids,
+        'pairs_comparison': pairs_df,
+        'stats': stats
+    }
+
+
+def calculate_similarity_with_dtw(
+    sequence_df,
+    sequence_col='state_sequence',
+    unique_id_col='unique_id',
+    sample_size=None,
+    random_seed=42,
+    window=None
+):
+    """
+    Calculate pairwise similarity using Dynamic Time Warping (DTW).
+    
+    DTW allows elastic alignment of sequences - useful for comparing sequences
+    that have similar patterns but at different temporal scales.
+    
+    Parameters
+    ----------
+    sequence_df : pl.DataFrame or pd.DataFrame
+        Dataframe with state sequences
+    sequence_col : str, default='state_sequence'
+        Column containing state sequences
+    unique_id_col : str, default='unique_id'
+        Column with unique IDs
+    sample_size : int, optional
+        Sample this many sequences
+    random_seed : int, default=42
+        Random seed
+    window : int, optional
+        Sakoe-Chiba window constraint (limits warping)
+        
+    Returns
+    -------
+    dict
+        Dictionary with distance_matrix, similarity_matrix, and stats
+    """
+    try:
+        from dtaidistance import dtw
+    except ImportError:
+        raise ImportError(
+            "DTW requires 'dtaidistance' package. "
+            "Install with: pip install dtaidistance"
+        )
+    
+    is_polars = isinstance(sequence_df, pl.DataFrame)
+    if is_polars:
+        df = sequence_df.to_pandas()
+    else:
+        df = sequence_df.copy()
+    
+    # Sample if requested
+    if sample_size and len(df) > sample_size:
+        df = df.sample(n=sample_size, random_state=random_seed)
+        print(f"Sampled {sample_size} sequences for DTW calculation")
+    
+    track_ids = df[unique_id_col].tolist()
+    sequences = df[sequence_col].tolist()
+    n_tracks = len(track_ids)
+    
+    # Convert sequences to numeric
+    all_states = set()
+    for seq in sequences:
+        if isinstance(seq, (list, tuple)):
+            all_states.update(seq)
+        else:
+            all_states.update(list(seq))
+    
+    all_states.discard(None)
+    state_to_num = {state: idx for idx, state in enumerate(sorted(all_states))}
+    
+    # Convert to numeric sequences
+    numeric_sequences = []
+    for seq in sequences:
+        if not isinstance(seq, list):
+            seq = list(seq)
+        numeric_seq = [state_to_num[s] for s in seq if s is not None]
+        numeric_sequences.append(numeric_seq)
+    
+    # Calculate DTW distances
+    print(f"Calculating DTW distances for {n_tracks} sequences...")
+    distance_matrix = np.zeros((n_tracks, n_tracks))
+    
+    from tqdm import tqdm
+    for i in tqdm(range(n_tracks), desc="Computing DTW"):
+        for j in range(i, n_tracks):
+            if i == j:
+                dist = 0
+            else:
+                dist = dtw.distance(numeric_sequences[i], numeric_sequences[j], window=window)
+                # Normalize by average length
+                avg_len = (len(numeric_sequences[i]) + len(numeric_sequences[j])) / 2
+                dist = dist / avg_len if avg_len > 0 else 0
+            
+            distance_matrix[i, j] = dist
+            distance_matrix[j, i] = dist
+    
+    # Convert to dataframes
+    distance_df = pd.DataFrame(distance_matrix, index=track_ids, columns=track_ids)
+    
+    # Calculate similarity
+    max_dist = distance_matrix.max()
+    similarity_matrix = 1 - (distance_matrix / max_dist) if max_dist > 0 else np.ones_like(distance_matrix)
+    similarity_df = pd.DataFrame(similarity_matrix, index=track_ids, columns=track_ids)
+    
+    # Statistics
+    mask = ~np.eye(n_tracks, dtype=bool)
+    stats = {
+        'n_tracks': n_tracks,
+        'avg_distance': distance_matrix[mask].mean(),
+        'std_distance': distance_matrix[mask].std(),
+        'avg_similarity': similarity_matrix[mask].mean(),
+        'std_similarity': similarity_matrix[mask].std(),
+        'method': 'dtw',
+        'window': window
+    }
+    
+    print(f"\n✅ DTW analysis complete!")
+    print(f"   Average pairwise similarity: {stats['avg_similarity']:.3f}")
+    print(f"   Average pairwise distance: {stats['avg_distance']:.3f}")
+    
+    return {
+        'distance_matrix': distance_df,
+        'similarity_matrix': similarity_df,
+        'track_ids': track_ids,
+        'stats': stats,
+        'method': 'dtw'
+    }
+
+
+def compute_sequence_similarity_embeddings(
+    sequence_df,
+    sequence_col='state_sequence',
+    unique_id_col='superwindow_id',
+    method='dtw',
+    sample_size=None,
+    center_scale=False,
+    normalize=True,
+    n_components_pca=10,
+    umap_n_neighbors=15,
+    umap_min_dist=0.1,
+    random_seed=42
+):
+    """
+    Compute sequence similarity distance matrix and optional PCA/UMAP embeddings.
+    
+    Similarity is computed on ALL data together (not separated by molecule).
+    
+    Parameters
+    ----------
+    sequence_df : pl.DataFrame or pd.DataFrame
+        DataFrame with state sequences (all molecules together)
+    sequence_col : str, default='state_sequence'
+        Column with state sequences
+    unique_id_col : str, default='superwindow_id'
+        Column with unique IDs
+    method : str, default='dtw'
+        Similarity metric:
+        - 'dtw': Dynamic Time Warping (allows temporal warping)
+        - 'damerau_levenshtein': Damerau-Levenshtein distance (exact matching)
+    sample_size : int, optional
+        Sample size (similarity computation can be slow)
+    center_scale : bool, default=False
+        Center and scale distances before PCA/UMAP
+    normalize : bool, default=True
+        Normalize distances by sequence length
+    n_components_pca : int, default=10
+        Number of PCA components
+    umap_n_neighbors : int, default=15
+        UMAP n_neighbors parameter
+    umap_min_dist : float, default=0.1
+        UMAP min_dist parameter
+    random_seed : int, default=42
+        Random seed
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with added similarity_distance, similarity_distance_scaled, 
+        pca_embedding, and umap_embedding columns
+    """
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+    import pandas as pd
+    import numpy as np
+    
+    is_polars = isinstance(sequence_df, pl.DataFrame)
+    if is_polars:
+        df = sequence_df.to_pandas()
+    else:
+        df = sequence_df.copy()
+    
+    # Sample if needed
+    if sample_size and len(df) > sample_size:
+        df = df.sample(n=sample_size, random_state=random_seed)
+        print(f"Sampled {sample_size} superwindows for computation")
+    
+    print(f"\n{'='*80}")
+    print(f"SEQUENCE SIMILARITY SPACE COMPUTATION")
+    print(f"{'='*80}")
+    print(f"Method: {method.upper()}")
+    print(f"Computing distances for {len(df)} superwindows (all molecules together)...")
+    
+    # Calculate distance matrix based on method
+    if method == 'dtw':
+        result = calculate_similarity_with_dtw(
+            df,
+            sequence_col=sequence_col,
+            unique_id_col=unique_id_col,
+            sample_size=None,
+            random_seed=random_seed
+        )
+        distance_matrix = result['distance_matrix'].values
+        track_ids = result['track_ids']
+    
+    elif method == 'damerau_levenshtein':
+        result = calculate_track_similarity(
+            df,
+            sequence_col=sequence_col,
+            unique_id_col=unique_id_col,
+            method='damerau_levenshtein',
+            normalize=normalize,
+            sample_size=None
+        )
+        distance_matrix = result['distance_matrix'].values
+        track_ids = result['track_ids']
+    
+    else:
+        raise ValueError(f"Unknown method: {method}. Use 'dtw' or 'damerau_levenshtein'")
+    
+    print(f"✅ Distance matrix computed: {distance_matrix.shape}")
+    
+    # Center-scale if requested
+    if center_scale:
+        print("Applying center scaling to distances...")
+        scaler = StandardScaler()
+        distance_matrix_scaled = scaler.fit_transform(distance_matrix)
+    else:
+        distance_matrix_scaled = distance_matrix.copy()
+    
+    # PCA
+    print(f"Computing PCA embeddings...")
+    n_comp = min(n_components_pca, len(track_ids) - 1)
+    pca = PCA(n_components=n_comp, random_state=random_seed)
+    pca_embedding = pca.fit_transform(distance_matrix_scaled)
+    print(f"  PCA variance explained: {pca.explained_variance_ratio_.sum():.2%}")
+    
+    # UMAP
+    try:
+        import umap
+        print(f"Computing UMAP embeddings...")
+        n_neighbors = min(umap_n_neighbors, len(track_ids) - 1)
+        reducer = umap.UMAP(n_neighbors=n_neighbors, min_dist=umap_min_dist, 
+                           random_state=random_seed)
+        umap_embedding = reducer.fit_transform(distance_matrix_scaled)
+        print(f"  ✅ UMAP complete")
+    except ImportError:
+        print("⚠️ UMAP not available - install with: pip install umap-learn")
+        umap_embedding = np.array([[np.nan, np.nan]] * len(track_ids))
+    
+    # Create result dataframe
+    result_df = df[df[unique_id_col].isin(track_ids)].copy()
+    result_df = result_df.set_index(unique_id_col).loc[track_ids].reset_index()
+    
+    # Store distances as row vectors (generic names for compatibility)
+    result_df['similarity_distance'] = list(distance_matrix)
+    result_df['similarity_distance_scaled'] = list(distance_matrix_scaled)
+    
+    # Also keep method-specific names for backward compatibility
+    if method == 'dtw':
+        result_df['dtw_distance'] = list(distance_matrix)
+        result_df['dtw_distance_scaled'] = list(distance_matrix_scaled)
+    
+    # Store embeddings
+    result_df['pca_embedding'] = list(pca_embedding)
+    result_df['umap_embedding'] = list(umap_embedding)
+    
+    # Metadata
+    result_df['pca_variance_explained'] = pca.explained_variance_ratio_.sum()
+    result_df['center_scaled'] = center_scale
+    result_df['similarity_method'] = method
+    
+    print(f"\n{'='*80}")
+    print("✅ Complete! Added columns:")
+    print(f"   - similarity_distance (raw {method} distance vectors)")
+    print(f"   - similarity_distance_scaled (center-scaled {method})")
+    print(f"   - pca_embedding (PCA of {method})")
+    print(f"   - umap_embedding (UMAP of {method})")
+    print(f"{'='*80}\n")
+    
+    return result_df
+
+
+# Backward compatibility alias
+def compute_dtw_similarity_embeddings(*args, **kwargs):
+    """Deprecated: Use compute_sequence_similarity_embeddings() instead."""
+    print("⚠️  compute_dtw_similarity_embeddings() is deprecated.")
+    print("   Use compute_sequence_similarity_embeddings(method='dtw') instead.")
+    kwargs['method'] = 'dtw'
+    return compute_sequence_similarity_embeddings(*args, **kwargs)
+
+
+def add_dtw_clusters(
+    sequence_df_with_embeddings,
+    cluster_on='dtw_distance',
+    method='kmeans',
+    n_clusters=3,
+    min_cluster_size=5,
+    min_samples=None,
+    cluster_selection_epsilon=0.0,
+    allow_single_cluster=False,
+    prediction_data=True,
+    random_seed=42
+):
+    """
+    Add cluster labels based on DTW similarity (always computed on ALL molecules together).
+    
+    IMPORTANT: DTW is ALWAYS computed on all molecules together, never separated.
+    The 'mol' column is only used for visualization/analysis after clustering.
+    
+    Parameters
+    ----------
+    sequence_df_with_embeddings : pd.DataFrame
+        DataFrame with DTW/embedding columns from compute_dtw_similarity_embeddings()
+    cluster_on : str, default='dtw_distance'
+        What to cluster on:
+        - 'similarity_distance': Raw distance matrix (RECOMMENDED - most direct)
+        - 'similarity_distance_scaled': Center-scaled distances
+        - 'dtw_distance': Raw DTW distance matrix (backward compat)
+        - 'dtw_distance_scaled': Center-scaled DTW (backward compat)
+        - 'pca_embedding': PCA of distances
+        - 'umap_embedding': UMAP of distances
+    method : str, default='kmeans'
+        Clustering method:
+        - 'kmeans': K-means clustering
+        - 'hdbscan': HDBSCAN (density-based, auto finds n_clusters)
+    n_clusters : int, default=3
+        Number of clusters (only for kmeans)
+    min_cluster_size : int, default=5
+        Minimum number of points to form a cluster (HDBSCAN only)
+    min_samples : int, optional
+        How many neighbors needed to be a core point (HDBSCAN only)
+        - Higher = more conservative (denser clusters only)
+        - Lower = more liberal (finds more clusters)
+        - If None, defaults to min_cluster_size
+    cluster_selection_epsilon : float, default=0.0
+        Distance threshold for merging clusters (HDBSCAN only)
+        - Larger values = fewer, larger clusters
+        - 0.0 = standard HDBSCAN behavior
+    allow_single_cluster : bool, default=False
+        Allow all points to be in one cluster (HDBSCAN only)
+    prediction_data : bool, default=True
+        Generate prediction data to assign noise points to nearest cluster (HDBSCAN only)
+        - True = noise points assigned to nearest cluster (no cluster -1)
+        - False = keep noise points as cluster -1
+    random_seed : int, default=42
+        Random seed
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with added 'superwindow_cluster' column
+        
+    Notes
+    -----
+    DTW distances are computed across ALL molecules together to capture
+    cross-molecule similarity patterns. After clustering, you can analyze
+    cluster composition by molecule using the 'mol' column.
+    
+    HDBSCAN Parameters Guide:
+    - min_cluster_size: Minimum cluster size (start with 5-20)
+    - min_samples: Controls conservativeness (None = same as min_cluster_size)
+      - Increase if too many small clusters
+      - Decrease if missing clusters
+    - cluster_selection_epsilon: Merge threshold (usually 0.0)
+      - Increase to merge similar clusters
+    - prediction_data: Set to True to eliminate noise (cluster -1)
+      - Assigns noise points to nearest cluster
+      - Recommended if you don't want any unclustered points
+    """
+    from sklearn.cluster import KMeans
+    import numpy as np
+    
+    df = sequence_df_with_embeddings.copy()
+    
+    print(f"\n{'='*80}")
+    print(f"CLUSTERING ON DTW SIMILARITY (ALL MOLECULES TOGETHER)")
+    print(f"{'='*80}")
+    print(f"Method: {method}")
+    print(f"Clustering on: {cluster_on}")
+    if method == 'kmeans':
+        print(f"n_clusters: {n_clusters}")
+    elif method == 'hdbscan':
+        print(f"min_cluster_size: {min_cluster_size}")
+        print(f"min_samples: {min_samples if min_samples else min_cluster_size} (default=min_cluster_size)")
+        print(f"cluster_selection_epsilon: {cluster_selection_epsilon}")
+        print(f"prediction_data: {prediction_data} ({'assigns noise to clusters' if prediction_data else 'keeps noise as -1'})")
+        print(f"allow_single_cluster: {allow_single_cluster}")
+    
+    # Always cluster all data together (DTW is cross-molecule)
+    embeddings = np.vstack(df[cluster_on].values)
+    
+    if method == 'kmeans':
+        clusterer = KMeans(n_clusters=n_clusters, random_state=random_seed)
+        clusters = clusterer.fit_predict(embeddings)
+    elif method == 'hdbscan':
+        try:
+            import hdbscan
+            # Set min_samples
+            if min_samples is None:
+                min_samples = min_cluster_size
+            
+            # For distance matrices (DTW or Damerau-Levenshtein), use precomputed metric
+            if 'distance' in cluster_on and 'embedding' not in cluster_on:
+                # Ensure we have a square matrix
+                if embeddings.shape[0] != embeddings.shape[1]:
+                    raise ValueError(f"DTW distance matrix must be square, got shape {embeddings.shape}")
+                clusterer = hdbscan.HDBSCAN(
+                    min_cluster_size=min_cluster_size,
+                    min_samples=min_samples,
+                    cluster_selection_epsilon=cluster_selection_epsilon,
+                    allow_single_cluster=allow_single_cluster,
+                    prediction_data=prediction_data,
+                    metric='precomputed'
+                )
+            else:
+                clusterer = hdbscan.HDBSCAN(
+                    min_cluster_size=min_cluster_size,
+                    min_samples=min_samples,
+                    cluster_selection_epsilon=cluster_selection_epsilon,
+                    allow_single_cluster=allow_single_cluster,
+                    prediction_data=prediction_data,
+                    metric='euclidean'
+                )
+            
+            # Fit and get initial clusters
+            clusterer.fit(embeddings)
+            clusters = clusterer.labels_.copy()
+            
+            # If prediction_data=True, assign noise points to nearest cluster
+            if prediction_data:
+                noise_mask = clusters == -1
+                n_noise = noise_mask.sum()
+                
+                if n_noise > 0:
+                    print(f"\n  Assigning {n_noise} noise points to nearest clusters...")
+                    
+                    if 'distance' in cluster_on and 'embedding' not in cluster_on:
+                        # For precomputed distances (DTW or Damerau-Levenshtein), manually assign based on distance matrix
+                        # embeddings is the distance matrix here
+                        for noise_idx in np.where(noise_mask)[0]:
+                            # Get distances from this noise point to all other points
+                            distances_to_all = embeddings[noise_idx]
+                            
+                            # Find the nearest non-noise point
+                            non_noise_mask = ~noise_mask
+                            distances_to_clustered = distances_to_all.copy()
+                            distances_to_clustered[noise_mask] = np.inf  # Ignore other noise points
+                            
+                            if non_noise_mask.sum() > 0:
+                                nearest_idx = np.argmin(distances_to_clustered)
+                                clusters[noise_idx] = clusters[nearest_idx]
+                    else:
+                        # For non-precomputed metrics, use approximate_predict
+                        try:
+                            noise_labels, noise_probs = hdbscan.approximate_predict(clusterer, embeddings[noise_mask])
+                            clusters[noise_mask] = noise_labels
+                        except (AttributeError, ValueError):
+                            # Fallback: assign to nearest cluster centroid
+                            print("    Using fallback: assigning to nearest cluster centroid")
+                            from sklearn.metrics import pairwise_distances
+                            unique_clusters = np.unique(clusters[~noise_mask])
+                            
+                            for noise_idx in np.where(noise_mask)[0]:
+                                min_dist = np.inf
+                                best_cluster = unique_clusters[0]
+                                
+                                for cluster_id in unique_clusters:
+                                    cluster_points = embeddings[clusters == cluster_id]
+                                    centroid = cluster_points.mean(axis=0)
+                                    dist = np.linalg.norm(embeddings[noise_idx] - centroid)
+                                    
+                                    if dist < min_dist:
+                                        min_dist = dist
+                                        best_cluster = cluster_id
+                                
+                                clusters[noise_idx] = best_cluster
+                    
+                    print(f"  ✅ All noise points assigned to clusters")
+        except ImportError:
+            raise ImportError("HDBSCAN requires 'hdbscan' package. Install with: pip install hdbscan")
+    else:
+        raise ValueError(f"Unknown method: {method}")
+    
+    df['superwindow_cluster'] = clusters
+    
+    # Print overall distribution
+    unique_clusters = np.unique(clusters)
+    print(f"\nOverall cluster distribution:")
+    for cluster_id in unique_clusters:
+        count = (clusters == cluster_id).sum()
+        if cluster_id == -1:
+            print(f"  Noise (cluster -1): {count} ({count/len(clusters):.1%})")
+        else:
+            print(f"  Cluster {cluster_id}: {count} ({count/len(clusters):.1%})")
+    
+    # Print composition by molecule
+    if 'mol' in df.columns:
+        print(f"\nCluster composition by molecule:")
+        comp = df.groupby(['superwindow_cluster', 'mol']).size().unstack(fill_value=0)
+        print(comp)
+        print("\nPercentage within each cluster:")
+        print((comp.T / comp.sum(axis=1)).T.round(3))
+    
+    df['superwindow_cluster'] = df['superwindow_cluster'].astype(int)
+    df['clustering_method'] = method
+    df['clustered_on'] = cluster_on
+    
+    print(f"\n{'='*80}")
+    print("✅ Clustering complete! Added 'superwindow_cluster' column to dataframe")
+    print(f"{'='*80}\n")
+    
+    return df
+
+
+def add_superwindow_id_to_windowed_data(
+    windowed_df,
+    superwindow_df,
+    superwindow_length=10,
+    unique_id_col='unique_id',
+    time_col='time_window'
+):
+    """
+    Add superwindow_id to each window in the original windowed dataframe (Polars-native).
+    
+    Parameters
+    ----------
+    windowed_df : pl.DataFrame
+        Original windowed dataframe
+    superwindow_df : pl.DataFrame
+        Superwindow dataframe with 'superwindow_id', 'original_track_id', 'superwindow_number'
+    superwindow_length : int, default=10
+        Number of windows per superwindow
+    unique_id_col : str, default='unique_id'
+        Column with track IDs
+    time_col : str, default='time_window'
+        Column with time window indices
+        
+    Returns
+    -------
+    pl.DataFrame
+        Windowed dataframe with added 'superwindow_id' column
+    """
+    print(f"\n{'='*80}")
+    print("MAPPING SUPERWINDOW_ID BACK TO WINDOWED DATA (Polars-native)")
+    print(f"{'='*80}")
+    
+    # Create a mapping dataframe: for each superwindow, create rows for each window it contains
+    mapping_data = []
+    
+    for row in superwindow_df.iter_rows(named=True):
+        original_track_id = row['original_track_id']
+        superwindow_number = row['superwindow_number']
+        superwindow_id = row['superwindow_id']
+        
+        # Each superwindow spans consecutive windows
+        start_window = superwindow_number * superwindow_length
+        end_window = start_window + superwindow_length
+        
+        for window_idx in range(start_window, end_window):
+            mapping_data.append({
+                unique_id_col: original_track_id,
+                time_col: window_idx,
+                'superwindow_id': superwindow_id
+            })
+    
+    # Create mapping dataframe
+    mapping_df = pl.DataFrame(mapping_data)
+    
+    # Join with original windowed data
+    result_df = windowed_df.join(
+        mapping_df,
+        on=[unique_id_col, time_col],
+        how='left'
+    )
+    
+    # Check results
+    n_with_sw = result_df.filter(pl.col('superwindow_id').is_not_null()).height
+    n_total = result_df.height
+    n_without_sw = result_df.filter(pl.col('superwindow_id').is_null()).height
+    
+    print(f"✅ Added superwindow_id to windowed dataframe")
+    print(f"   {n_with_sw:,} / {n_total:,} windows ({n_with_sw/n_total:.1%}) belong to a superwindow")
+    print(f"   {n_without_sw:,} windows don't have a superwindow (from tracks too short)")
+    
+    # Show example
+    print(f"\nExample windows with superwindow_id:")
+    print(result_df.select([unique_id_col, time_col, 'superwindow_id', 'final_population']).head(20))
+    
+    print(f"{'='*80}\n")
+    
+    return result_df
+
+
+def add_window_uids_to_superwindows(
+    windowed_df,
+    superwindow_df,
+    superwindow_length=10,
+    unique_id_col='unique_id',
+    time_col='time_window',
+    window_uid_col='window_uid'
+):
+    """
+    Add list of window_uids to each superwindow (Polars-native).
+    
+    Parameters
+    ----------
+    windowed_df : pl.DataFrame
+        Original windowed dataframe with window_uid column
+    superwindow_df : pl.DataFrame
+        Superwindow dataframe
+    superwindow_length : int, default=10
+        Number of windows per superwindow
+    unique_id_col : str, default='unique_id'
+        Column with track IDs
+    time_col : str, default='time_window'
+        Column with time window indices
+    window_uid_col : str, default='window_uid'
+        Column with unique window identifiers
+        
+    Returns
+    -------
+    pl.DataFrame
+        Superwindow dataframe with added 'window_uids' column (list of window_uid values)
+    """
+    print(f"\n{'='*80}")
+    print("ADDING WINDOW_UIDS TO SUPERWINDOWS (Polars-native)")
+    print(f"{'='*80}")
+    
+    # For each superwindow, get its window_uids
+    window_uids_list = []
+    
+    for row in superwindow_df.iter_rows(named=True):
+        original_track_id = row['original_track_id']
+        superwindow_number = row['superwindow_number']
+        
+        # Get the time windows for this superwindow
+        start_window = superwindow_number * superwindow_length
+        end_window = start_window + superwindow_length
+        
+        # Get all window_uids for this superwindow using Polars
+        window_uids = windowed_df.filter(
+            (pl.col(unique_id_col) == original_track_id) &
+            (pl.col(time_col) >= start_window) &
+            (pl.col(time_col) < end_window)
+        )[window_uid_col].to_list()
+        
+        # Verify we got the right number
+        if len(window_uids) != superwindow_length:
+            print(f"⚠️  Warning: Superwindow {row['superwindow_id']} has {len(window_uids)} windows (expected {superwindow_length})")
+        
+        window_uids_list.append(window_uids)
+    
+    # Add as new column using with_columns
+    result_df = superwindow_df.with_columns(
+        pl.Series('window_uids', window_uids_list)
+    )
+    
+    print(f"✅ Added 'window_uids' column to superwindow dataframe")
+    print(f"   Each superwindow now contains a list of {superwindow_length} window_uid values")
+    print(f"   Total superwindows: {len(result_df):,}")
+    
+    # Show example
+    print(f"\nExample superwindows with window_uids:")
+    for row in result_df.head(3).iter_rows(named=True):
+        window_uids = row['window_uids']
+        print(f"  {row['superwindow_id']}: {window_uids[:3]}... ({len(window_uids)} window_uids)")
+    
+    print(f"{'='*80}\n")
+    
+    return result_df
+
+
+def diagnose_state_sequences(sequence_df, sequence_col='state_sequence', unique_id_col='unique_id'):
+    """
+    Diagnose issues with state sequences before running similarity analysis.
+    
+    Parameters
+    ----------
+    sequence_df : pl.DataFrame or pd.DataFrame
+        Dataframe with state sequences
+    sequence_col : str, default='state_sequence'
+        Column containing state sequences
+    unique_id_col : str, default='unique_id'
+        Column with track IDs
+        
+    Returns
+    -------
+    dict
+        Dictionary with diagnostic information
+    """
+    is_polars = isinstance(sequence_df, pl.DataFrame)
+    if is_polars:
+        df = sequence_df.to_pandas()
+    else:
+        df = sequence_df.copy()
+    
+    print("\n" + "="*80)
+    print("STATE SEQUENCE DIAGNOSTICS")
+    print("="*80)
+    
+    total_tracks = len(df)
+    print(f"Total tracks: {total_tracks}")
+    
+    # Check for None sequences
+    none_sequences = df[sequence_col].isna().sum()
+    if none_sequences > 0:
+        print(f"⚠️  {none_sequences} tracks have None/NaN sequences")
+    
+    # Check sequence types
+    non_list_sequences = 0
+    polars_list_sequences = 0
+    for idx, seq in enumerate(df[sequence_col]):
+        if seq is not None:
+            # Check for Polars list types
+            if hasattr(seq, '__class__') and 'polars' in str(type(seq)).lower():
+                polars_list_sequences += 1
+            elif not isinstance(seq, (list, tuple)):
+                non_list_sequences += 1
+    
+    if polars_list_sequences > 0:
+        print(f"⚠️  {polars_list_sequences} sequences are Polars lists (need conversion)")
+        print(f"    Run create_state_sequence_dataframe() again - it should convert them automatically")
+    if non_list_sequences > 0:
+        print(f"⚠️  {non_list_sequences} sequences are not lists/tuples/Polars lists")
+    
+    # Check for empty sequences
+    empty_sequences = 0
+    for seq in df[sequence_col]:
+        if seq is not None:
+            try:
+                if len(seq) == 0:
+                    empty_sequences += 1
+            except:
+                pass
+    if empty_sequences > 0:
+        print(f"⚠️  {empty_sequences} tracks have empty sequences")
+    
+    # Check for None values within sequences
+    tracks_with_none_values = 0
+    total_none_values = 0
+    for seq in df[sequence_col]:
+        if seq is not None:
+            try:
+                # Convert to list if it's a Polars list
+                if not isinstance(seq, (list, tuple)):
+                    seq = list(seq)
+                none_count = sum(1 for s in seq if s is None)
+                if none_count > 0:
+                    tracks_with_none_values += 1
+                    total_none_values += none_count
+            except:
+                pass
+    
+    if tracks_with_none_values > 0:
+        print(f"⚠️  {tracks_with_none_values} tracks have None values within sequences")
+        print(f"    Total None values: {total_none_values}")
+    
+    # Get all unique states
+    all_states = set()
+    for seq in df[sequence_col]:
+        if seq is not None:
+            try:
+                # Convert to list if it's a Polars list
+                if not isinstance(seq, (list, tuple)):
+                    seq = list(seq)
+                all_states.update(seq)
+            except:
+                pass
+    
+    all_states.discard(None)
+    
+    print(f"\nUnique states found: {len(all_states)}")
+    if len(all_states) > 0:
+        print(f"States: {sorted(all_states, key=str)}")
+    
+    # Calculate valid tracks
+    valid_tracks = 0
+    for seq in df[sequence_col]:
+        try:
+            if seq is None or len(seq) == 0:
+                continue
+            # Convert to list if needed
+            if not isinstance(seq, (list, tuple)):
+                seq = list(seq)
+            clean_seq = [s for s in seq if s is not None]
+            if len(clean_seq) > 0:
+                valid_tracks += 1
+        except:
+            continue
+    
+    print(f"\nValid tracks for similarity analysis: {valid_tracks} / {total_tracks}")
+    
+    if valid_tracks < total_tracks:
+        print(f"⚠️  {total_tracks - valid_tracks} tracks will be skipped")
+    
+    print("="*80 + "\n")
+    
+    return {
+        'total_tracks': total_tracks,
+        'valid_tracks': valid_tracks,
+        'none_sequences': none_sequences,
+        'empty_sequences': empty_sequences,
+        'tracks_with_none_values': tracks_with_none_values,
+        'total_none_values': total_none_values,
+        'unique_states': list(all_states)
+    }
+
+
+def calculate_track_similarity(
+    sequence_df,
+    sequence_col='state_sequence',
+    unique_id_col='unique_id',
+    method='damerau_levenshtein',
+    normalize=True,
+    sample_size=None,
+    random_seed=42
+):
+    """
+    Calculate pairwise similarity between track state sequences.
+    
+    Uses Damerau-Levenshtein distance which allows:
+    - Insertions
+    - Deletions
+    - Substitutions
+    - Transpositions (swaps of adjacent elements)
+    
+    Parameters
+    ----------
+    sequence_df : pl.DataFrame or pd.DataFrame
+        Dataframe with state sequences (output from create_state_sequence_dataframe)
+    sequence_col : str, default='state_sequence'
+        Column containing state sequences (list of states)
+    unique_id_col : str, default='unique_id'
+        Column containing unique track IDs
+    method : str, default='damerau_levenshtein'
+        Distance metric ('damerau_levenshtein', 'levenshtein', 'hamming')
+    normalize : bool, default=True
+        Normalize distance by sequence length
+    sample_size : int, optional
+        Randomly sample this many tracks to compare (for large datasets)
+    random_seed : int, default=42
+        Random seed for sampling
+        
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - 'distance_matrix': DataFrame with pairwise distances
+        - 'similarity_matrix': DataFrame with pairwise similarities (1 - distance)
+        - 'track_ids': List of track IDs in order
+        - 'avg_similarity': Average pairwise similarity
+        - 'stats': Summary statistics
+    """
+    try:
+        from Levenshtein import distance as lev_distance
+        from pyxdameraulevenshtein import damerau_levenshtein_distance
+    except ImportError:
+        raise ImportError(
+            "Track similarity requires 'python-Levenshtein' and 'pyxdameraulevenshtein'. "
+            "Install with: pip install python-Levenshtein pyxdameraulevenshtein"
+        )
+    
+    is_polars = isinstance(sequence_df, pl.DataFrame)
+    if is_polars:
+        df = sequence_df.to_pandas()
+    else:
+        df = sequence_df.copy()
+    
+    # Sample if requested
+    if sample_size and len(df) > sample_size:
+        df = df.sample(n=sample_size, random_state=random_seed)
+        print(f"Sampled {sample_size} tracks for similarity calculation")
+    
+    track_ids = df[unique_id_col].tolist()
+    sequences = df[sequence_col].tolist()
+    
+    # Validate and clean sequences
+    valid_indices = []
+    valid_track_ids = []
+    valid_sequences = []
+    
+    for idx, (track_id, seq) in enumerate(zip(track_ids, sequences)):
+        # Check if sequence is valid (not None, not empty, no None values)
+        if seq is None:
+            print(f"⚠️  Warning: Track {track_id} has None sequence, skipping")
+            continue
+        if not isinstance(seq, (list, tuple)):
+            print(f"⚠️  Warning: Track {track_id} sequence is not a list, skipping")
+            continue
+        if len(seq) == 0:
+            print(f"⚠️  Warning: Track {track_id} has empty sequence, skipping")
+            continue
+        
+        # Filter out None values from sequence
+        clean_seq = [s for s in seq if s is not None]
+        if len(clean_seq) == 0:
+            print(f"⚠️  Warning: Track {track_id} has only None values in sequence, skipping")
+            continue
+        if len(clean_seq) != len(seq):
+            print(f"⚠️  Warning: Track {track_id} had {len(seq) - len(clean_seq)} None values, removed")
+        
+        valid_indices.append(idx)
+        valid_track_ids.append(track_id)
+        valid_sequences.append(clean_seq)
+    
+    if len(valid_sequences) == 0:
+        raise ValueError("No valid sequences found. All sequences are None, empty, or contain only None values.")
+    
+    if len(valid_sequences) < len(sequences):
+        print(f"\n⚠️  Filtered {len(sequences) - len(valid_sequences)} invalid tracks")
+        print(f"   Proceeding with {len(valid_sequences)} valid tracks\n")
+    
+    n_tracks = len(valid_track_ids)
+    
+    # Convert sequences to strings for distance calculation
+    # Create a mapping of states to single characters
+    all_states = set()
+    for seq in valid_sequences:
+        all_states.update(seq)
+    
+    # Remove None from all_states if it somehow got in
+    all_states.discard(None)
+    
+    if len(all_states) == 0:
+        raise ValueError("No valid states found in sequences")
+    
+    # Sort states, handling any remaining issues
+    try:
+        sorted_states = sorted(all_states)
+    except TypeError as e:
+        # If sorting still fails, convert to strings first
+        print(f"⚠️  Warning: Could not sort states normally ({e}), converting to strings")
+        sorted_states = sorted(all_states, key=str)
+    
+    state_to_char = {state: chr(65 + i) for i, state in enumerate(sorted_states)}
+    
+    # Convert sequences to string representation
+    str_sequences = [''.join([state_to_char[s] for s in seq]) for seq in valid_sequences]
+    
+    # Initialize distance matrix
+    distance_matrix = np.zeros((n_tracks, n_tracks))
+    
+    # Calculate pairwise distances
+    print(f"Calculating pairwise {method} distances for {n_tracks} tracks...")
+    for i in tqdm(range(n_tracks), desc="Computing similarities"):
+        for j in range(i, n_tracks):
+            if i == j:
+                dist = 0
+            else:
+                seq_i = str_sequences[i]
+                seq_j = str_sequences[j]
+                
+                if method == 'damerau_levenshtein':
+                    dist = damerau_levenshtein_distance(seq_i, seq_j)
+                elif method == 'levenshtein':
+                    dist = lev_distance(seq_i, seq_j)
+                elif method == 'hamming':
+                    # Pad sequences to same length
+                    max_len = max(len(seq_i), len(seq_j))
+                    seq_i_padded = seq_i.ljust(max_len, ' ')
+                    seq_j_padded = seq_j.ljust(max_len, ' ')
+                    dist = sum(c1 != c2 for c1, c2 in zip(seq_i_padded, seq_j_padded))
+                else:
+                    raise ValueError(f"Unknown method: {method}")
+                
+                # Normalize by max sequence length if requested
+                if normalize:
+                    max_len = max(len(seq_i), len(seq_j))
+                    dist = dist / max_len if max_len > 0 else 0
+            
+            distance_matrix[i, j] = dist
+            distance_matrix[j, i] = dist
+    
+    # Convert to DataFrames
+    distance_df = pd.DataFrame(distance_matrix, index=valid_track_ids, columns=valid_track_ids)
+    
+    # Calculate similarity (1 - normalized distance)
+    if normalize:
+        similarity_matrix = 1 - distance_matrix
+    else:
+        # If not normalized, convert to similarity using max distance
+        max_dist = distance_matrix.max()
+        similarity_matrix = 1 - (distance_matrix / max_dist) if max_dist > 0 else np.ones_like(distance_matrix)
+    
+    similarity_df = pd.DataFrame(similarity_matrix, index=valid_track_ids, columns=valid_track_ids)
+    
+    # Calculate statistics (excluding diagonal)
+    mask = ~np.eye(n_tracks, dtype=bool)
+    
+    stats = {
+        'n_tracks': n_tracks,
+        'avg_distance': distance_matrix[mask].mean(),
+        'std_distance': distance_matrix[mask].std(),
+        'min_distance': distance_matrix[mask].min(),
+        'max_distance': distance_matrix[mask].max(),
+        'avg_similarity': similarity_matrix[mask].mean(),
+        'std_similarity': similarity_matrix[mask].std(),
+        'min_similarity': similarity_matrix[mask].min(),
+        'max_similarity': similarity_matrix[mask].max()
+    }
+    
+    print(f"\n✅ Similarity analysis complete!")
+    print(f"   Average pairwise similarity: {stats['avg_similarity']:.3f}")
+    print(f"   Average pairwise distance: {stats['avg_distance']:.3f}")
+    
+    return {
+        'distance_matrix': distance_df,
+        'similarity_matrix': similarity_df,
+        'track_ids': valid_track_ids,
+        'stats': stats,
+        'method': method,
+        'normalized': normalize
+    }
+
+
+def count_state_transitions_per_track(
+    windowed_df,
+    state_col='final_population',
+    unique_id_col='unique_id',
+    time_col='time_window',
+    additional_cols=None
+):
+    """
+    Count the number of state transitions for each track.
+    
+    Parameters
+    ----------
+    windowed_df : pl.DataFrame or pd.DataFrame
+        Windowed dataframe with state assignments
+    state_col : str, default='final_population'
+        Column containing state classifications
+    unique_id_col : str, default='unique_id'
+        Column containing unique track IDs
+    time_col : str, default='time_window'
+        Column containing time window index
+    additional_cols : list, optional
+        Additional metadata columns to include
+        
+    Returns
+    -------
+    pl.DataFrame or pd.DataFrame
+        Dataframe with columns:
+        - unique_id
+        - n_windows: total number of windows
+        - n_transitions: number of state changes
+        - n_unique_states: number of unique states visited
+        - state_sequence: list of states
+        - transition_rate: transitions per window
+        - [additional_cols]
+    """
+    is_polars = isinstance(windowed_df, pl.DataFrame)
+    
+    if is_polars:
+        df = windowed_df.to_pandas()
+        return_polars = True
+    else:
+        df = windowed_df.copy()
+        return_polars = False
+    
+    # Sort by track and time
+    df = df.sort_values([unique_id_col, time_col])
+    
+    results = []
+    
+    for track_id, track_data in df.groupby(unique_id_col):
+        states = track_data[state_col].tolist()
+        n_windows = len(states)
+        
+        # Count transitions (state changes)
+        n_transitions = sum(1 for i in range(len(states) - 1) if states[i] != states[i + 1])
+        
+        # Count unique states
+        n_unique_states = len(set(states))
+        
+        # Transition rate
+        transition_rate = n_transitions / (n_windows - 1) if n_windows > 1 else 0
+        
+        result = {
+            unique_id_col: track_id,
+            'n_windows': n_windows,
+            'n_transitions': n_transitions,
+            'n_unique_states': n_unique_states,
+            'transition_rate': transition_rate,
+            'state_sequence': states
+        }
+        
+        # Add metadata
+        if additional_cols:
+            for col in additional_cols:
+                result[col] = track_data[col].iloc[0]
+        
+        results.append(result)
+    
+    result_df = pd.DataFrame(results)
+    
+    if return_polars:
+        result_df = pl.from_pandas(result_df)
+    
+    return result_df
+
+
+def analyze_state_dwell_times(
+    windowed_df,
+    state_col='final_population',
+    unique_id_col='unique_id',
+    time_col='time_window',
+    window_duration=None,
+    group_by=None
+):
+    """
+    Analyze how long tracks remain in each state (dwell time analysis).
+    
+    Parameters
+    ----------
+    windowed_df : pl.DataFrame or pd.DataFrame
+        Windowed dataframe with state assignments
+    state_col : str, default='final_population'
+        Column containing state classifications
+    unique_id_col : str, default='unique_id'
+        Column containing unique track IDs
+    time_col : str, default='time_window'
+        Column containing time window index
+    window_duration : float, optional
+        Duration of each time window in seconds (for time-based dwell times)
+    group_by : str, optional
+        Column to group analysis by (e.g., 'mol')
+        
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - 'dwell_times': DataFrame with dwell times for each state visit
+        - 'summary_stats': DataFrame with summary statistics per state
+        - 'track_level': DataFrame with per-track dwell time info
+        - If group_by: separate results for each group
+    """
+    is_polars = isinstance(windowed_df, pl.DataFrame)
+    
+    if is_polars:
+        df = windowed_df.to_pandas()
+    else:
+        df = windowed_df.copy()
+    
+    def _analyze_group(group_df, group_name="all"):
+        """Helper function to analyze dwell times for a group"""
+        
+        # Sort by track and time
+        group_df = group_df.sort_values([unique_id_col, time_col])
+        
+        # Track dwell times
+        dwell_records = []
+        track_summaries = []
+        
+        for track_id, track_data in group_df.groupby(unique_id_col):
+            states = track_data[state_col].tolist()
+            
+            if len(states) == 0:
+                continue
+            
+            # Find consecutive runs of each state
+            current_state = states[0]
+            dwell_start = 0
+            
+            # Track-level summary
+            state_dwell_summary = {}
+            
+            for i in range(1, len(states) + 1):
+                # Check if state changed or end of track
+                if i == len(states) or states[i] != current_state:
+                    dwell_length = i - dwell_start
+                    
+                    # Record this dwell period
+                    dwell_records.append({
+                        'track_id': track_id,
+                        'state': current_state,
+                        'dwell_windows': dwell_length,
+                        'dwell_duration': dwell_length * window_duration if window_duration else None,
+                        'start_window': dwell_start,
+                        'end_window': i - 1
+                    })
+                    
+                    # Update track summary
+                    if current_state not in state_dwell_summary:
+                        state_dwell_summary[current_state] = {
+                            'n_visits': 0,
+                            'total_windows': 0,
+                            'avg_dwell': 0
+                        }
+                    
+                    state_dwell_summary[current_state]['n_visits'] += 1
+                    state_dwell_summary[current_state]['total_windows'] += dwell_length
+                    
+                    # Move to next state
+                    if i < len(states):
+                        current_state = states[i]
+                        dwell_start = i
+            
+            # Calculate averages for track summary
+            for state in state_dwell_summary:
+                n_visits = state_dwell_summary[state]['n_visits']
+                total_windows = state_dwell_summary[state]['total_windows']
+                state_dwell_summary[state]['avg_dwell'] = total_windows / n_visits
+            
+            # Add to track summaries
+            track_summary = {
+                'track_id': track_id,
+                'n_windows': len(states),
+                'n_unique_states': len(set(states))
+            }
+            
+            # Add per-state info
+            for state in set(states):
+                if state in state_dwell_summary:
+                    track_summary[f'{state}_n_visits'] = state_dwell_summary[state]['n_visits']
+                    track_summary[f'{state}_total_windows'] = state_dwell_summary[state]['total_windows']
+                    track_summary[f'{state}_avg_dwell'] = state_dwell_summary[state]['avg_dwell']
+                    track_summary[f'{state}_fraction'] = state_dwell_summary[state]['total_windows'] / len(states)
+            
+            track_summaries.append(track_summary)
+        
+        # Create DataFrames
+        dwell_df = pd.DataFrame(dwell_records)
+        track_df = pd.DataFrame(track_summaries)
+        
+        # Calculate summary statistics per state
+        if len(dwell_df) > 0:
+            summary_stats = dwell_df.groupby('state').agg({
+                'dwell_windows': ['count', 'mean', 'std', 'min', 'max', 'median'],
+                'track_id': 'nunique'
+            }).reset_index()
+            
+            summary_stats.columns = ['state', 'n_visits', 'mean_dwell', 'std_dwell', 
+                                    'min_dwell', 'max_dwell', 'median_dwell', 'n_tracks']
+            
+            # Add duration stats if available
+            if window_duration:
+                duration_stats = dwell_df.groupby('state')['dwell_duration'].agg(
+                    ['mean', 'std', 'median']
+                ).reset_index()
+                duration_stats.columns = ['state', 'mean_duration_s', 'std_duration_s', 'median_duration_s']
+                summary_stats = summary_stats.merge(duration_stats, on='state')
+        else:
+            summary_stats = pd.DataFrame()
+        
+        return {
+            'dwell_times': dwell_df,
+            'summary_stats': summary_stats,
+            'track_level': track_df,
+            'group_name': group_name
+        }
+    
+    # Analyze by group or all together
+    if group_by and group_by in df.columns:
+        results = {}
+        for group_name, group_df in df.groupby(group_by):
+            results[group_name] = _analyze_group(group_df, str(group_name))
+        return results
+    else:
+        return _analyze_group(df)
+
+
+def filter_tracks_by_min_windows(
+    windowed_df,
+    instant_df=None,
+    min_windows=3,
+    unique_id_col='unique_id'
+):
+    """
+    Filter tracks to only include those with a minimum number of time windows.
+    
+    This is useful for creating comparable track sequences when you want to analyze
+    transitions over a standard time period.
+    
+    Parameters
+    ----------
+    windowed_df : pl.DataFrame or pd.DataFrame
+        Windowed dataframe
+    instant_df : pl.DataFrame or pd.DataFrame, optional
+        Instant dataframe to filter in parallel
+    min_windows : int, default=3
+        Minimum number of windows required
+    unique_id_col : str, default='unique_id'
+        Column containing unique track IDs
+        
+    Returns
+    -------
+    tuple
+        (filtered_windowed_df, filtered_instant_df, report)
+        If instant_df is None, returns (filtered_windowed_df, report)
+    """
+    is_polars = isinstance(windowed_df, pl.DataFrame)
+    
+    if is_polars:
+        # Count windows per track
+        window_counts = windowed_df.group_by(unique_id_col).agg(
+            pl.len().alias('n_windows')
+        )
+        
+        # Filter for tracks with enough windows
+        valid_tracks = window_counts.filter(
+            pl.col('n_windows') >= min_windows
+        )[unique_id_col]
+        
+        # Filter dataframes
+        filtered_windowed = windowed_df.filter(
+            pl.col(unique_id_col).is_in(valid_tracks)
+        )
+        
+        n_tracks_before = windowed_df[unique_id_col].n_unique()
+        n_tracks_after = filtered_windowed[unique_id_col].n_unique()
+        
+        if instant_df is not None:
+            filtered_instant = instant_df.filter(
+                pl.col(unique_id_col).is_in(valid_tracks)
+            )
+        else:
+            filtered_instant = None
+            
+    else:
+        # Pandas version
+        window_counts = windowed_df.groupby(unique_id_col).size()
+        valid_tracks = window_counts[window_counts >= min_windows].index
+        
+        filtered_windowed = windowed_df[windowed_df[unique_id_col].isin(valid_tracks)]
+        
+        n_tracks_before = windowed_df[unique_id_col].nunique()
+        n_tracks_after = filtered_windowed[unique_id_col].nunique()
+        
+        if instant_df is not None:
+            filtered_instant = instant_df[instant_df[unique_id_col].isin(valid_tracks)]
+        else:
+            filtered_instant = None
+    
+    # Report
+    report = {
+        'n_tracks_before': n_tracks_before,
+        'n_tracks_after': n_tracks_after,
+        'n_tracks_removed': n_tracks_before - n_tracks_after,
+        'fraction_retained': n_tracks_after / n_tracks_before if n_tracks_before > 0 else 0,
+        'min_windows': min_windows
+    }
+    
+    print(f"\n{'='*80}")
+    print(f"FILTERED TRACKS BY MINIMUM WINDOWS")
+    print(f"{'='*80}")
+    print(f"Minimum windows required: {min_windows}")
+    print(f"Tracks before: {n_tracks_before:,}")
+    print(f"Tracks after:  {n_tracks_after:,}")
+    print(f"Removed:       {report['n_tracks_removed']:,} ({(1-report['fraction_retained'])*100:.1f}%)")
+    print(f"Retained:      {report['fraction_retained']*100:.1f}%")
+    print(f"{'='*80}\n")
+    
+    if instant_df is not None:
+        return filtered_windowed, filtered_instant, report
+    else:
+        return filtered_windowed, report
