@@ -9657,6 +9657,932 @@ def gallery_of_tracks_v4(
     }
 
 
+def gallery_of_tracks_v5(
+    instant_df,
+    order_by="superwindow_id",
+    segment_color_by="final_population",
+    num_tracks=20,
+    segment_colors=None,
+    segment_colormap="colorblind",
+    figsize=(12, 12),
+    transparent_background=True,
+    show_annotations=False,
+    annotation="default",
+    annotation_color="white",  # Deprecated: use text_color instead
+    text_color=None,  # NEW: Single variable for all text/annotation colors
+    text_size=10,
+    export_format="svg",
+    save_path=None,
+    show_plot=True,
+    order=None,
+    track_length_frames=60,
+    spacing_factor=1.2,
+    line_width=1.5,
+    grid_cols=None,
+    dpi=200,
+    subplot_size_um=None,
+    show_scale_bar=False,
+    scale_bar_length_um=None,
+    scale_bar_color='white',
+    scale_bar_linewidth=3,
+    # DEPRECATED: use show_subplot_border instead
+    draw_box=False,
+    box_colormap="tab10",
+    box_colors=None,
+    box_linewidth=3,
+    # Subplot border (bounding box around each subplot)
+    show_subplot_border=False,
+    subplot_border_color=None,  # Solid color for all borders (if not using colormap)
+    subplot_border_linewidth=2,
+    subplot_border_color_by=None,  # 'cluster' to color by cluster, None for solid color
+    subplot_border_colormap='colorblind',  # Colormap for borders when color_by is set
+    subplot_border_colors=None,  # Custom color dict for borders {cluster_id: color}
+    # NEW: Legend for segment colors
+    show_legend=True,
+    legend_title=None,  # Defaults to segment_color_by column name
+    legend_loc='right',  # 'right', 'bottom', or specific matplotlib location
+    legend_order=None,  # Custom order for legend items (e.g., state_order from plot_representative_sequences)
+    # NEW: Structured grid layout (matching plot_representative_sequences)
+    group_by=None,
+    cluster_col=None,
+    n_per_cluster=None,
+    cluster_order=None,
+    group_order=None,
+    random_seed=42,
+    # NEW: Use exact track order from plot_representative_sequences
+    superwindow_ids=None,  # List of superwindow_ids in EXACT plotting order from plot_representative_sequences
+    superwindow_id_col='superwindow_id',  # Column name for superwindow_id in the dataframe
+):
+    """
+    Create a gallery of tracks with WITHIN-TRACK coloring by a segment attribute.
+    
+    This version allows tracks to be colored segment-by-segment based on a column
+    like 'final_population', so you can see state transitions directly on the XY plot.
+    
+    Parameters
+    ----------
+    instant_df : pd.DataFrame or pl.DataFrame
+        DataFrame with frame-level data. Must have columns: unique_id, x_um, y_um, frame
+    order_by : str, default='superwindow_id'
+        Column to use for ORDERING/GROUPING tracks in the gallery (e.g., 'superwindow_id', 
+        'superwindow_cluster'). Tracks will be collected per unique value of this column.
+    segment_color_by : str, default='final_population'
+        Column to use for coloring WITHIN each track. Each unique value gets a different color.
+    num_tracks : int, default=20
+        Maximum number of tracks to show per order_by category
+    segment_colors : dict, optional
+        Custom color mapping for segment_color_by values. {value: color}
+    segment_colormap : str, default='colorblind'
+        Colormap to use for segment colors if segment_colors is not provided
+    figsize : tuple, default=(12, 12)
+        Figure size
+    transparent_background : bool, default=True
+        Transparent background
+    show_annotations : bool, default=False
+        Whether to show track annotations (displayed BELOW each subplot)
+    annotation : str | list[str] | callable | "default", default="default"
+        Annotation format. Use "{superwindow_id}" to show superwindow IDs.
+    annotation_color : str, default="white"
+        DEPRECATED: Use text_color instead. Color for annotations.
+    text_color : str, optional
+        Single variable to control ALL text colors (annotations, labels, legend, title).
+        If None, defaults to annotation_color for backwards compatibility.
+    text_size : int, default=10
+        Font size for annotations
+    export_format : str, default="svg"
+        Export format
+    save_path : str, optional
+        Save path for the figure
+    show_plot : bool, default=True
+        Whether to display the plot
+    order : list, optional
+        Custom order for order_by values (e.g., list of superwindow_ids in desired order)
+    track_length_frames : int, default=60
+        Maximum number of frames to show per track
+    spacing_factor : float, default=1.2
+        Spacing factor for subplot sizing
+    line_width : float, default=1.5
+        Line width for track plots
+    grid_cols : int, optional
+        Number of columns in the grid. Auto-calculated if None.
+    dpi : int, default=200
+        DPI for saving
+    subplot_size_um : float, optional
+        Manual subplot size in microns
+    show_scale_bar : bool, default=False
+        Whether to show a scale bar
+    scale_bar_length_um : float, optional
+        Length of scale bar in microns
+    scale_bar_color : str, default='white'
+        Color of the scale bar
+    scale_bar_linewidth : float, default=3
+        Line width of the scale bar
+    draw_box : bool, default=False
+        Whether to draw a colored box/border around each subplot based on order_by value
+    box_colormap : str, default='tab10'
+        Colormap to use for box colors (e.g., 'tab10', 'colorblind', 'viridis')
+    box_colors : dict, optional
+        Custom color mapping for box colors. {order_by_value: color}
+    box_linewidth : float, default=3
+        Line width for the box border
+    show_subplot_border : bool, default=False
+        Whether to draw a bounding box/border around each subplot.
+    subplot_border_color : str, optional
+        Solid color for ALL subplot borders (used when subplot_border_color_by=None).
+        Defaults to text_color if not specified.
+    subplot_border_linewidth : float, default=2
+        Line width for subplot borders.
+    subplot_border_color_by : str, optional
+        What to color the borders by. Options:
+        - None: Use solid color (subplot_border_color)
+        - 'cluster': Color borders by cluster (requires cluster_col to be set)
+    subplot_border_colormap : str, default='colorblind'
+        Colormap to use for border colors when subplot_border_color_by is set.
+        Options: 'colorblind', 'tab10', 'viridis', etc.
+    subplot_border_colors : dict, optional
+        Custom color mapping for borders when using subplot_border_color_by.
+        Example: {0: '#FF0000', 1: '#00FF00', 2: '#0000FF'}
+    show_legend : bool, default=True
+        Whether to show a legend mapping segment colors to their values.
+        Legend appears OUTSIDE the subplot grid.
+    legend_title : str, optional
+        Title for the legend. Defaults to segment_color_by column name.
+    legend_loc : str, default='right'
+        Location for the legend. Options: 'right', 'bottom', or matplotlib location strings.
+    legend_order : list, optional
+        Custom order for legend items. If None, uses the order of keys in segment_colors dict
+        (if provided), otherwise uses sorted order. Use this to match state_order from
+        plot_representative_sequences.
+    group_by : str, optional
+        Column to use for ROW grouping in structured grid layout (e.g., 'mol').
+        When specified along with cluster_col and n_per_cluster, creates a grid
+        matching plot_representative_sequences layout:
+        - Rows = unique values from group_by column
+        - Columns = n_clusters * n_per_cluster
+    cluster_col : str, optional
+        Column to use for COLUMN grouping in structured grid layout (e.g., 'superwindow_cluster').
+        Clusters are arranged left-to-right, with n_per_cluster tracks per cluster per row.
+    n_per_cluster : int, optional
+        Number of tracks to show per cluster per group (row).
+        Similar to n_superwindows_per_cluster in plot_representative_sequences.
+    cluster_order : list, optional
+        Custom order for clusters. If None, uses sorted unique values.
+    group_order : list, optional
+        Custom order for groups (rows). If None, uses sorted unique values.
+    random_seed : int, default=42
+        Random seed for reproducible track selection.
+    superwindow_ids : list, optional
+        List of superwindow_ids in EXACT plotting order from plot_representative_sequences.
+        When provided, skips random sampling and uses these IDs directly to match
+        the exact order from plot_representative_sequences. Pass the `plotted_sw_ids`
+        output from plot_representative_sequences.
+    superwindow_id_col : str, default='superwindow_id'
+        Column name for superwindow_id in the dataframe.
+        
+    Returns
+    -------
+    dict
+        Dictionary with keys: 'plotted_tracks', 'category_counts', 'total_tracks',
+        'subplot_size_um', 'grid_dimensions', 'save_path', 'order_by_values', 
+        'segment_color_map', 'box_color_map'
+        When using structured layout, also includes: 'groups', 'clusters', 'n_per_cluster'
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import random
+    from matplotlib import cm
+
+    # Auto-detect dataframe type and convert to pandas for compatibility
+    is_polars = hasattr(instant_df, 'schema')
+    if is_polars:
+        import polars as pl
+        df = instant_df.to_pandas()
+    else:
+        df = instant_df.copy()
+
+    # Ensure required columns exist
+    required_cols = ['unique_id', 'x_um', 'y_um', 'frame']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+
+    if order_by not in df.columns:
+        raise ValueError(f"Order column '{order_by}' not found in dataframe")
+    
+    if segment_color_by not in df.columns:
+        raise ValueError(f"Segment color column '{segment_color_by}' not found in dataframe")
+
+    # Handle text_color (single variable for all text colors)
+    # If text_color is not specified, fall back to annotation_color for backwards compatibility
+    if text_color is None:
+        text_color = annotation_color
+    
+    # Set subplot_border_color to text_color if not specified
+    if subplot_border_color is None:
+        subplot_border_color = text_color
+
+    # Set up border color mapping (for subplot borders colored by cluster)
+    border_color_map = {}
+
+    # Get order_by categories
+    order_by_values = order if order else sorted(df[order_by].dropna().unique())
+    print(f"Order by '{order_by}': {len(order_by_values)} unique values")
+
+    # Set up box color mapping (for order_by values)
+    box_color_map = {}
+    if draw_box:
+        if box_colors is not None:
+            box_color_map = box_colors
+        elif box_colormap == "colorblind":
+            colorblind_colors = [
+                '#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161',
+                '#FBAFE4', '#949494', '#ECE133', '#56B4E9', '#D55E00'
+            ]
+            box_color_map = {val: colorblind_colors[i % len(colorblind_colors)] 
+                            for i, val in enumerate(order_by_values)}
+        else:
+            cmap = plt.get_cmap(box_colormap, len(order_by_values))
+            box_color_map = {val: cmap(i / max(1, len(order_by_values) - 1)) 
+                            for i, val in enumerate(order_by_values)}
+        print(f"Box colors for {len(order_by_values)} order_by values")
+
+    # Get all unique segment colors
+    all_segment_values = sorted(df[segment_color_by].dropna().unique())
+    print(f"Segment color by '{segment_color_by}': {all_segment_values}")
+
+    # Set up segment color mapping
+    if segment_colors is not None:
+        segment_color_map = segment_colors
+    elif segment_colormap == "colorblind":
+        colorblind_colors = [
+            '#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161',
+            '#FBAFE4', '#949494', '#ECE133', '#56B4E9', '#D55E00'
+        ]
+        segment_color_map = {val: colorblind_colors[i % len(colorblind_colors)] 
+                            for i, val in enumerate(all_segment_values)}
+    else:
+        cmap = plt.get_cmap(segment_colormap, len(all_segment_values))
+        segment_color_map = {val: cmap(i / len(all_segment_values)) 
+                            for i, val in enumerate(all_segment_values)}
+
+    # Set random seed for reproducibility
+    random.seed(random_seed)
+    np.random.seed(random_seed)
+    
+    # Check if using structured grid layout (matching plot_representative_sequences)
+    use_structured_layout = (group_by is not None and cluster_col is not None and n_per_cluster is not None)
+    
+    all_track_segments = []
+    track_info = []
+    grid_position_map = {}  # Maps (row_idx, col_idx) to track info for structured layout
+    
+    if use_structured_layout:
+        # ========== STRUCTURED GRID LAYOUT MODE ==========
+        # Rows = groups (e.g., mol values)
+        # Columns = clusters * n_per_cluster (same as plot_representative_sequences)
+        
+        if group_by not in df.columns:
+            raise ValueError(f"group_by column '{group_by}' not found in dataframe")
+        if cluster_col not in df.columns:
+            raise ValueError(f"cluster_col column '{cluster_col}' not found in dataframe")
+        
+        # Get groups and clusters
+        groups = group_order if group_order else sorted(df[group_by].dropna().unique())
+        clusters = cluster_order if cluster_order else sorted(df[cluster_col].dropna().unique())
+        n_clusters = len(clusters)
+        
+        print(f"\n=== STRUCTURED GRID LAYOUT (matching plot_representative_sequences) ===")
+        print(f"Groups (rows): {groups}")
+        print(f"Clusters (cols): {clusters}")
+        print(f"Tracks per cluster per group: {n_per_cluster}")
+        
+        # Calculate grid dimensions: rows = groups, cols = clusters * n_per_cluster
+        grid_rows = len(groups)
+        grid_cols = n_clusters * n_per_cluster
+        
+        print(f"Grid layout: {grid_rows} rows × {grid_cols} columns")
+        
+        # Check if using exact superwindow_ids from plot_representative_sequences
+        use_exact_order = superwindow_ids is not None and len(superwindow_ids) > 0
+        
+        if use_exact_order:
+            print(f"✅ Using EXACT order from plot_representative_sequences ({len(superwindow_ids)} superwindow_ids)")
+            # superwindow_ids is already in the correct order: 
+            # [group0_cluster0_ex0, group0_cluster0_ex1, ..., group0_cluster1_ex0, ...]
+            sw_idx = 0  # Index into superwindow_ids list
+        
+        # Collect tracks in structured order (matching plot_representative_sequences)
+        for group_idx, group_val in enumerate(groups):
+            group_data = df[df[group_by] == group_val]
+            
+            col_idx = 0
+            for cluster_id in clusters:
+                cluster_data = group_data[group_data[cluster_col] == cluster_id]
+                
+                # Collect track segments for this cluster
+                for ex_idx in range(n_per_cluster):
+                    if use_exact_order:
+                        # Use EXACT superwindow_id from plot_representative_sequences
+                        if sw_idx < len(superwindow_ids):
+                            target_sw_id = superwindow_ids[sw_idx]
+                            sw_idx += 1
+                            
+                            # Find track data for this superwindow_id
+                            if superwindow_id_col in df.columns:
+                                track_data = df[df[superwindow_id_col] == target_sw_id].sort_values('frame')
+                            else:
+                                # Fall back to unique_id if superwindow_id_col not found
+                                track_data = df[df['unique_id'] == target_sw_id].sort_values('frame')
+                            
+                            if len(track_data) == 0:
+                                all_track_segments.append(None)
+                                track_info.append((None, None, 0))
+                                grid_position_map[(group_idx, col_idx)] = len(all_track_segments) - 1
+                                col_idx += 1
+                                continue
+                            
+                            # Get cluster_id from the track data for border coloring
+                            if cluster_col in track_data.columns:
+                                actual_cluster = track_data[cluster_col].iloc[0]
+                            else:
+                                actual_cluster = cluster_id
+                            
+                            # When using superwindow_ids, use ALL frames for that superwindow
+                            # (NO random sampling - this ensures exact alignment with sequences!)
+                            track_segment = track_data  # Use ALL frames belonging to this superwindow_id
+                            
+                            if len(track_segment) >= 10:
+                                all_track_segments.append(track_segment)
+                                track_info.append((actual_cluster, target_sw_id, len(track_segment)))
+                            else:
+                                all_track_segments.append(None)
+                                track_info.append((None, None, 0))
+                        else:
+                            # No more superwindow_ids, fill with empty
+                            all_track_segments.append(None)
+                            track_info.append((None, None, 0))
+                        
+                        grid_position_map[(group_idx, col_idx)] = len(all_track_segments) - 1
+                        col_idx += 1
+                    
+                    else:
+                        # SAMPLING MODE (original behavior when superwindow_ids not provided)
+                        if ex_idx == 0:
+                            # Only do this once per cluster
+                            if len(cluster_data) == 0:
+                                # Fill all slots for this cluster with empty
+                                for _ in range(n_per_cluster):
+                                    all_track_segments.append(None)
+                                    track_info.append((None, None, 0))
+                                    grid_position_map[(group_idx, col_idx)] = len(all_track_segments) - 1
+                                    col_idx += 1
+                                break  # Skip remaining ex_idx iterations
+                            
+                            # Sample tracks
+                            unique_ids = cluster_data['unique_id'].unique()
+                            n_available = len(unique_ids)
+                            n_to_sample = min(n_per_cluster, n_available)
+                            
+                            if n_to_sample > 0:
+                                unique_ids_df = pd.DataFrame({'unique_id': unique_ids})
+                                sampled_df = unique_ids_df.sample(n=n_to_sample, random_state=42)
+                                selected_ids = sampled_df['unique_id'].tolist()
+                            else:
+                                selected_ids = []
+                        
+                        if ex_idx < len(selected_ids):
+                            unique_id = selected_ids[ex_idx]
+                            track_data = cluster_data[cluster_data['unique_id'] == unique_id].sort_values('frame')
+                            
+                            if len(track_data) >= track_length_frames:
+                                max_start = len(track_data) - track_length_frames
+                                start_idx = random.randint(0, max_start) if max_start > 0 else 0
+                                track_segment = track_data.iloc[start_idx:start_idx + track_length_frames]
+                            else:
+                                track_segment = track_data
+                            
+                            if len(track_segment) >= 10:
+                                all_track_segments.append(track_segment)
+                                track_info.append((cluster_id, unique_id, len(track_segment)))
+                            else:
+                                all_track_segments.append(None)
+                                track_info.append((None, None, 0))
+                        else:
+                            # Not enough tracks for this slot
+                            all_track_segments.append(None)
+                            track_info.append((None, None, 0))
+                        
+                        grid_position_map[(group_idx, col_idx)] = len(all_track_segments) - 1
+                        col_idx += 1
+        
+        # Update box_color_map to use cluster values (DEPRECATED - use border_color_map)
+        if draw_box:
+            if box_colors is not None:
+                box_color_map = box_colors
+            elif box_colormap == "colorblind":
+                colorblind_colors = [
+                    '#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161',
+                    '#FBAFE4', '#949494', '#ECE133', '#56B4E9', '#D55E00'
+                ]
+                box_color_map = {val: colorblind_colors[i % len(colorblind_colors)] 
+                                for i, val in enumerate(clusters)}
+            else:
+                cmap = plt.get_cmap(box_colormap, len(clusters))
+                box_color_map = {val: cmap(i / max(1, len(clusters) - 1)) 
+                                for i, val in enumerate(clusters)}
+            print(f"Box colors based on clusters: {list(box_color_map.keys())}")
+        
+        # Set up border_color_map for subplot borders colored by cluster
+        if show_subplot_border and subplot_border_color_by == 'cluster':
+            if subplot_border_colors is not None:
+                border_color_map = subplot_border_colors
+            elif subplot_border_colormap == "colorblind":
+                colorblind_colors = [
+                    '#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161',
+                    '#FBAFE4', '#949494', '#ECE133', '#56B4E9', '#D55E00'
+                ]
+                border_color_map = {val: colorblind_colors[i % len(colorblind_colors)] 
+                                   for i, val in enumerate(clusters)}
+            else:
+                cmap = plt.get_cmap(subplot_border_colormap, len(clusters))
+                border_color_map = {val: cmap(i / max(1, len(clusters) - 1)) 
+                                   for i, val in enumerate(clusters)}
+            print(f"Border colors based on clusters: {list(border_color_map.keys())}")
+        
+        valid_tracks = sum(1 for t in all_track_segments if t is not None)
+        print(f"Collected {valid_tracks} valid tracks (out of {len(all_track_segments)} grid slots)")
+        
+    else:
+        # ========== ORIGINAL FLAT LAYOUT MODE ==========
+        for order_val in order_by_values:
+            # Filter to this order_by value (e.g., superwindow_id)
+            order_df = df[df[order_by] == order_val]
+            
+            if len(order_df) == 0:
+                continue
+            
+            # Get unique tracks in this order_by value
+            unique_ids = order_df['unique_id'].unique()
+            
+            # Sample if needed
+            selected_ids = random.sample(list(unique_ids), min(num_tracks, len(unique_ids)))
+
+            for unique_id in selected_ids:
+                track_data = order_df[order_df['unique_id'] == unique_id].sort_values('frame')
+
+                if len(track_data) >= track_length_frames:
+                    max_start = len(track_data) - track_length_frames
+                    start_idx = random.randint(0, max_start) if max_start > 0 else 0
+                    track_segment = track_data.iloc[start_idx:start_idx + track_length_frames]
+                else:
+                    track_segment = track_data
+
+                if len(track_segment) >= 10:
+                    all_track_segments.append(track_segment)
+                    track_info.append((order_val, unique_id, len(track_segment)))
+
+        if not all_track_segments:
+            raise ValueError("No valid track segments found")
+
+        print(f"Collected {len(all_track_segments)} tracks total")
+
+        # Calculate grid layout for flat mode
+        total_tracks = len(all_track_segments)
+        if grid_cols is None:
+            grid_cols = int(np.ceil(np.sqrt(total_tracks)))
+        grid_rows = int(np.ceil(total_tracks / grid_cols))
+        print(f"Grid layout: {grid_rows} rows × {grid_cols} columns")
+
+    # Calculate subplot size
+    valid_segments = [s for s in all_track_segments if s is not None]
+    if not valid_segments:
+        raise ValueError("No valid track segments found")
+    
+    if subplot_size_um is not None:
+        subplot_size = subplot_size_um
+        print(f"Using manual subplot size: {subplot_size:.2f} μm")
+    else:
+        max_extent = 0
+        for segment in valid_segments:
+            x_range = segment['x_um'].max() - segment['x_um'].min()
+            y_range = segment['y_um'].max() - segment['y_um'].min()
+            extent = max(x_range, y_range)
+            max_extent = max(max_extent, extent)
+        subplot_size = max_extent * spacing_factor
+        print(f"Using calculated subplot size: {subplot_size:.2f} μm")
+
+    # Dynamic figsize
+    if figsize is None:
+        subplot_size_inches = 2.0
+        figsize = (grid_cols * subplot_size_inches, grid_rows * subplot_size_inches)
+        print(f"Using dynamic figsize: {figsize}")
+
+    # Create figure
+    figure_background = "none" if transparent_background else "white"
+    axis_background = (0, 0, 0, 0) if transparent_background else "white"
+
+    fig, axes = plt.subplots(
+        grid_rows, grid_cols,
+        figsize=figsize,
+        facecolor=figure_background,
+        squeeze=False  # Always return 2D array for structured layout
+    )
+    
+    # Keep 2D axes reference for structured layout
+    axes_2d = axes
+    
+    # Also create 1D axes list for iteration
+    axes_flat = np.array(axes).flatten()
+
+    fig.subplots_adjust(wspace=0.02, hspace=0.02)
+
+    plotted_tracks = []
+
+    # --- Annotation setup ---
+    def _make_annotation_text(segment, meta):
+        if not show_annotations:
+            return None
+
+        if callable(annotation):
+            try:
+                return str(annotation(segment, meta))
+            except Exception as e:
+                return f"(annotation error: {e})"
+
+        if isinstance(annotation, (list, tuple)):
+            vals = []
+            for col in annotation:
+                if col in segment.columns:
+                    val = segment[col].iloc[0]
+                else:
+                    val = meta.get(col, None)
+                vals.append(f"{col}={val}")
+            return " | ".join(vals)
+
+        if isinstance(annotation, str):
+            if annotation == "default":
+                return f"{meta['order_val']}\n{meta['unique_id']}"
+            ctx = dict(meta)
+            for col in segment.columns:
+                if col not in ctx:
+                    try:
+                        ctx[col] = segment[col].iloc[0]
+                    except Exception:
+                        pass
+            try:
+                return annotation.format(**ctx)
+            except KeyError as e:
+                return f"(missing {e.args[0]} in annotation)"
+            except Exception as e:
+                return f"(annotation error: {e})"
+
+        return f"{meta['order_val']}\n{meta['unique_id']}"
+
+    # Plot each track with WITHIN-TRACK segment coloring
+    for idx, (segment, (order_val, unique_id, segment_length)) in enumerate(zip(all_track_segments, track_info)):
+        if idx >= len(axes_flat):
+            break
+
+        ax = axes_flat[idx]
+        
+        # Handle empty/None segments (structured layout may have empty slots)
+        if segment is None or segment_length == 0:
+            ax.axis('off')
+            ax.set_facecolor(axis_background)
+            continue
+
+        x_coords = segment['x_um'].values
+        y_coords = segment['y_um'].values
+        segment_values = segment[segment_color_by].values
+
+        x_center = x_coords.mean()
+        y_center = y_coords.mean()
+
+        # Plot segment-by-segment with different colors
+        # Group consecutive frames by their segment_color_by value
+        i = 0
+        while i < len(x_coords) - 1:
+            current_val = segment_values[i]
+            color = segment_color_map.get(current_val, 'gray')
+            
+            # Find the end of this contiguous segment
+            j = i + 1
+            while j < len(segment_values) and segment_values[j] == current_val:
+                j += 1
+            
+            # Plot this segment (include one point overlap for continuity)
+            end_idx = min(j + 1, len(x_coords))
+            ax.plot(x_coords[i:end_idx], y_coords[i:end_idx], 
+                   color=color, linewidth=line_width, alpha=0.8)
+            
+            i = j
+
+        half_size = subplot_size / 2
+        ax.set_xlim(x_center - half_size, x_center + half_size)
+        ax.set_ylim(y_center - half_size, y_center + half_size)
+        ax.set_aspect('equal')
+
+        # Hide ticks and labels but KEEP SPINES AVAILABLE for borders
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.set_facecolor(axis_background)
+
+        # Configure subplot borders
+        if show_subplot_border:
+            # Determine border color for this subplot
+            if subplot_border_color_by == 'cluster' and order_val is not None:
+                # Color by cluster - order_val contains the cluster ID in structured mode
+                border_color = border_color_map.get(order_val, subplot_border_color or text_color)
+            else:
+                # Solid color for all borders
+                border_color = subplot_border_color or text_color
+            
+            # Make spines visible with the determined color
+            for spine in ax.spines.values():
+                spine.set_visible(True)
+                spine.set_color(border_color)
+                spine.set_linewidth(subplot_border_linewidth)
+        else:
+            # Hide all spines when borders are disabled
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+        
+        # Legacy draw_box support (DEPRECATED - use show_subplot_border with subplot_border_color_by='cluster')
+        if draw_box and not show_subplot_border and order_val in box_color_map:
+            box_color = box_color_map[order_val]
+            for spine in ax.spines.values():
+                spine.set_visible(True)
+                spine.set_color(box_color)
+                spine.set_linewidth(box_linewidth)
+
+        # Build meta for annotation
+        start_frame = int(segment['frame'].min())
+        end_frame = int(segment['frame'].max())
+        
+        window_uid = None
+        window_uids = None
+        if 'window_uid' in segment.columns:
+            vals = segment['window_uid'].dropna().astype(str)
+            if len(vals) > 0:
+                window_uids = sorted(vals.unique())
+                window_uid = ", ".join(window_uids)
+        
+        # Get superwindow_id if available
+        superwindow_id = None
+        if 'superwindow_id' in segment.columns:
+            superwindow_id = segment['superwindow_id'].iloc[0]
+
+        meta = {
+            'order_val': order_val,
+            'unique_id': unique_id,
+            'segment_length': int(segment_length),
+            'start_frame': start_frame,
+            'end_frame': end_frame,
+            'window_uid': window_uid,
+            'window_uids': window_uids,
+            'superwindow_id': superwindow_id
+        }
+
+        ann_text = _make_annotation_text(segment, meta)
+        if show_annotations and ann_text:
+            # Place annotation BELOW the subplot (like plot_representative_sequences)
+            ax.text(
+                0.5, -0.12, ann_text,
+                transform=ax.transAxes,
+                ha='center', va='top',
+                fontsize=text_size,
+                color=text_color,
+                style='italic'  # Match plot_representative_sequences style
+            )
+
+        plotted_tracks.append({
+            'order_val': order_val,
+            'unique_id': unique_id,
+            'segment_length': segment_length,
+            'x_center': x_center,
+            'y_center': y_center,
+            'subplot_index': idx,
+            'start_frame': start_frame,
+            'end_frame': end_frame,
+            'window_uid': window_uid
+        })
+
+    # Hide any unused subplots
+    for idx in range(len(all_track_segments), len(axes_flat)):
+        axes_flat[idx].axis('off')
+        axes_flat[idx].set_facecolor(axis_background)
+
+    # Add row labels and column headers for STRUCTURED LAYOUT
+    if use_structured_layout:
+        groups = group_order if group_order else sorted(df[group_by].dropna().unique())
+        clusters = cluster_order if cluster_order else sorted(df[cluster_col].dropna().unique())
+        n_clusters = len(clusters)
+        
+        # Add column headers (cluster labels) - on first row only
+        for cluster_idx, cluster_id in enumerate(clusters):
+            # Position at the center of each cluster's columns
+            center_col = cluster_idx * n_per_cluster + n_per_cluster // 2
+            ax = axes_2d[0, center_col]
+            ax.set_title(f'Cluster {cluster_id}', fontsize=text_size + 2, fontweight='bold',
+                        color=text_color, pad=5)
+        
+        # Add row labels (group names) - on first column only
+        for group_idx, group_val in enumerate(groups):
+            ax = axes_2d[group_idx, 0]
+            ax.set_ylabel(f'{group_val}', fontsize=text_size + 2, fontweight='bold',
+                         color=text_color, rotation=90, labelpad=10)
+
+    # Add scale bar to bottom-right plotted subplot
+    valid_indices = [i for i, s in enumerate(all_track_segments) if s is not None]
+    if show_scale_bar and len(valid_indices) > 0:
+        if scale_bar_length_um is None:
+            scale_bar_length_um = subplot_size
+        
+        last_plot_idx = valid_indices[-1]
+        scale_ax = axes_flat[last_plot_idx]
+        
+        xlim = scale_ax.get_xlim()
+        ylim = scale_ax.get_ylim()
+        
+        padding_fraction = 0.1
+        x_padding = (xlim[1] - xlim[0]) * padding_fraction
+        y_padding = (ylim[1] - ylim[0]) * padding_fraction
+        
+        scale_bar_x_end = xlim[1] - x_padding
+        scale_bar_x_start = scale_bar_x_end - scale_bar_length_um
+        scale_bar_y = ylim[0] + y_padding
+        
+        scale_ax.plot(
+            [scale_bar_x_start, scale_bar_x_end],
+            [scale_bar_y, scale_bar_y],
+            color=scale_bar_color,
+            linewidth=scale_bar_linewidth,
+            solid_capstyle='butt'
+        )
+        
+        cap_height = (ylim[1] - ylim[0]) * 0.02
+        scale_ax.plot(
+            [scale_bar_x_start, scale_bar_x_start],
+            [scale_bar_y - cap_height, scale_bar_y + cap_height],
+            color=scale_bar_color,
+            linewidth=scale_bar_linewidth * 0.7
+        )
+        scale_ax.plot(
+            [scale_bar_x_end, scale_bar_x_end],
+            [scale_bar_y - cap_height, scale_bar_y + cap_height],
+            color=scale_bar_color,
+            linewidth=scale_bar_linewidth * 0.7
+        )
+        
+        scale_ax.text(
+            (scale_bar_x_start + scale_bar_x_end) / 2,
+            scale_bar_y + y_padding * 0.5,
+            f'{scale_bar_length_um:.1f} μm',
+            ha='center',
+            va='bottom',
+            color=scale_bar_color,
+            fontsize=text_size,
+            fontweight='bold'
+        )
+
+    # Count tracks per order_by value (or cluster for structured layout)
+    category_counts = {}
+    for order_val, _, _ in track_info:
+        if order_val is not None:
+            category_counts[order_val] = category_counts.get(order_val, 0) + 1
+
+    # Title
+    valid_count = sum(1 for s in all_track_segments if s is not None)
+    if use_structured_layout:
+        groups = group_order if group_order else sorted(df[group_by].dropna().unique())
+        clusters = cluster_order if cluster_order else sorted(df[cluster_col].dropna().unique())
+        title_text = f"Gallery of Tracks (rows={group_by}, cols={cluster_col}, colored by {segment_color_by})\n"
+        title_text += f"{valid_count} tracks ({len(groups)} groups × {len(clusters)} clusters × {n_per_cluster} per)"
+    else:
+        title_text = f"Gallery of Tracks (ordered by {order_by}, colored by {segment_color_by})\n"
+        title_text += f"{valid_count} tracks"
+
+    fig.suptitle(
+        title_text,
+        fontsize=text_size + 2,
+        color=text_color,
+        y=0.98
+    )
+
+    # Add legend for segment colors (OUTSIDE the subplot grid)
+    if show_legend and segment_color_map:
+        from matplotlib.patches import Patch
+        
+        # Determine legend order:
+        # 1. Use legend_order if provided explicitly
+        # 2. Otherwise, use the order of keys in segment_colors dict (if user provided it)
+        # 3. Otherwise, use sorted order
+        if legend_order is not None:
+            ordered_values = [v for v in legend_order if v in segment_color_map]
+        elif segment_colors is not None:
+            # Use the order from the user-provided segment_colors dict (preserves insertion order)
+            ordered_values = list(segment_colors.keys())
+        else:
+            # Fall back to sorted order
+            ordered_values = sorted(segment_color_map.keys(), key=lambda x: str(x))
+        
+        # Create legend handles in the determined order
+        legend_handles = []
+        for value in ordered_values:
+            if value in segment_color_map:
+                color = segment_color_map[value]
+                patch = Patch(facecolor=color, edgecolor='none', label=str(value))
+                legend_handles.append(patch)
+        
+        # Determine legend title
+        leg_title = legend_title if legend_title else segment_color_by
+        
+        # Position legend outside the subplots
+        if legend_loc == 'right':
+            legend = fig.legend(
+                handles=legend_handles,
+                title=leg_title,
+                loc='center left',
+                bbox_to_anchor=(1.01, 0.5),
+                frameon=False,
+                fontsize=text_size,
+                title_fontsize=text_size + 1
+            )
+        elif legend_loc == 'bottom':
+            legend = fig.legend(
+                handles=legend_handles,
+                title=leg_title,
+                loc='upper center',
+                bbox_to_anchor=(0.5, -0.02),
+                ncol=len(legend_handles),
+                frameon=False,
+                fontsize=text_size,
+                title_fontsize=text_size + 1
+            )
+        else:
+            # Use matplotlib's built-in location string
+            legend = fig.legend(
+                handles=legend_handles,
+                title=leg_title,
+                loc=legend_loc,
+                frameon=False,
+                fontsize=text_size,
+                title_fontsize=text_size + 1
+            )
+        
+        # Set legend text color
+        legend.get_title().set_color(text_color)
+        for text in legend.get_texts():
+            text.set_color(text_color)
+
+    # Save
+    if save_path is None:
+        if use_structured_layout:
+            save_path = f"gallery_of_tracks_v5_{group_by}_{cluster_col}_{segment_color_by}.{export_format}"
+        else:
+            save_path = f"gallery_of_tracks_v5_{order_by}_{segment_color_by}.{export_format}"
+
+    plt.savefig(
+        save_path,
+        format=export_format,
+        dpi=dpi,
+        bbox_inches='tight',
+        transparent=transparent_background,
+        facecolor=figure_background
+    )
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+
+    # Build return dictionary
+    result = {
+        'plotted_tracks': plotted_tracks,
+        'category_counts': category_counts,
+        'total_tracks': valid_count,
+        'subplot_size_um': subplot_size,
+        'grid_dimensions': (grid_rows, grid_cols),
+        'save_path': save_path,
+        'order_by_values': order_by_values,
+        'segment_color_map': segment_color_map,
+        'box_color_map': box_color_map
+    }
+    
+    # Add structured layout info if applicable
+    if use_structured_layout:
+        groups = group_order if group_order else sorted(df[group_by].dropna().unique())
+        clusters = cluster_order if cluster_order else sorted(df[cluster_col].dropna().unique())
+        result['groups'] = groups
+        result['clusters'] = clusters
+        result['n_per_cluster'] = n_per_cluster
+        result['group_by'] = group_by
+        result['cluster_col'] = cluster_col
+    
+    return result
+
 
 def plot_stacked_bar_percentage(
     df,
@@ -12848,7 +13774,9 @@ def plot_transition_matrix(
     transparent_background=True,
     title=None,
     show_counts=False,
-    state_order=None
+    state_order=None,
+    invert_yaxis=False,
+    invert_xaxis=False
 ):
     """
     Visualize state transition matrix as a heatmap.
@@ -12881,6 +13809,10 @@ def plot_transition_matrix(
         Show transition counts instead of probabilities
     state_order : list, optional
         List of states in desired order for axes. If None, uses default order.
+    invert_yaxis : bool, default=False
+        Whether to invert the y-axis (reverse row order)
+    invert_xaxis : bool, default=False
+        Whether to invert the x-axis (reverse column order)
         
     Returns
     -------
@@ -12960,6 +13892,12 @@ def plot_transition_matrix(
             fontsize=13)
     
     plt.tight_layout()
+    
+    # Invert axes if requested
+    if invert_yaxis:
+        ax.invert_yaxis()
+    if invert_xaxis:
+        ax.invert_xaxis()
     
     if transparent_background:
         fig.patch.set_alpha(0)
@@ -14232,6 +15170,212 @@ def plot_similarity_space_umap(
         print(f"✅ Saved to: {full_path}")
     
     return fig, ax if axes is None else axes
+
+
+def plot_similarity_space_phate(
+    sequence_df,
+    phate_embedding_col='phate_embedding',
+    color_by='mol',
+    split_by=None,
+    palette='colorblind',
+    figsize=(10, 8),
+    s=50,
+    alpha=0.7,
+    save_path=None,
+    export_format='svg',
+    dpi=300,
+    transparent_background=True,
+    # PHATE computation parameters (used if embedding column doesn't exist)
+    compute_phate=False,
+    distance_matrix_col='similarity_distance',
+    n_components=2,
+    knn=5,
+    decay=40,
+    t='auto',
+    random_state=42
+):
+    """
+    Plot PHATE embedding of similarity space.
+    
+    PHATE (Potential of Heat-diffusion for Affinity-based Trajectory Embedding)
+    is excellent for visualizing trajectories and continuous processes.
+    
+    Parameters
+    ----------
+    sequence_df : pd.DataFrame
+        DataFrame with PHATE embeddings or distance data
+    phate_embedding_col : str, default='phate_embedding'
+        Column containing PHATE coordinates (array of shape (n_components,))
+    color_by : str, default='mol'
+        Column to color points by
+    split_by : str, optional
+        Column to create small multiples (e.g., 'mol')
+    palette : str, dict, or list, default='colorblind'
+        Color palette
+    figsize : tuple, default=(10, 8)
+        Figure size
+    s : float, default=50
+        Point size
+    alpha : float, default=0.7
+        Point transparency
+    save_path : str, optional
+        Save directory
+    export_format : str, default='svg'
+        Export format
+    dpi : int, default=300
+        DPI
+    transparent_background : bool, default=True
+        Transparent background
+    compute_phate : bool, default=False
+        If True and phate_embedding_col doesn't exist, compute PHATE from distance_matrix_col
+    distance_matrix_col : str, default='similarity_distance'
+        Column containing distance values (used if compute_phate=True)
+    n_components : int, default=2
+        Number of PHATE dimensions
+    knn : int, default=5
+        Number of nearest neighbors for PHATE
+    decay : int, default=40
+        Decay parameter for PHATE kernel
+    t : int or 'auto', default='auto'
+        Number of diffusion steps
+    random_state : int, default=42
+        Random seed for reproducibility
+        
+    Returns
+    -------
+    fig, ax or axes
+        Figure and axes objects
+    phate_coords : np.ndarray (optional)
+        If compute_phate=True, also returns the computed PHATE coordinates
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Check if PHATE embedding exists or needs to be computed
+    if phate_embedding_col in sequence_df.columns:
+        phate_coords = np.vstack(sequence_df[phate_embedding_col].values)
+        computed = False
+    elif compute_phate:
+        try:
+            import phate
+        except ImportError:
+            raise ImportError("PHATE requires 'phate' package. Install with: pip install phate")
+        
+        print("Computing PHATE embedding...")
+        
+        # Get distance data
+        if distance_matrix_col in sequence_df.columns:
+            distances = np.vstack(sequence_df[distance_matrix_col].values)
+        else:
+            raise ValueError(f"Column '{distance_matrix_col}' not found and no embedding column exists")
+        
+        # Compute PHATE
+        phate_op = phate.PHATE(
+            n_components=n_components,
+            knn=knn,
+            decay=decay,
+            t=t,
+            random_state=random_state,
+            verbose=0
+        )
+        phate_coords = phate_op.fit_transform(distances)
+        computed = True
+        print(f"✅ PHATE embedding computed: {phate_coords.shape}")
+    else:
+        raise ValueError(f"Column '{phate_embedding_col}' not found. Set compute_phate=True to compute PHATE.")
+    
+    # Handle colors
+    if palette == 'colorblind':
+        colorblind_palette = ['#0173B2', '#DE8F05', '#029E73', '#CC78BC', '#CA9161',
+                              '#FBAFE4', '#949494', '#ECE133', '#56B4E9', '#D55E00']
+    else:
+        colorblind_palette = None
+    
+    unique_vals = sequence_df[color_by].unique()
+    
+    if isinstance(palette, dict):
+        color_map = palette
+    elif isinstance(palette, list):
+        color_map = {val: palette[i % len(palette)] for i, val in enumerate(unique_vals)}
+    elif palette == 'colorblind':
+        color_map = {val: colorblind_palette[i % len(colorblind_palette)] 
+                    for i, val in enumerate(unique_vals)}
+    else:
+        cmap = plt.cm.get_cmap(palette)
+        color_map = {val: cmap(i / len(unique_vals)) for i, val in enumerate(unique_vals)}
+    
+    colors = [color_map[val] for val in sequence_df[color_by]]
+    
+    # Create plot(s)
+    if split_by is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        scatter = ax.scatter(phate_coords[:, 0], phate_coords[:, 1], 
+                            c=colors, s=s, alpha=alpha, edgecolors='k', linewidths=0.5)
+        ax.set_xlabel('PHATE1', fontsize=12, fontweight='bold')
+        ax.set_ylabel('PHATE2', fontsize=12, fontweight='bold')
+        ax.set_title(f'PHATE of Similarity Space\n(colored by {color_by})',
+                    fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        
+        # Legend
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor=color_map[val], label=val) 
+                          for val in unique_vals]
+        ax.legend(handles=legend_elements, title=color_by, loc='best')
+        
+        axes = None
+    else:
+        # Small multiples
+        split_vals = sequence_df[split_by].unique()
+        n_plots = len(split_vals)
+        ncols = min(3, n_plots)
+        nrows = int(np.ceil(n_plots / ncols))
+        
+        fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+        axes = axes.flatten()
+        
+        for i, split_val in enumerate(split_vals):
+            ax = axes[i]
+            mask = sequence_df[split_by] == split_val
+            coords = phate_coords[mask]
+            cols = [colors[j] for j, m in enumerate(mask) if m]
+            
+            ax.scatter(coords[:, 0], coords[:, 1], 
+                      c=cols, s=s, alpha=alpha, edgecolors='k', linewidths=0.5)
+            ax.set_xlabel('PHATE1', fontweight='bold')
+            ax.set_ylabel('PHATE2', fontweight='bold')
+            ax.set_title(f'{split_val}', fontweight='bold')
+            ax.grid(True, alpha=0.3)
+        
+        # Hide extra subplots
+        for j in range(i + 1, len(axes)):
+            axes[j].axis('off')
+        
+        fig.suptitle(f'PHATE of Similarity Space (colored by {color_by})',
+                    fontsize=14, fontweight='bold', y=1.0)
+    
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        if axes is None:
+            ax.patch.set_alpha(0)
+        else:
+            for a in axes:
+                a.patch.set_alpha(0)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        suffix = f"_{split_by}" if split_by else ""
+        filename = f"phate_similarity_space{suffix}.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches='tight', 
+                   transparent=transparent_background)
+        print(f"✅ Saved to: {full_path}")
+    
+    if computed:
+        return fig, ax if axes is None else axes, phate_coords
+    else:
+        return fig, ax if axes is None else axes
 
 
 def plot_representative_sequences(

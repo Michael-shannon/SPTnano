@@ -5850,6 +5850,260 @@ def create_fixed_length_superwindows(
     return superwindow_df
 
 
+def create_variable_length_superwindows(
+    windowed_df,
+    min_length=5,
+    max_length=20,
+    state_col='final_population',
+    unique_id_col='unique_id',
+    time_col='time_window',
+    window_uid_col='window_uid',
+    additional_cols=None,
+    strategy='whole_track',
+    overlap_fraction=0.5
+):
+    """
+    Create variable-length superwindows from tracks.
+    
+    Unlike fixed-length superwindows, this function creates superwindows with
+    varying lengths, allowing shorter tracks (5-20 windows) to be included.
+    This is particularly useful for DTW-based analysis, which naturally handles
+    variable-length sequences through elastic alignment.
+    
+    Parameters
+    ----------
+    windowed_df : pl.DataFrame or pd.DataFrame
+        Windowed dataframe with state assignments
+    min_length : int, default=5
+        Minimum number of windows per superwindow
+    max_length : int, default=20
+        Maximum number of windows per superwindow
+    state_col : str, default='final_population'
+        Column containing state classifications
+    unique_id_col : str, default='unique_id'
+        Column containing unique track IDs
+    time_col : str, default='time_window'
+        Column containing time window index
+    window_uid_col : str, default='window_uid'
+        Column containing unique window identifiers
+    additional_cols : list, optional
+        Additional metadata columns to include
+    strategy : str, default='whole_track'
+        Strategy for creating superwindows:
+        - 'whole_track': One superwindow per track using all available windows
+          (truncated to max_length if longer)
+        - 'sliding': Multiple overlapping superwindows per track
+        - 'chunked': Non-overlapping chunks (like fixed-length but variable)
+    overlap_fraction : float, default=0.5
+        Fraction of overlap for 'sliding' strategy (0.5 = 50% overlap)
+        
+    Returns
+    -------
+    pl.DataFrame or pd.DataFrame
+        Dataframe with columns:
+        - superwindow_id: Unique identifier ({original_id}_vsw{number})
+        - original_track_id: Original track identifier
+        - superwindow_number: Which superwindow (0, 1, 2, ...)
+        - state_sequence: List of states in this superwindow
+        - window_uids: List of window_uid values
+        - n_windows: Actual number of windows (varies between min_length and max_length)
+        - [additional_cols]: Metadata from original track
+    
+    Notes
+    -----
+    DTW (Dynamic Time Warping) naturally handles variable-length sequences by
+    allowing elastic temporal alignment. This makes variable-length superwindows
+    ideal for DTW-based clustering and similarity analysis.
+    """
+    is_polars = isinstance(windowed_df, pl.DataFrame)
+    
+    if is_polars:
+        df = windowed_df.to_pandas()
+        return_polars = True
+    else:
+        df = windowed_df.copy()
+        return_polars = False
+    
+    # Sort by track and time
+    df = df.sort_values([unique_id_col, time_col])
+    
+    superwindows = []
+    tracks_too_short = 0
+    length_distribution = {}
+    
+    for track_id, track_data in df.groupby(unique_id_col):
+        states = track_data[state_col].tolist()
+        window_uids = track_data[window_uid_col].tolist()
+        n_windows = len(states)
+        
+        # Skip tracks shorter than minimum
+        if n_windows < min_length:
+            tracks_too_short += 1
+            continue
+        
+        # Extract metadata
+        metadata = {}
+        if additional_cols:
+            for col in additional_cols:
+                if col in track_data.columns:
+                    metadata[col] = track_data[col].iloc[0]
+        
+        # Create superwindows based on strategy
+        if strategy == 'whole_track':
+            # One superwindow per track, capped at max_length
+            effective_length = min(n_windows, max_length)
+            superwindow_states = states[:effective_length]
+            superwindow_window_uids = window_uids[:effective_length]
+            
+            superwindow_record = {
+                'superwindow_id': f"{track_id}_vsw0",
+                'original_track_id': track_id,
+                'superwindow_number': 0,
+                'state_sequence': superwindow_states,
+                'window_uids': superwindow_window_uids,
+                'n_windows': len(superwindow_states)
+            }
+            superwindow_record.update(metadata)
+            superwindows.append(superwindow_record)
+            
+            # Track length distribution
+            length = len(superwindow_states)
+            length_distribution[length] = length_distribution.get(length, 0) + 1
+            
+        elif strategy == 'sliding':
+            # Sliding window approach with overlap
+            step_size = max(1, int(max_length * (1 - overlap_fraction)))
+            sw_num = 0
+            
+            for start_idx in range(0, n_windows - min_length + 1, step_size):
+                end_idx = min(start_idx + max_length, n_windows)
+                actual_length = end_idx - start_idx
+                
+                if actual_length < min_length:
+                    break
+                    
+                superwindow_states = states[start_idx:end_idx]
+                superwindow_window_uids = window_uids[start_idx:end_idx]
+                
+                superwindow_record = {
+                    'superwindow_id': f"{track_id}_vsw{sw_num}",
+                    'original_track_id': track_id,
+                    'superwindow_number': sw_num,
+                    'state_sequence': superwindow_states,
+                    'window_uids': superwindow_window_uids,
+                    'n_windows': len(superwindow_states),
+                    'start_window': start_idx,
+                    'end_window': end_idx
+                }
+                superwindow_record.update(metadata)
+                superwindows.append(superwindow_record)
+                
+                length = len(superwindow_states)
+                length_distribution[length] = length_distribution.get(length, 0) + 1
+                sw_num += 1
+                
+        elif strategy == 'chunked':
+            # Non-overlapping chunks of variable size
+            sw_num = 0
+            start_idx = 0
+            
+            while start_idx < n_windows:
+                remaining = n_windows - start_idx
+                
+                if remaining < min_length:
+                    break
+                    
+                # Use up to max_length windows
+                chunk_size = min(remaining, max_length)
+                end_idx = start_idx + chunk_size
+                
+                superwindow_states = states[start_idx:end_idx]
+                superwindow_window_uids = window_uids[start_idx:end_idx]
+                
+                superwindow_record = {
+                    'superwindow_id': f"{track_id}_vsw{sw_num}",
+                    'original_track_id': track_id,
+                    'superwindow_number': sw_num,
+                    'state_sequence': superwindow_states,
+                    'window_uids': superwindow_window_uids,
+                    'n_windows': len(superwindow_states),
+                    'start_window': start_idx,
+                    'end_window': end_idx
+                }
+                superwindow_record.update(metadata)
+                superwindows.append(superwindow_record)
+                
+                length = len(superwindow_states)
+                length_distribution[length] = length_distribution.get(length, 0) + 1
+                sw_num += 1
+                start_idx = end_idx
+        else:
+            raise ValueError(f"Unknown strategy: {strategy}. Use 'whole_track', 'sliding', or 'chunked'")
+    
+    # Create dataframe
+    superwindow_df = pd.DataFrame(superwindows)
+    
+    # Handle empty result
+    if len(superwindow_df) == 0:
+        print(f"\n⚠️  No superwindows created!")
+        print(f"   All {tracks_too_short} tracks were shorter than {min_length} windows")
+        return pl.DataFrame() if return_polars else pd.DataFrame()
+    
+    # Print summary
+    n_original_tracks = df[unique_id_col].nunique()
+    n_superwindows = len(superwindow_df)
+    n_tracks_used = superwindow_df['original_track_id'].nunique()
+    
+    print(f"\n{'='*80}")
+    print(f"VARIABLE-LENGTH SUPERWINDOW CREATION")
+    print(f"{'='*80}")
+    print(f"Strategy: {strategy}")
+    print(f"Length range: {min_length} - {max_length} windows")
+    print(f"Original tracks: {n_original_tracks:,}")
+    print(f"Tracks too short (<{min_length} windows): {tracks_too_short:,}")
+    print(f"Tracks used: {n_tracks_used:,}")
+    print(f"Total superwindows created: {n_superwindows:,}")
+    print(f"Avg superwindows per track: {n_superwindows / n_tracks_used:.1f}")
+    
+    # Length distribution
+    print(f"\n📊 Superwindow length distribution:")
+    lengths = superwindow_df['n_windows']
+    print(f"   Min length: {lengths.min()} windows")
+    print(f"   Max length: {lengths.max()} windows")
+    print(f"   Mean length: {lengths.mean():.1f} windows")
+    print(f"   Median length: {lengths.median():.0f} windows")
+    
+    # Show detailed distribution
+    print(f"\n   Length counts:")
+    for length in sorted(length_distribution.keys()):
+        count = length_distribution[length]
+        pct = count / n_superwindows * 100
+        bar = '█' * int(pct / 2)
+        print(f"   {length:3d} windows: {count:5,} ({pct:5.1f}%) {bar}")
+    
+    print(f"{'='*80}\n")
+    
+    # Convert back to polars if needed
+    if return_polars:
+        # Build the dataframe in Polars-native way to preserve List types
+        # This allows native Polars operations like explode() on window_uids
+        
+        # Separate list columns from scalar columns
+        list_cols = ['state_sequence', 'window_uids']
+        scalar_cols = [c for c in superwindow_df.columns if c not in list_cols]
+        
+        # Convert scalar columns via pandas
+        scalar_df = pl.from_pandas(superwindow_df[scalar_cols])
+        
+        # Add list columns as proper Polars List types
+        superwindow_df = scalar_df.with_columns([
+            pl.Series('state_sequence', superwindow_df['state_sequence'].tolist(), dtype=pl.List(pl.Utf8)),
+            pl.Series('window_uids', superwindow_df['window_uids'].tolist(), dtype=pl.List(pl.Utf8)),
+        ])
+    
+    return superwindow_df
+
+
 def calculate_between_molecule_similarity(
     sequence_df,
     molecule_col='mol',
