@@ -5832,19 +5832,20 @@ def create_fixed_length_superwindows(
     
     # Convert back to polars if needed
     if return_polars:
-        superwindow_df = pl.from_pandas(superwindow_df)
+        # Build the dataframe in Polars-native way to preserve List types
+        # This allows native Polars operations like explode() on window_uids
         
-        # IMPORTANT: Ensure state_sequence and window_uids are Python lists, not Polars lists
-        # This ensures compatibility with downstream analysis functions
-        superwindow_df = superwindow_df.with_columns([
-            pl.col('state_sequence').map_elements(
-                lambda x: list(x) if x is not None else None,
-                return_dtype=pl.Object
-            ),
-            pl.col('window_uids').map_elements(
-                lambda x: list(x) if x is not None else None,
-                return_dtype=pl.Object
-            )
+        # Separate list columns from scalar columns
+        list_cols = ['state_sequence', 'window_uids']
+        scalar_cols = [c for c in superwindow_df.columns if c not in list_cols]
+        
+        # Convert scalar columns via pandas
+        scalar_df = pl.from_pandas(superwindow_df[scalar_cols])
+        
+        # Add list columns as proper Polars List types
+        superwindow_df = scalar_df.with_columns([
+            pl.Series('state_sequence', superwindow_df['state_sequence'].tolist(), dtype=pl.List(pl.Utf8)),
+            pl.Series('window_uids', superwindow_df['window_uids'].tolist(), dtype=pl.List(pl.Utf8)),
         ])
     
     return superwindow_df
