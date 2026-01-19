@@ -15709,3 +15709,476 @@ def plot_transition_probabilities_stacked(
     return fig, axes
 
 
+def plot_embedding_2d(
+    coords,
+    labels=None,
+    labels_name=None,
+    embedding_type="Embedding",
+    colors_map=None,
+    palette="colorblind",
+    noise_color='#AAAAAA',
+    figsize=(10, 8),
+    s=2,
+    alpha=0.5,
+    marker_scale=8,
+    show_legend=True,
+    legend_loc='best',
+    equal_aspect=True,
+    title=None,
+    xlabel=None,
+    ylabel=None,
+    font_size=12,
+    title_font_size=14,
+    save_path=None,
+    save_filename=None,
+    export_format='png',
+    dpi=200,
+    transparent_background=False,
+    show_plot=True,
+    ax=None
+):
+    """
+    Universal 2D embedding plot for UMAP, PHATE, PCA, or any 2D coordinates.
+    
+    This function provides a flexible way to visualize 2D embeddings with categorical
+    coloring, supporting various metadata fields and clustering results.
+    
+    Parameters
+    ----------
+    coords : np.ndarray
+        2D array of shape (n_points, 2) containing embedding coordinates.
+        Can be from UMAP, PHATE, PCA, or any other dimensionality reduction.
+    labels : array-like, optional
+        Labels for coloring points. Can be:
+        - Categorical labels (strings or integers)
+        - Cluster labels (including -1 for noise in HDBSCAN)
+        - Any metadata field values
+        If None, all points are plotted in a single color.
+    labels_name : str, optional
+        Name of the labels for legend title and filename. If None, uses 'Category'.
+    embedding_type : str, default='Embedding'
+        Type of embedding for axis labels and title. Examples: 'UMAP', 'PHATE', 'PCA', 'Raw'.
+    colors_map : dict, optional
+        Custom color mapping {label_value: color}. If None, colors are auto-generated
+        from the palette. Useful for consistent coloring across multiple plots.
+    palette : str or list, default='colorblind'
+        Color palette for auto-generating colors:
+        - 'colorblind': Wong 2011 colorblind-friendly palette (10 colors)
+        - str: Any seaborn/matplotlib palette name ('Dark2', 'Set2', etc.)
+        - list: Custom list of colors (hex codes, named colors, RGB tuples)
+    noise_color : str, default='#AAAAAA'
+        Color for noise points (label=-1, common in HDBSCAN). Only used if
+        colors_map is None and -1 is in labels.
+    figsize : tuple, default=(10, 8)
+        Figure size (width, height) in inches.
+    s : float, default=2
+        Marker size for scatter points.
+    alpha : float, default=0.5
+        Transparency of markers (0-1).
+    marker_scale : float, default=8
+        Scale factor for markers in legend.
+    show_legend : bool, default=True
+        Whether to show legend.
+    legend_loc : str, default='best'
+        Legend location. Options: 'best', 'upper right', 'upper left', etc.
+    equal_aspect : bool, default=True
+        Whether to use equal aspect ratio for axes.
+    title : str, optional
+        Custom title. If None, auto-generates based on embedding_type and labels_name.
+    xlabel : str, optional
+        Custom x-axis label. If None, uses '{embedding_type} 1'.
+    ylabel : str, optional
+        Custom y-axis label. If None, uses '{embedding_type} 2'.
+    font_size : int, default=12
+        Font size for axis labels and legend.
+    title_font_size : int, default=14
+        Font size for title.
+    save_path : str, optional
+        Directory to save the figure. If None, figure is not saved.
+    save_filename : str, optional
+        Custom filename (without extension). If None, auto-generates based on
+        embedding_type and labels_name.
+    export_format : str, default='png'
+        Export format ('png', 'svg', 'pdf').
+    dpi : int, default=200
+        Resolution for raster formats.
+    transparent_background : bool, default=False
+        Whether to use transparent background.
+    show_plot : bool, default=True
+        Whether to display the plot.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes to plot on. If None, creates new figure and axes.
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object (None if ax was provided).
+    ax : matplotlib.axes.Axes
+        The axes object with the plot.
+    colors_map : dict
+        The color mapping used (useful for maintaining consistent colors).
+        
+    Examples
+    --------
+    Basic usage with UMAP coordinates:
+    
+    >>> fig, ax, colors = plot_embedding_2d(
+    ...     umap_coords, 
+    ...     labels=molecule_labels,
+    ...     labels_name='mol',
+    ...     embedding_type='UMAP'
+    ... )
+    
+    With custom colors and cluster labels:
+    
+    >>> custom_colors = {'cluster_0': '#FF0000', 'cluster_1': '#00FF00'}
+    >>> fig, ax, _ = plot_embedding_2d(
+    ...     phate_coords,
+    ...     labels=cluster_labels,
+    ...     labels_name='HDBSCAN',
+    ...     embedding_type='PHATE',
+    ...     colors_map=custom_colors
+    ... )
+    
+    Using existing axes (for subplots):
+    
+    >>> fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    >>> _, ax1, _ = plot_embedding_2d(coords, labels1, ax=axes[0])
+    >>> _, ax2, _ = plot_embedding_2d(coords, labels2, ax=axes[1])
+    
+    Notes
+    -----
+    - For HDBSCAN clustering results, noise points (label=-1) are automatically
+      colored grey unless a custom colors_map is provided.
+    - The function returns the colors_map used, which can be passed to subsequent
+      calls to ensure consistent coloring across multiple plots.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Validate coords
+    coords = np.asarray(coords)
+    if coords.ndim != 2 or coords.shape[1] != 2:
+        raise ValueError(f"coords must be shape (n_points, 2), got {coords.shape}")
+    
+    n_points = len(coords)
+    
+    # Create figure if ax not provided
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        created_fig = True
+    else:
+        fig = ax.get_figure()
+    
+    # Handle no labels case - plot all points in single color
+    if labels is None:
+        ax.scatter(
+            coords[:, 0], 
+            coords[:, 1],
+            c=_process_palette(palette, 1)[0],
+            s=s, 
+            alpha=alpha
+        )
+        colors_map_out = None
+    else:
+        labels = np.asarray(labels)
+        if len(labels) != n_points:
+            raise ValueError(f"labels length ({len(labels)}) must match coords length ({n_points})")
+        
+        # Get unique values and sort (with -1 first if present for clustering)
+        unique_vals = sorted(np.unique(labels), key=lambda x: (x != -1, x))
+        n_unique = len(unique_vals)
+        
+        # Generate or use provided colors_map
+        if colors_map is None:
+            colors_map_out = {}
+            color_idx = 0
+            palette_colors = _process_palette(palette, n_unique)
+            
+            for val in unique_vals:
+                if val == -1:
+                    # Noise points get special color
+                    colors_map_out[val] = noise_color
+                else:
+                    colors_map_out[val] = palette_colors[color_idx]
+                    color_idx += 1
+        else:
+            # Use provided colors_map, fill in missing values
+            colors_map_out = colors_map.copy()
+            missing_vals = [v for v in unique_vals if v not in colors_map_out]
+            if missing_vals:
+                palette_colors = _process_palette(palette, len(missing_vals))
+                for i, val in enumerate(missing_vals):
+                    if val == -1:
+                        colors_map_out[val] = noise_color
+                    else:
+                        colors_map_out[val] = palette_colors[i]
+        
+        # Plot each category
+        for val in unique_vals:
+            mask = labels == val
+            count = np.sum(mask)
+            
+            # Generate label string
+            if val == -1:
+                label_str = f'Noise ({count:,})'
+            elif labels_name and labels_name.lower() in ['kmeans', 'hdbscan', 'cluster', 'clusters']:
+                label_str = f'Cluster {val} ({count:,})'
+            else:
+                label_str = f'{val} ({count:,})'
+            
+            ax.scatter(
+                coords[mask, 0], 
+                coords[mask, 1],
+                c=[colors_map_out[val]],
+                s=s, 
+                alpha=alpha, 
+                label=label_str
+            )
+    
+    # Set labels
+    xlabel_text = xlabel if xlabel else f'{embedding_type} 1'
+    ylabel_text = ylabel if ylabel else f'{embedding_type} 2'
+    ax.set_xlabel(xlabel_text, fontsize=font_size)
+    ax.set_ylabel(ylabel_text, fontsize=font_size)
+    
+    # Set title
+    if title:
+        ax.set_title(title, fontsize=title_font_size, fontweight='bold')
+    elif labels is not None and labels_name:
+        ax.set_title(
+            f'{embedding_type} - colored by {labels_name}\n({n_points:,} points)', 
+            fontsize=title_font_size, 
+            fontweight='bold'
+        )
+    else:
+        ax.set_title(
+            f'{embedding_type}\n({n_points:,} points)', 
+            fontsize=title_font_size, 
+            fontweight='bold'
+        )
+    
+    # Legend
+    if show_legend and labels is not None:
+        legend_title = labels_name if labels_name else 'Category'
+        ax.legend(
+            markerscale=marker_scale, 
+            fontsize=font_size - 2, 
+            loc=legend_loc, 
+            title=legend_title
+        )
+    
+    # Aspect ratio
+    if equal_aspect:
+        ax.set_aspect('equal')
+    
+    # Background transparency
+    if transparent_background and created_fig:
+        fig.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
+    
+    plt.tight_layout()
+    
+    # Save
+    if save_path:
+        if save_filename:
+            filename = f"{save_filename}.{export_format}"
+        else:
+            suffix = f"_by_{labels_name}" if labels_name else ""
+            filename = f"{embedding_type.lower()}{suffix}.{export_format}"
+        
+        full_path = os.path.join(save_path, filename)
+        fig.savefig(full_path, dpi=dpi, bbox_inches='tight', 
+                   transparent=transparent_background, facecolor='white' if not transparent_background else 'none')
+        print(f"💾 Saved: {full_path}")
+    
+    if show_plot:
+        plt.show()
+    
+    return fig if created_fig else None, ax, colors_map_out if labels is not None else None
+
+
+def plot_embedding_2d_multi(
+    coords,
+    labels_dict,
+    embedding_type="Embedding",
+    colors_maps=None,
+    palette="colorblind",
+    noise_color='#AAAAAA',
+    figsize=None,
+    ncols=3,
+    s=2,
+    alpha=0.5,
+    marker_scale=6,
+    show_legend=True,
+    equal_aspect=True,
+    font_size=10,
+    title_font_size=12,
+    save_path=None,
+    save_filename=None,
+    export_format='png',
+    dpi=200,
+    transparent_background=False,
+    show_plot=True
+):
+    """
+    Plot multiple 2D embeddings colored by different metadata fields in a grid.
+    
+    Convenience function for quickly comparing how different metadata fields
+    appear in the same embedding space.
+    
+    Parameters
+    ----------
+    coords : np.ndarray
+        2D array of shape (n_points, 2) containing embedding coordinates.
+    labels_dict : dict
+        Dictionary mapping label names to label arrays.
+        Example: {'mol': mol_labels, 'cell': cell_labels, 'kmeans': cluster_labels}
+    embedding_type : str, default='Embedding'
+        Type of embedding for axis labels ('UMAP', 'PHATE', 'PCA', etc.)
+    colors_maps : dict of dicts, optional
+        Dictionary mapping label names to color maps.
+        Example: {'mol': {'A': '#FF0000', 'B': '#00FF00'}}
+    palette : str or list, default='colorblind'
+        Default color palette for auto-generating colors.
+    noise_color : str, default='#AAAAAA'
+        Color for noise points (label=-1).
+    figsize : tuple, optional
+        Figure size. If None, auto-calculated based on number of plots.
+    ncols : int, default=3
+        Number of columns in grid.
+    s : float, default=2
+        Marker size.
+    alpha : float, default=0.5
+        Marker transparency.
+    marker_scale : float, default=6
+        Scale factor for markers in legend.
+    show_legend : bool, default=True
+        Whether to show legends.
+    equal_aspect : bool, default=True
+        Whether to use equal aspect ratio.
+    font_size : int, default=10
+        Font size for labels.
+    title_font_size : int, default=12
+        Font size for subplot titles.
+    save_path : str, optional
+        Directory to save the figure.
+    save_filename : str, optional
+        Custom filename (without extension).
+    export_format : str, default='png'
+        Export format.
+    dpi : int, default=200
+        Resolution for raster formats.
+    transparent_background : bool, default=False
+        Whether to use transparent background.
+    show_plot : bool, default=True
+        Whether to display the plot.
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object.
+    axes : np.ndarray
+        Array of axes objects.
+    all_colors_maps : dict
+        Dictionary of all color maps used {label_name: colors_map}.
+        
+    Examples
+    --------
+    >>> labels = {
+    ...     'mol': mol_labels,
+    ...     'cell': cell_labels,
+    ...     'geno': geno_labels,
+    ...     'kmeans': kmeans_labels
+    ... }
+    >>> fig, axes, colors = plot_embedding_2d_multi(
+    ...     umap_coords,
+    ...     labels,
+    ...     embedding_type='UMAP'
+    ... )
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    n_plots = len(labels_dict)
+    nrows = int(np.ceil(n_plots / ncols))
+    
+    # Auto-calculate figsize if not provided
+    if figsize is None:
+        figsize = (ncols * 5, nrows * 4)
+    
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+    axes_flat = axes.flatten()
+    
+    # Initialize colors_maps if not provided
+    if colors_maps is None:
+        colors_maps = {}
+    
+    all_colors_maps = {}
+    
+    for i, (label_name, labels) in enumerate(labels_dict.items()):
+        ax = axes_flat[i]
+        
+        # Get colors_map for this label if provided
+        cmap = colors_maps.get(label_name, None)
+        
+        _, _, colors_map_out = plot_embedding_2d(
+            coords=coords,
+            labels=labels,
+            labels_name=label_name,
+            embedding_type=embedding_type,
+            colors_map=cmap,
+            palette=palette,
+            noise_color=noise_color,
+            s=s,
+            alpha=alpha,
+            marker_scale=marker_scale,
+            show_legend=show_legend,
+            equal_aspect=equal_aspect,
+            font_size=font_size,
+            title_font_size=title_font_size,
+            ax=ax,
+            show_plot=False
+        )
+        
+        all_colors_maps[label_name] = colors_map_out
+    
+    # Hide unused subplots
+    for j in range(i + 1, len(axes_flat)):
+        axes_flat[j].axis('off')
+    
+    # Suptitle
+    fig.suptitle(
+        f'{embedding_type} Embedding - Multiple Colorings\n({len(coords):,} points)',
+        fontsize=title_font_size + 2,
+        fontweight='bold',
+        y=1.02
+    )
+    
+    # Background transparency
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        for ax in axes_flat:
+            ax.patch.set_alpha(0)
+    
+    plt.tight_layout()
+    
+    # Save
+    if save_path:
+        if save_filename:
+            filename = f"{save_filename}.{export_format}"
+        else:
+            filename = f"{embedding_type.lower()}_multi_coloring.{export_format}"
+        
+        full_path = os.path.join(save_path, filename)
+        fig.savefig(full_path, dpi=dpi, bbox_inches='tight', 
+                   transparent=transparent_background, facecolor='white' if not transparent_background else 'none')
+        print(f"💾 Saved: {full_path}")
+    
+    if show_plot:
+        plt.show()
+    
+    return fig, axes, all_colors_maps
+
+

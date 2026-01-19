@@ -7701,3 +7701,843 @@ def filter_tracks_by_min_windows(
         return filtered_windowed, filtered_instant, report
     else:
         return filtered_windowed, report
+
+
+# =============================================================================
+# AUGMENTATION EXPLORATION AND VISUALIZATION FUNCTIONS
+# =============================================================================
+
+def explore_augmentation_parameters(
+    instant_df,
+    output_folder=None,
+    sample_size=100000,
+    seed=42,
+    augmentation_strength=None,
+    augmentation_type=None
+):
+    """
+    Explore data distributions to determine appropriate augmentation parameters.
+    
+    Analyzes displacement distributions (dx, dy) from trajectory data and provides
+    recommendations for noise and scale augmentation values based on the data
+    characteristics.
+    
+    Parameters
+    ----------
+    instant_df : pl.DataFrame or pd.DataFrame
+        DataFrame containing trajectory data with 'x_um' and 'y_um' columns
+    output_folder : str or Path, optional
+        Folder to save the SVG plot. If None, plot is only displayed
+    sample_size : int, default=100000
+        Number of data points to sample for analysis
+    seed : int, default=42
+        Random seed for reproducibility
+    augmentation_strength : float, optional
+        Current augmentation strength for display in recommendations
+    augmentation_type : str, optional
+        Current augmentation type for display in recommendations
+        
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - 'dx_std': Standard deviation of dx
+        - 'dy_std': Standard deviation of dy
+        - 'typical_displacement': Median displacement magnitude
+        - 'recommended_noise_conservative': Conservative noise value
+        - 'recommended_noise_moderate': Moderate noise value
+        - 'recommended_noise_aggressive': Aggressive noise value
+        
+    Examples
+    --------
+    >>> results = explore_augmentation_parameters(instant_df, output_folder="./plots")
+    >>> print(f"Recommended moderate noise: {results['recommended_noise_moderate']:.4f}")
+    """
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+    
+    # Handle Polars vs Pandas
+    is_polars = isinstance(instant_df, pl.DataFrame)
+    
+    # Sample the data
+    n_rows = len(instant_df)
+    sample_n = min(sample_size, n_rows)
+    
+    if is_polars:
+        sample_df = instant_df.sample(n=sample_n, seed=seed)
+        x_vals = sample_df['x_um'].to_numpy()
+        y_vals = sample_df['y_um'].to_numpy()
+    else:
+        sample_df = instant_df.sample(n=sample_n, random_state=seed)
+        x_vals = sample_df['x_um'].to_numpy()
+        y_vals = sample_df['y_um'].to_numpy()
+    
+    # Calculate displacements (approximate - not perfect but gives distribution)
+    dx = np.diff(x_vals)
+    dy = np.diff(y_vals)
+    
+    # Remove outliers for cleaner visualization
+    dx_clean = dx[np.abs(dx) < np.percentile(np.abs(dx), 99)]
+    dy_clean = dy[np.abs(dy) < np.percentile(np.abs(dy), 99)]
+    
+    # Calculate statistics
+    displacements = np.sqrt(dx_clean**2 + dy_clean**2)
+    typical_displacement = np.median(displacements)
+    
+    print(f"\n📈 Displacement Statistics (dx, dy in µm):")
+    print(f"   dx: mean={np.mean(dx_clean):.6f}, std={np.std(dx_clean):.6f}")
+    print(f"   dy: mean={np.mean(dy_clean):.6f}, std={np.std(dy_clean):.6f}")
+    print(f"   |displacement|: mean={np.mean(displacements):.6f}")
+    print(f"")
+    print(f"   Percentiles (|displacement|):")
+    for p in [25, 50, 75, 90, 95, 99]:
+        print(f"      {p}th: {np.percentile(displacements, p):.6f} µm")
+    
+    # Calculate recommended values
+    recommended_noise = np.std(dx_clean) * 0.1  # 10% of std
+    recommended_scale = 0.1  # 10% scaling
+    
+    # Visualization
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+    
+    # Row 1: Data distributions
+    ax1 = axes[0, 0]
+    ax1.hist(dx_clean, bins=100, alpha=0.7, color='blue', label='dx')
+    ax1.hist(dy_clean, bins=100, alpha=0.7, color='red', label='dy')
+    ax1.axvline(0, color='black', linestyle='--')
+    ax1.set_xlabel('Displacement (µm)')
+    ax1.set_ylabel('Count')
+    ax1.set_title('Displacement Distribution')
+    ax1.legend()
+    
+    ax2 = axes[0, 1]
+    ax2.hist(displacements, bins=100, alpha=0.7, color='green')
+    ax2.axvline(np.median(displacements), color='red', linestyle='--', 
+                label=f'Median: {np.median(displacements):.4f}')
+    ax2.set_xlabel('|Displacement| (µm)')
+    ax2.set_ylabel('Count')
+    ax2.set_title('Step Size Distribution')
+    ax2.legend()
+    
+    ax3 = axes[0, 2]
+    ax3.scatter(dx_clean[::100], dy_clean[::100], alpha=0.3, s=1)
+    ax3.set_xlabel('dx (µm)')
+    ax3.set_ylabel('dy (µm)')
+    ax3.set_title('dx vs dy')
+    ax3.axis('equal')
+    
+    # Row 2: Augmentation effects
+    noise_levels = [0.01, 0.012, 0.015, 0.02, 0.1]
+    ax4 = axes[1, 0]
+    for noise in noise_levels:
+        noisy = dx_clean + noise * np.random.randn(len(dx_clean))
+        ax4.hist(noisy, bins=50, alpha=0.3, label=f'noise={noise}')
+    ax4.hist(dx_clean, bins=50, alpha=0.5, color='black', label='original')
+    ax4.set_xlabel('dx (µm)')
+    ax4.set_title('Effect of Noise Augmentation on dx')
+    ax4.legend(fontsize=8)
+    
+    # Test different scale levels
+    scale_levels = [0.05, 0.1, 0.2, 0.3, 0.5]
+    ax5 = axes[1, 1]
+    for scale in scale_levels:
+        scale_factor = 1.0 + (np.random.rand() * 2 - 1) * scale
+        scaled = dx_clean * scale_factor
+        ax5.hist(scaled, bins=50, alpha=0.3, label=f'scale={scale} (factor={scale_factor:.2f})')
+    ax5.hist(dx_clean, bins=50, alpha=0.5, color='black', label='original')
+    ax5.set_xlabel('dx (µm)')
+    ax5.set_title('Effect of Scale Augmentation on dx')
+    ax5.legend(fontsize=8)
+    
+    # Recommendations
+    ax6 = axes[1, 2]
+    ax6.axis('off')
+    
+    # Build recommendation text
+    aug_str_text = f"• AUGMENTATION_STRENGTH = {augmentation_strength}" if augmentation_strength else "• AUGMENTATION_STRENGTH = (not set)"
+    aug_type_text = f"• AUGMENTATION_TYPE = '{augmentation_type}'" if augmentation_type else "• AUGMENTATION_TYPE = (not set)"
+    
+    text = f"""
+    📋 RECOMMENDED AUGMENTATION VALUES
+    
+    Based on your data:
+    • Typical step size: {typical_displacement:.4f} µm
+    • dx std: {np.std(dx_clean):.4f} µm
+    
+    NOISE AUGMENTATION:
+    • Conservative: {recommended_noise/2:.4f}
+    • Moderate: {recommended_noise:.4f}
+    • Aggressive: {recommended_noise*2:.4f}
+    
+    SCALE AUGMENTATION:
+    • Conservative: 0.05 (±5%)
+    • Moderate: 0.10 (±10%)
+    • Aggressive: 0.20 (±20%)
+    
+    Current settings:
+    {aug_str_text}
+    {aug_type_text}
+    """
+    ax6.text(0.1, 0.5, text, transform=ax6.transAxes, fontsize=10, 
+             verticalalignment='center', fontfamily='monospace',
+             bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.5))
+    
+    plt.tight_layout()
+    
+    # Save if output folder specified
+    if output_folder is not None:
+        output_folder = Path(output_folder)
+        output_folder.mkdir(parents=True, exist_ok=True)
+        svg_path = output_folder / "augmentation_data_exploration.svg"
+        
+        # Set figure background transparent, but keep axes elements visible
+        fig.patch.set_facecolor('none')
+        for ax in axes.flat:
+            ax.set_facecolor('none')
+            for spine in ax.spines.values():
+                spine.set_edgecolor('black')
+                spine.set_linewidth(0.8)
+            ax.tick_params(colors='black')
+            ax.xaxis.label.set_color('black')
+            ax.yaxis.label.set_color('black')
+            ax.title.set_color('black')
+        fig.savefig(svg_path, format='svg', transparent=True, bbox_inches='tight')
+        print(f"💾 Saved: {svg_path}")
+    
+    plt.show()
+    
+    # Print copy-paste ready values
+    print(f"\n" + "="*60)
+    print("📋 COPY-PASTE READY VALUES FOR CONFIG:")
+    print("="*60)
+    print(f"# Conservative (subtle augmentation)")
+    print(f"AUGMENTATION_STRENGTH = {recommended_noise/2:.4f}")
+    print(f"")
+    print(f"# Moderate (recommended starting point)")
+    print(f"AUGMENTATION_STRENGTH = {recommended_noise:.4f}")
+    print(f"")
+    print(f"# Aggressive (more variation)")
+    print(f"AUGMENTATION_STRENGTH = {recommended_noise*2:.4f}")
+    print("="*60)
+    
+    return {
+        'dx_std': np.std(dx_clean),
+        'dy_std': np.std(dy_clean),
+        'typical_displacement': typical_displacement,
+        'recommended_noise_conservative': recommended_noise / 2,
+        'recommended_noise_moderate': recommended_noise,
+        'recommended_noise_aggressive': recommended_noise * 2
+    }
+
+
+def visualize_augmentation_on_tracks(
+    instant_df,
+    output_folder=None,
+    noise_levels=None,
+    scale_levels=None,
+    n_example_tracks=5,
+    max_frames=100,
+    seed=42
+):
+    """
+    Visualize noise and scale augmentation effects on example trajectories.
+    
+    Takes sample trajectories from the data and shows how different augmentation
+    parameters affect them visually, helping to choose appropriate values.
+    
+    Parameters
+    ----------
+    instant_df : pl.DataFrame or pd.DataFrame
+        DataFrame containing trajectory data with 'x_um', 'y_um', 'unique_id', 
+        and 'frame' columns
+    output_folder : str or Path, optional
+        Folder to save the SVG plots. If None, plots are only displayed
+    noise_levels : list of float, optional
+        List of noise levels to test. Default: [0.01, 0.012, 0.015, 0.02, 0.1]
+    scale_levels : list of float, optional
+        List of scale levels to test. Default: [0.05, 0.1, 0.2, 0.3, 0.4]
+    n_example_tracks : int, default=5
+        Number of example tracks to show
+    max_frames : int, default=100
+        Maximum number of frames per track to display
+    seed : int, default=42
+        Random seed for reproducibility
+        
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - 'n_tracks_visualized': Number of tracks shown
+        - 'noise_levels_tested': List of noise levels tested
+        - 'scale_levels_tested': List of scale levels tested
+        
+    Examples
+    --------
+    >>> results = visualize_augmentation_on_tracks(
+    ...     instant_df, 
+    ...     output_folder="./plots",
+    ...     noise_levels=[0.01, 0.05, 0.1],
+    ...     n_example_tracks=3
+    ... )
+    """
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+    
+    # Default values
+    if noise_levels is None:
+        noise_levels = [0.01, 0.012, 0.015, 0.02, 0.1]
+    if scale_levels is None:
+        scale_levels = [0.05, 0.1, 0.2, 0.3, 0.4]
+    
+    # Colorblind-friendly palette (Wong palette)
+    CB_BLUE = '#0072B2'
+    CB_ORANGE = '#E69F00'
+    
+    # Handle Polars vs Pandas
+    is_polars = isinstance(instant_df, pl.DataFrame)
+    
+    # Get tracks with enough frames
+    if is_polars:
+        track_lengths = instant_df.group_by('unique_id').agg(pl.len().alias('n_frames'))
+        long_tracks = track_lengths.filter(pl.col('n_frames') >= max_frames)['unique_id'].to_list()
+    else:
+        track_lengths = instant_df.groupby('unique_id').size()
+        long_tracks = track_lengths[track_lengths >= max_frames].index.tolist()
+    
+    if len(long_tracks) == 0:
+        print(f"⚠️ No tracks with at least {max_frames} frames found!")
+        return {'n_tracks_visualized': 0, 'noise_levels_tested': noise_levels, 'scale_levels_tested': scale_levels}
+    
+    # Sample tracks
+    np.random.seed(seed)
+    example_tracks = np.random.choice(long_tracks, min(n_example_tracks, len(long_tracks)), replace=False)
+    
+    print(f"📊 Visualizing augmentation on {len(example_tracks)} example tracks...")
+    
+    # ==========================================================================
+    # NOISE AUGMENTATION COMPARISON
+    # ==========================================================================
+    fig, axes = plt.subplots(len(example_tracks), len(noise_levels) + 1, 
+                              figsize=(4 * (len(noise_levels) + 1), 4 * len(example_tracks)))
+    
+    if len(example_tracks) == 1:
+        axes = axes.reshape(1, -1)
+    
+    fig.suptitle('NOISE AUGMENTATION: Original vs Augmented Trajectories', fontsize=14, fontweight='bold')
+    
+    for row, track_id in enumerate(example_tracks):
+        # Get track data
+        if is_polars:
+            track_data = instant_df.filter(pl.col('unique_id') == track_id).sort('frame')
+            x = track_data['x_um'].to_numpy()
+            y = track_data['y_um'].to_numpy()
+        else:
+            track_data = instant_df[instant_df['unique_id'] == track_id].sort_values('frame')
+            x = track_data['x_um'].to_numpy()
+            y = track_data['y_um'].to_numpy()
+        
+        # Take first max_frames for clarity
+        x = x[:max_frames]
+        y = y[:max_frames]
+        
+        # Compute features (dx, dy)
+        dx = np.diff(x, prepend=x[0])
+        dy = np.diff(y, prepend=y[0])
+        
+        # Original trajectory
+        ax = axes[row, 0]
+        ax.plot(x, y, color=CB_BLUE, linewidth=1.5, alpha=0.9)
+        ax.set_title(f'Original\n(Track {row+1})', fontweight='bold')
+        ax.set_xlabel('x (µm)')
+        ax.set_ylabel('y (µm)')
+        ax.axis('equal')
+        
+        # Augmented trajectories
+        for col, noise in enumerate(noise_levels):
+            ax = axes[row, col + 1]
+            
+            # Add noise to dx, dy
+            dx_noisy = dx + noise * np.random.randn(len(dx))
+            dy_noisy = dy + noise * np.random.randn(len(dy))
+            
+            # Reconstruct trajectory from noisy displacements
+            x_noisy = np.cumsum(dx_noisy)
+            y_noisy = np.cumsum(dy_noisy)
+            
+            # Align to original start
+            x_noisy = x_noisy - x_noisy[0] + x[0]
+            y_noisy = y_noisy - y_noisy[0] + y[0]
+            
+            # Plot
+            ax.plot(x, y, color=CB_BLUE, linewidth=1, alpha=0.4, label='Original')
+            ax.plot(x_noisy, y_noisy, color=CB_ORANGE, linewidth=1.5, alpha=0.9, label='Augmented')
+            
+            # Calculate deviation
+            deviation = np.mean(np.sqrt((x - x_noisy)**2 + (y - y_noisy)**2))
+            
+            ax.set_title(f'Noise={noise}\nDeviation={deviation:.3f}µm', fontweight='bold')
+            ax.set_xlabel('x (µm)')
+            ax.axis('equal')
+            if row == 0 and col == 0:
+                ax.legend(fontsize=8)
+    
+    plt.tight_layout()
+    
+    # Save if output folder specified
+    if output_folder is not None:
+        output_folder = Path(output_folder)
+        output_folder.mkdir(parents=True, exist_ok=True)
+        svg_path = output_folder / "noise_augmentation_tracks.svg"
+        
+        fig.patch.set_facecolor('none')
+        for ax_row in axes:
+            for ax in ax_row:
+                ax.set_facecolor('none')
+                for spine in ax.spines.values():
+                    spine.set_edgecolor('black')
+                    spine.set_linewidth(0.8)
+                ax.tick_params(colors='black')
+                ax.xaxis.label.set_color('black')
+                ax.yaxis.label.set_color('black')
+                ax.title.set_color('black')
+        fig.savefig(svg_path, format='svg', transparent=True, bbox_inches='tight')
+        print(f"💾 Saved: {svg_path}")
+    
+    plt.show()
+    
+    # ==========================================================================
+    # SCALE AUGMENTATION COMPARISON
+    # ==========================================================================
+    fig, axes = plt.subplots(len(example_tracks), len(scale_levels) + 1, 
+                              figsize=(4 * (len(scale_levels) + 1), 4 * len(example_tracks)))
+    
+    if len(example_tracks) == 1:
+        axes = axes.reshape(1, -1)
+    
+    fig.suptitle('SCALE AUGMENTATION: Original vs Augmented Trajectories', fontsize=14, fontweight='bold')
+    
+    for row, track_id in enumerate(example_tracks):
+        # Get track data
+        if is_polars:
+            track_data = instant_df.filter(pl.col('unique_id') == track_id).sort('frame')
+            x = track_data['x_um'].to_numpy()
+            y = track_data['y_um'].to_numpy()
+        else:
+            track_data = instant_df[instant_df['unique_id'] == track_id].sort_values('frame')
+            x = track_data['x_um'].to_numpy()
+            y = track_data['y_um'].to_numpy()
+        
+        # Take first max_frames
+        x = x[:max_frames]
+        y = y[:max_frames]
+        
+        # Compute features (dx, dy)
+        dx = np.diff(x, prepend=x[0])
+        dy = np.diff(y, prepend=y[0])
+        
+        # Original
+        ax = axes[row, 0]
+        ax.plot(x, y, color=CB_BLUE, linewidth=1.5, alpha=0.9)
+        ax.set_title(f'Original\n(Track {row+1})', fontweight='bold')
+        ax.set_xlabel('x (µm)')
+        ax.set_ylabel('y (µm)')
+        ax.axis('equal')
+        
+        # Scaled trajectories
+        for col, scale in enumerate(scale_levels):
+            ax = axes[row, col + 1]
+            
+            # Random scale factor
+            scale_factor = 1.0 + (np.random.rand() * 2 - 1) * scale
+            
+            # Scale dx, dy
+            dx_scaled = dx * scale_factor
+            dy_scaled = dy * scale_factor
+            
+            # Reconstruct
+            x_scaled = np.cumsum(dx_scaled)
+            y_scaled = np.cumsum(dy_scaled)
+            x_scaled = x_scaled - x_scaled[0] + x[0]
+            y_scaled = y_scaled - y_scaled[0] + y[0]
+            
+            # Plot
+            ax.plot(x, y, color=CB_BLUE, linewidth=1, alpha=0.4, label='Original')
+            ax.plot(x_scaled, y_scaled, color=CB_ORANGE, linewidth=1.5, alpha=0.9, label='Augmented')
+            
+            ax.set_title(f'Scale={scale}\nFactor={scale_factor:.2f}', fontweight='bold')
+            ax.set_xlabel('x (µm)')
+            ax.axis('equal')
+            if row == 0 and col == 0:
+                ax.legend(fontsize=8)
+    
+    plt.tight_layout()
+    
+    # Save if output folder specified
+    if output_folder is not None:
+        svg_path = output_folder / "scale_augmentation_tracks.svg"
+        
+        fig.patch.set_facecolor('none')
+        for ax_row in axes:
+            for ax in ax_row:
+                ax.set_facecolor('none')
+                for spine in ax.spines.values():
+                    spine.set_edgecolor('black')
+                    spine.set_linewidth(0.8)
+                ax.tick_params(colors='black')
+                ax.xaxis.label.set_color('black')
+                ax.yaxis.label.set_color('black')
+                ax.title.set_color('black')
+        fig.savefig(svg_path, format='svg', transparent=True, bbox_inches='tight')
+        print(f"💾 Saved: {svg_path}")
+    
+    plt.show()
+    
+    # ==========================================================================
+    # SUMMARY
+    # ==========================================================================
+    print("\n" + "="*70)
+    print("📋 AUGMENTATION SUMMARY")
+    print("="*70)
+    print(f"""
+NOISE AUGMENTATION (adds Gaussian noise to dx, dy):
+  • Low (0.01-0.05): Subtle, almost invisible changes
+  • Medium (0.1-0.2): Noticeable but track shape preserved
+  • High (0.4+): Significant deviation, shape starts to blur
+  
+  Your choice of 0.4: This is quite aggressive! The model will learn
+  to be very robust to noise, but might lose fine motion details.
+  
+SCALE AUGMENTATION (multiplies dx, dy by random factor):
+  • Low (0.05): ±5% - subtle speed changes
+  • Medium (0.1-0.2): ±10-20% - noticeable but reasonable
+  • High (0.3+): Large speed variations
+  
+RECOMMENDATION for noise=0.4:
+  If your data is noisy (localization error), 0.4 might be appropriate.
+  If your data is clean, consider starting with 0.1-0.2 and increasing.
+  
+  You can also try AUGMENTATION_TYPE = 'combined' to use both!
+""")
+    print("="*70)
+    
+    return {
+        'n_tracks_visualized': len(example_tracks),
+        'noise_levels_tested': noise_levels,
+        'scale_levels_tested': scale_levels
+    }
+
+
+# =============================================================================
+# TENSORBOARD LAUNCH UTILITIES
+# =============================================================================
+
+def launch_tensorboard(logdir, port=6006, open_browser=True):
+    """
+    Launch TensorBoard, automatically killing any existing instance on the port.
+    
+    This function handles the full TensorBoard launch workflow:
+    1. Checks if the port is already in use
+    2. Kills any existing process on that port (Windows)
+    3. Launches TensorBoard in the background
+    4. Opens the browser to the TensorBoard URL
+    
+    Parameters
+    ----------
+    logdir : str or Path
+        Directory containing TensorBoard logs
+    port : int, default=6006
+        Port to run TensorBoard on
+    open_browser : bool, default=True
+        Whether to automatically open browser after launch
+        
+    Returns
+    -------
+    subprocess.Popen or None
+        The TensorBoard process object, or None if launch failed
+        
+    Examples
+    --------
+    >>> tb_process = launch_tensorboard("./tensorboard_logs")
+    ✅ TensorBoard launched (PID: 12345)
+       Log directory: ./tensorboard_logs
+       Opening http://localhost:6006 ...
+    
+    >>> # Custom port, no browser
+    >>> tb_process = launch_tensorboard("./logs", port=6007, open_browser=False)
+    """
+    import subprocess
+    import webbrowser
+    import time
+    import socket
+    
+    def is_port_in_use(port):
+        """Check if a port is currently in use"""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex(('localhost', port)) == 0
+    
+    def kill_process_on_port(port):
+        """Kill any process on the specified port (Windows)"""
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True,
+                text=True,
+                shell=True
+            )
+            
+            for line in result.stdout.split('\n'):
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.split()
+                    if parts:
+                        pid = parts[-1]
+                        try:
+                            subprocess.run(["taskkill", "/F", "/PID", pid], 
+                                           capture_output=True, shell=True)
+                            print(f"🔄 Killed existing process on port {port} (PID: {pid})")
+                        except:
+                            pass
+        except Exception as e:
+            print(f"   (Could not check for existing processes: {e})")
+    
+    # Step 1: Kill any existing process on this port
+    if is_port_in_use(port):
+        print(f"⚠️ Port {port} is in use, killing existing process...")
+        kill_process_on_port(port)
+        time.sleep(1)  # Wait for port to be released
+    
+    # Step 2: Launch TensorBoard
+    try:
+        # Use CREATE_NO_WINDOW on Windows to avoid console popup
+        creation_flags = 0
+        try:
+            creation_flags = subprocess.CREATE_NO_WINDOW
+        except AttributeError:
+            pass  # Not on Windows
+        
+        proc = subprocess.Popen(
+            ["tensorboard", "--logdir", str(logdir), "--port", str(port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creation_flags
+        )
+        print(f"✅ TensorBoard launched (PID: {proc.pid})")
+        print(f"   Log directory: {logdir}")
+        
+        # Step 3: Wait for server to start, then open browser
+        if open_browser:
+            time.sleep(2)
+            url = f"http://localhost:{port}"
+            print(f"   Opening {url} ...")
+            webbrowser.open(url)
+        else:
+            print(f"   URL: http://localhost:{port}")
+        
+        return proc
+        
+    except FileNotFoundError:
+        print(f"⚠️ TensorBoard not found. Install with: pip install tensorboard")
+        return None
+    except Exception as e:
+        print(f"⚠️ Could not launch TensorBoard: {e}")
+        print(f"   Run manually: tensorboard --logdir \"{logdir}\"")
+        return None
+
+
+# =============================================================================
+# SAMPLE DATASET CREATION FOR QUICK TESTING
+# =============================================================================
+
+def create_sample_dataset(
+    instant_df,
+    n_tracks_per_condition=50,
+    n_conditions=None,
+    min_track_length=100,
+    seed=42,
+    verbose=True
+):
+    """
+    Create a small sample dataset for quick training/testing iterations.
+    
+    Samples a small number of tracks per condition while maintaining the 
+    same data format as the original dataset. Useful for debugging training
+    pipelines before running on full data.
+    
+    Parameters
+    ----------
+    instant_df : pl.DataFrame or pd.DataFrame
+        Full trajectory dataframe with columns: unique_id, condition, frame, etc.
+    n_tracks_per_condition : int, default=50
+        Number of tracks to sample per condition
+    n_conditions : int, optional
+        Number of conditions to include. If None, includes all conditions.
+    min_track_length : int, default=100
+        Minimum track length to consider for sampling
+    seed : int, default=42
+        Random seed for reproducibility
+    verbose : bool, default=True
+        Whether to print sampling statistics
+        
+    Returns
+    -------
+    pl.DataFrame or pd.DataFrame
+        Sampled dataset in the same format as input
+        
+    Examples
+    --------
+    >>> # Create small sample for quick testing
+    >>> sample_df = create_sample_dataset(instant_df, n_tracks_per_condition=20)
+    >>> print(f"Sample size: {len(sample_df):,} points")
+    
+    >>> # Even smaller for debugging
+    >>> tiny_df = create_sample_dataset(instant_df, n_tracks_per_condition=10, n_conditions=2)
+    """
+    np.random.seed(seed)
+    
+    is_polars = isinstance(instant_df, pl.DataFrame)
+    
+    if verbose:
+        print(f"📊 Creating sample dataset...")
+        print(f"   Target: {n_tracks_per_condition} tracks per condition")
+        print(f"   Min track length: {min_track_length} frames")
+    
+    if is_polars:
+        # Get track info
+        track_info = instant_df.group_by("unique_id").agg([
+            pl.col("condition").first().alias("condition"),
+            pl.len().alias("n_frames")
+        ]).filter(pl.col("n_frames") >= min_track_length)
+        
+        # Get conditions
+        all_conditions = track_info["condition"].unique().to_list()
+        
+        if n_conditions is not None and n_conditions < len(all_conditions):
+            np.random.shuffle(all_conditions)
+            all_conditions = all_conditions[:n_conditions]
+            if verbose:
+                print(f"   Using {n_conditions} conditions: {all_conditions}")
+        
+        # Sample tracks per condition
+        sampled_track_ids = []
+        for condition in all_conditions:
+            condition_tracks = track_info.filter(
+                pl.col("condition") == condition
+            )["unique_id"].to_list()
+            
+            n_sample = min(n_tracks_per_condition, len(condition_tracks))
+            sampled = np.random.choice(condition_tracks, n_sample, replace=False)
+            sampled_track_ids.extend(sampled)
+            
+            if verbose:
+                print(f"   {condition}: {n_sample} tracks (of {len(condition_tracks)} available)")
+        
+        # Filter to sampled tracks
+        sample_df = instant_df.filter(pl.col("unique_id").is_in(sampled_track_ids))
+        
+    else:
+        # Pandas version
+        track_info = instant_df.groupby("unique_id").agg({
+            "condition": "first",
+            "frame": "count"
+        }).reset_index()
+        track_info.columns = ["unique_id", "condition", "n_frames"]
+        track_info = track_info[track_info["n_frames"] >= min_track_length]
+        
+        all_conditions = track_info["condition"].unique().tolist()
+        
+        if n_conditions is not None and n_conditions < len(all_conditions):
+            np.random.shuffle(all_conditions)
+            all_conditions = all_conditions[:n_conditions]
+            if verbose:
+                print(f"   Using {n_conditions} conditions: {all_conditions}")
+        
+        sampled_track_ids = []
+        for condition in all_conditions:
+            condition_tracks = track_info[
+                track_info["condition"] == condition
+            ]["unique_id"].tolist()
+            
+            n_sample = min(n_tracks_per_condition, len(condition_tracks))
+            sampled = np.random.choice(condition_tracks, n_sample, replace=False)
+            sampled_track_ids.extend(sampled)
+            
+            if verbose:
+                print(f"   {condition}: {n_sample} tracks (of {len(condition_tracks)} available)")
+        
+        sample_df = instant_df[instant_df["unique_id"].isin(sampled_track_ids)].copy()
+    
+    if verbose:
+        n_tracks = len(sampled_track_ids)
+        n_points = len(sample_df)
+        original_points = len(instant_df)
+        reduction = (1 - n_points / original_points) * 100
+        
+        print(f"\n✅ Sample dataset created:")
+        print(f"   Tracks: {n_tracks:,}")
+        print(f"   Points: {n_points:,} ({reduction:.1f}% reduction from {original_points:,})")
+        print(f"   Conditions: {len(all_conditions)}")
+    
+    return sample_df
+
+
+def create_debug_dataset(
+    instant_df,
+    n_tracks=100,
+    min_track_length=100,
+    seed=42
+):
+    """
+    Create a tiny dataset for debugging (ignores conditions, just samples tracks).
+    
+    Even faster than create_sample_dataset - just grabs N tracks regardless
+    of condition balancing. Best for checking if code runs at all.
+    
+    Parameters
+    ----------
+    instant_df : pl.DataFrame or pd.DataFrame
+        Full trajectory dataframe
+    n_tracks : int, default=100
+        Total number of tracks to sample
+    min_track_length : int, default=100
+        Minimum track length
+    seed : int, default=42
+        Random seed
+        
+    Returns
+    -------
+    pl.DataFrame or pd.DataFrame
+        Tiny sampled dataset
+        
+    Examples
+    --------
+    >>> # Quick debugging dataset
+    >>> debug_df = create_debug_dataset(instant_df, n_tracks=50)
+    """
+    np.random.seed(seed)
+    
+    is_polars = isinstance(instant_df, pl.DataFrame)
+    
+    print(f"🐛 Creating debug dataset ({n_tracks} tracks)...")
+    
+    if is_polars:
+        # Get valid tracks
+        track_ids = instant_df.group_by("unique_id").agg([
+            pl.len().alias("n_frames")
+        ]).filter(pl.col("n_frames") >= min_track_length)["unique_id"].to_list()
+        
+        # Sample
+        n_sample = min(n_tracks, len(track_ids))
+        sampled = np.random.choice(track_ids, n_sample, replace=False)
+        
+        debug_df = instant_df.filter(pl.col("unique_id").is_in(sampled))
+    else:
+        track_lengths = instant_df.groupby("unique_id")["frame"].count()
+        valid_tracks = track_lengths[track_lengths >= min_track_length].index.tolist()
+        
+        n_sample = min(n_tracks, len(valid_tracks))
+        sampled = np.random.choice(valid_tracks, n_sample, replace=False)
+        
+        debug_df = instant_df[instant_df["unique_id"].isin(sampled)].copy()
+    
+    print(f"   ✅ {len(debug_df):,} points from {n_sample} tracks")
+    
+    return debug_df
