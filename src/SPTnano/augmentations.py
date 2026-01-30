@@ -407,3 +407,140 @@ def get_augmentation_function(strategy: str = "basic"):
         )
 
     return strategies[strategy]()
+
+
+# ============================================================================
+# Segment Shuffle + Scale + Angular Perturbation Augmentation
+# ============================================================================
+# This is the settled augmentation for contrastive learning:
+# - 3-segment shuffle
+# - Per-segment scaling (10-50% variation)
+# - Per-step angular perturbation (1-10 degrees)
+
+
+def aug_shuffle_scale_noise(x, y, nseg, scale_range, angle_range, seed):
+    """
+    3-segment shuffle + random scale per segment + angular perturbation per step.
+    
+    This is the settled augmentation configuration for contrastive learning in the
+    SPTnano transformer pipeline.
+    
+    Args:
+        x, y: Track coordinates (numpy arrays of shape (n_points,))
+        nseg: Number of segments (3 for settled configuration)
+        scale_range: (min_scale, max_scale) tuple
+                     For 10-50% scaling: (0.5, 1.5)
+                     - Shrink: 50-90% of original (scale 0.5-0.9)
+                     - Grow: 110-150% of original (scale 1.1-1.5)
+        angle_range: (min_deg, max_deg) tuple
+                     For 1-10° perturbation: (1, 10)
+                     Each step gets angle deviation in this range (random ± sign)
+        seed: Random seed for reproducibility
+    
+    Returns:
+        x_aug, y_aug: Augmented track coordinates (numpy arrays)
+    
+    Process:
+        1. Split track into nseg segments
+        2. Scale each segment by random factor within ±10-50% (guaranteed in range!)
+        3. Shuffle segment order randomly
+        4. Add angular perturbation to EACH step (guaranteed in range!)
+    
+    Note:
+        This function uses numpy arrays, not torch tensors. For transformer training,
+        convert the output to tensors as needed.
+    """
+    np.random.seed(seed)
+    n = len(x)
+    
+    # Get displacements (first point is at origin, so prepend 0)
+    dx = np.diff(x, prepend=x[0])
+    dy = np.diff(y, prepend=y[0])
+    
+    # Split into segments and scale
+    ss = n // nseg  # Segment size
+    segs = []
+    for i in range(nseg):
+        start = i * ss
+        end = (i + 1) * ss if i < nseg - 1 else n  # Last segment gets remainder
+        sdx = dx[start:end].copy()
+        sdy = dy[start:end].copy()
+        
+        # GUARANTEED scale: randomly pick shrink or grow, then value in range
+        # For ±10-50%: scale_range = (0.5, 1.5)
+        #   Shrink: 50-90% of original (scale 0.5-0.9)
+        #   Grow: 110-150% of original (scale 1.1-1.5)
+        min_s, max_s = scale_range
+        if np.random.random() < 0.5:
+            # Shrink: 50-90% (scale 0.5-0.9)
+            scale = np.random.uniform(min_s, 0.9)
+        else:
+            # Grow: 110-150% (scale 1.1-1.5)
+            scale = np.random.uniform(1.1, max_s)
+        sdx *= scale
+        sdy *= scale
+        
+        segs.append((sdx, sdy))
+    
+    # Shuffle segment order
+    idx = np.arange(nseg)
+    np.random.shuffle(idx)
+    
+    # Reconstruct from shuffled, scaled segments
+    new_dx = np.concatenate([segs[i][0] for i in idx])
+    new_dy = np.concatenate([segs[i][1] for i in idx])
+    
+    # Add angular noise - GUARANTEED minimum!
+    min_ang, max_ang = angle_range
+    if max_ang > 0:
+        min_rad = np.deg2rad(min_ang)
+        max_rad = np.deg2rad(max_ang)
+        # Convert to polar coordinates
+        r = np.sqrt(new_dx**2 + new_dy**2)
+        theta = np.arctan2(new_dy, new_dx)
+        # Random magnitude in [min, max] with random sign
+        magnitudes = np.random.uniform(min_rad, max_rad, size=len(theta))
+        signs = np.random.choice([-1, 1], size=len(theta))
+        noise = magnitudes * signs
+        theta_noisy = theta + noise
+        # Convert back to cartesian
+        new_dx = r * np.cos(theta_noisy)
+        new_dy = r * np.sin(theta_noisy)
+    
+    # Reconstruct track from displacements (cumulative sum)
+    return np.cumsum(new_dx), np.cumsum(new_dy)
+
+
+def apply_augmentation_for_training(x, y, seed=None):
+    """
+    Apply the settled augmentation configuration for training.
+    
+    This is the convenience function to use the settled augmentation:
+    - 3-segment shuffle
+    - 10-50% scaling
+    - 1-10° angular perturbation
+    
+    Args:
+        x, y: Track coordinates (numpy arrays)
+        seed: Optional random seed. If None, uses random seed.
+              For training, typically use a seed based on track ID + epoch
+              to ensure reproducibility while maintaining diversity
+    
+    Returns:
+        x_aug, y_aug: Augmented track coordinates (numpy arrays)
+    
+    Example:
+        >>> x, y = track_coordinates  # numpy arrays
+        >>> seed = hash((track_id, epoch)) % 2**32
+        >>> x_aug, y_aug = apply_augmentation_for_training(x, y, seed=seed)
+    """
+    # Final settled configuration
+    nseg = 3
+    scale_range = (0.5, 1.5)  # 10-50% scaling
+    angle_range = (1, 10)     # 1-10° angular perturbation
+    
+    # Generate seed if not provided (for training diversity)
+    if seed is None:
+        seed = np.random.randint(0, 2**32)
+    
+    return aug_shuffle_scale_noise(x, y, nseg, scale_range, angle_range, seed)

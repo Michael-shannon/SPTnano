@@ -16182,3 +16182,2786 @@ def plot_embedding_2d_multi(
     return fig, axes, all_colors_maps
 
 
+def plot_augmentation_movement(
+    classified_df,
+    selected_window_uids,
+    x_col='avg_speed_um_s',
+    y_col='self_intersections',
+    scaler=None,
+    noise_levels=None,
+    scale_levels=None,
+    aug_type=None,  # NEW: Generic augmentation type (overrides noise_levels/scale_levels)
+    aug_levels=None,  # NEW: Generic augmentation levels
+    figsize=(14, 6),
+    save_path=None,
+    show_gates=True,
+    gate_bounds=None,
+    use_arrows=False,
+    size_by_strength=False,
+    base_size=50,
+    max_size=150,
+    subplot_by_population=False,
+    color_by_strength=None,
+    use_gate_limits=False,
+    square_subplots=False,
+    population_order=None,
+    horizontal_layout=False,
+):
+    """
+    Visualize how augmented tracks move in feature space.
+    
+    Shows original track positions and their augmented versions, with lines/arrows
+    connecting them to show the direction and magnitude of augmentation effects.
+    
+    Parameters
+    ----------
+    classified_df : polars.DataFrame
+        DataFrame containing both original and augmented tracks with columns:
+        - 'window_uid': Track identifier (augmented have suffixes like '_n_0.01', '_s_0.5')
+        - 'track_type': 'original', 'noise', or 'scale'
+        - 'final_population': Classification result
+        - Feature columns (x_col, y_col)
+    selected_window_uids : dict or list
+        Either a dict mapping population names to lists of window_uids,
+        or a flat list of window_uids to visualize.
+    x_col : str, default='avg_speed_um_s'
+        Column name for x-axis feature.
+    y_col : str, default='self_intersections'
+        Column name for y-axis feature.
+    scaler : sklearn scaler, optional
+        Fitted scaler to transform features. If None, raw values are used.
+    noise_levels : list, optional
+        List of noise augmentation levels to show (e.g., [0.01, 0.02, 0.05]).
+    scale_levels : list, optional
+        List of scale augmentation levels to show (e.g., [0.9, 0.95, 1.05, 1.1]).
+    figsize : tuple, default=(14, 6)
+        Figure size for combined view.
+    save_path : Path or str, optional
+        Path to save the figure(s). For subplot mode, creates separate files
+        with '_noise_subplots' and '_scale_subplots' suffixes.
+    show_gates : bool, default=True
+        Whether to draw gate boundaries on the plot.
+    gate_bounds : dict, optional
+        Dictionary mapping gate names to (x1, x2, y1, y2) bounds.
+    use_arrows : bool, default=False
+        If True, draw arrows from original to augmented positions.
+        If False, draw simple lines.
+    size_by_strength : bool, default=False
+        If True, marker size scales with augmentation strength.
+    base_size : int, default=50
+        Base marker size for augmented points.
+    max_size : int, default=150
+        Maximum marker size when size_by_strength=True.
+    subplot_by_population : bool, default=False
+        If True, creates separate subplots for each population type.
+        If False, shows all populations on the same plot.
+    color_by_strength : str or None, default=None
+        How to color augmented points by their augmentation level:
+        - None: Use population color (solid color per behavior type)
+        - 'sequential': Distinct categorical colors with KEY legend
+        - 'viridis', 'cividis', etc.: Gradient colormap with colorbar
+    population_order : list, optional
+        Custom order for displaying populations in subplots.
+        If None, uses order from selected_window_uids dict or alphabetical.
+    horizontal_layout : bool, default=False
+        If True and subplot_by_population=True, arranges subplots in a single row.
+        If False, uses a grid layout (up to 3 columns).
+    
+    Returns
+    -------
+    If subplot_by_population=True:
+        (fig_noise, fig_scale): Tuple of two figures
+    If subplot_by_population=False:
+        (fig, axes): Figure and axes array
+    
+    Examples
+    --------
+    # Basic usage with population colors
+    >>> plot_augmentation_movement(
+    ...     classified_df, selected_window_uids,
+    ...     subplot_by_population=True, color_by_strength=None
+    ... )
+    
+    # With distinct colors per augmentation level
+    >>> plot_augmentation_movement(
+    ...     classified_df, selected_window_uids,
+    ...     subplot_by_population=True, color_by_strength='sequential'
+    ... )
+    
+    # With viridis gradient colormap
+    >>> plot_augmentation_movement(
+    ...     classified_df, selected_window_uids,
+    ...     subplot_by_population=True, color_by_strength='viridis'
+    ... )
+    """
+    from matplotlib.patches import Patch, Rectangle
+    
+    # Colorblind-friendly palette for populations
+    CB_BLUE = '#0072B2'
+    CB_ORANGE = '#D55E00'
+    CB_GREEN = '#009E73'
+    CB_PINK = '#CC79A7'
+    CB_YELLOW = '#F0E442'
+    CB_GRAY = '#888888'
+    
+    pop_colors = {
+        'superdiffusive_transport': CB_BLUE,
+        'subdiffusive_motion': CB_ORANGE,
+        'fast_exploratory': CB_GREEN,
+        'bound_stationary': CB_PINK,
+        'mixed_exploratory_bound': CB_YELLOW,
+        'ungatedgate1': CB_GRAY,
+        'ungatedgate2': '#555555',
+    }
+    
+    # Distinct colors for sequential mode (colorblind-friendly, distinguishable)
+    SEQUENTIAL_COLORS = [
+        '#fee5d9',  # Very light salmon
+        '#fcae91',  # Light orange
+        '#fb6a4a',  # Orange-red
+        '#de2d26',  # Red
+        '#a50f15',  # Dark red
+        '#67000d',  # Very dark red
+        '#4a0000',  # Darkest
+    ]
+    
+    # Get populations
+    if isinstance(selected_window_uids, dict):
+        populations = list(selected_window_uids.keys())
+        all_uids = []
+        for uids in selected_window_uids.values():
+            all_uids.extend(uids)
+    else:
+        all_uids = list(selected_window_uids)
+        populations = classified_df.filter(
+            (pl.col('track_type') == 'original') & 
+            (pl.col('window_uid').is_in(all_uids))
+        )['final_population'].unique().to_list()
+    
+    # Apply population ordering if provided
+    if population_order is not None:
+        ordered_pops = []
+        for pop in population_order:
+            if pop in populations:
+                ordered_pops.append(pop)
+        # Add any populations not in the order list
+        for pop in populations:
+            if pop not in ordered_pops:
+                ordered_pops.append(pop)
+        populations = ordered_pops
+    
+    # Handle generic aug_type/aug_levels OR legacy noise_levels/scale_levels
+    # Default levels for each augmentation type
+    AUG_LEVELS_DEFAULTS = {
+        'noise': [0.01, 0.02, 0.05, 0.1, 0.2],
+        'scale': [0.05, 0.1, 0.2, 0.3, 0.4],
+        'rotation': [True],
+        'reversal': [True],
+        'proportional_noise': [0.02, 0.05, 0.1, 0.15, 0.2],
+        'velocity_smoothing': [3, 5, 7, 9],
+        'frame_dropout': [0.05, 0.1, 0.15, 0.2, 0.25],
+        'temporal_jitter': [0.2, 0.5, 1.0, 1.5, 2.0],
+        'bidirectional_scale': [0.05, 0.1, 0.2, 0.3, 0.4],
+    }
+    
+    # If aug_type is specified, use the new generic approach
+    if aug_type is not None:
+        if aug_levels is None:
+            aug_levels = AUG_LEVELS_DEFAULTS.get(aug_type, [0.05, 0.1, 0.2])
+        # For the new generic mode, we'll plot just this aug_type
+        # Set noise_levels and scale_levels to empty to skip legacy logic
+        noise_levels = [] if aug_type != 'noise' else aug_levels
+        scale_levels = [] if aug_type != 'scale' else aug_levels
+    else:
+        # Legacy mode: use noise_levels and scale_levels separately
+        if noise_levels is None:
+            noise_levels = [0.01, 0.02, 0.05, 0.1, 0.2]
+        if scale_levels is None:
+            scale_levels = [0.9, 0.95, 1.05, 1.1, 1.2]
+    
+    # Scale function
+    def scale_features(df, x_col, y_col, scaler):
+        if scaler is None:
+            return df[x_col].to_numpy(), df[y_col].to_numpy()
+        data = df[[x_col, y_col]].to_pandas()
+        scaled = scaler.transform(data)
+        return scaled[:, 0], scaled[:, 1]
+    
+    # Compute axis limits from all data
+    all_x, all_y = [], []
+    originals = classified_df.filter(
+        (pl.col('track_type') == 'original') & 
+        (pl.col('window_uid').is_in(all_uids))
+    )
+    ox, oy = scale_features(originals, x_col, y_col, scaler)
+    all_x.extend(ox)
+    all_y.extend(oy)
+    
+    for wuid in all_uids:
+        for noise in noise_levels:
+            aug = classified_df.filter(pl.col('window_uid') == f"{wuid}_n_{noise}")
+            if aug.height > 0:
+                ax_vals, ay_vals = scale_features(aug, x_col, y_col, scaler)
+                all_x.extend(ax_vals)
+                all_y.extend(ay_vals)
+        for scale in scale_levels:
+            aug = classified_df.filter(pl.col('window_uid') == f"{wuid}_s_{scale}")
+            if aug.height > 0:
+                ax_vals, ay_vals = scale_features(aug, x_col, y_col, scaler)
+                all_x.extend(ax_vals)
+                all_y.extend(ay_vals)
+    
+    pad = 0.05
+    
+    # Compute axis limits
+    if use_gate_limits and gate_bounds:
+        # Use gate bounds for axis limits (scaled coordinates 0-1)
+        all_gate_x = []
+        all_gate_y = []
+        for name, (x1, x2, y1, y2) in gate_bounds.items():
+            all_gate_x.extend([x1, x2])
+            all_gate_y.extend([y1, y2])
+        xlim = (min(all_gate_x) - pad, max(all_gate_x) + pad)
+        ylim = (min(all_gate_y) - pad, max(all_gate_y) + pad)
+    else:
+        xlim = (min(all_x) - pad, max(all_x) + pad)
+        ylim = (min(all_y) - pad, max(all_y) + pad)
+    
+    # Helper: get color for augmentation level
+    def get_aug_color(level_idx, n_levels, cmap_name):
+        """Get color based on augmentation level index."""
+        if cmap_name is None:
+            return None  # Caller will use pop_color
+        
+        if cmap_name == 'sequential':
+            color_idx = min(level_idx, len(SEQUENTIAL_COLORS) - 1)
+            return SEQUENTIAL_COLORS[color_idx]
+        else:
+            norm_val = 0.15 + 0.7 * (level_idx / max(1, n_levels - 1))
+            cmap = plt.get_cmap(cmap_name)
+            return cmap(norm_val)
+    
+    # ========================
+    # SUBPLOT BY POPULATION MODE
+    # ========================
+    if subplot_by_population:
+        n_pops = len(populations)
+        
+        # Layout: horizontal (single row) or grid
+        if horizontal_layout:
+            n_cols = n_pops
+            n_rows = 1
+            subplot_size = 4  # Size per subplot
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(subplot_size * n_cols + 1.5, subplot_size))
+        else:
+            n_cols = min(3, n_pops)
+            n_rows = (n_pops + n_cols - 1) // n_cols
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols + 1.5, 5 * n_rows))
+        
+        if n_pops == 1:
+            axes = np.array([axes])
+        axes = axes.flatten()
+        
+        for pop_idx, pop in enumerate(populations):
+            ax = axes[pop_idx]
+            pop_color = pop_colors.get(pop, '#666666')
+            
+            if isinstance(selected_window_uids, dict):
+                pop_uids = selected_window_uids.get(pop, [])
+            else:
+                pop_uids = classified_df.filter(
+                    (pl.col('track_type') == 'original') & 
+                    (pl.col('window_uid').is_in(all_uids)) &
+                    (pl.col('final_population') == pop)
+                )['window_uid'].to_list()
+            
+            # Draw gates if provided
+            if show_gates and gate_bounds:
+                for name, (x1, x2, y1, y2) in gate_bounds.items():
+                    rect = Rectangle((x1, y1), x2-x1, y2-y1, fill=False, 
+                                     edgecolor='gray', linewidth=1, linestyle='--', alpha=0.5)
+                    ax.add_patch(rect)
+            
+            # Plot noise augmentation
+            for wuid in pop_uids:
+                orig = classified_df.filter(
+                    (pl.col('track_type') == 'original') & 
+                    (pl.col('window_uid') == wuid)
+                )
+                if orig.height == 0:
+                    continue
+                ox, oy = scale_features(orig, x_col, y_col, scaler)
+                
+                for i, noise in enumerate(noise_levels):
+                    aug = classified_df.filter(pl.col('window_uid') == f"{wuid}_n_{noise}")
+                    if aug.height > 0:
+                        ax_pt, ay_pt = scale_features(aug, x_col, y_col, scaler)
+                        
+                        size = base_size + (max_size - base_size) * (i / max(1, len(noise_levels) - 1)) if size_by_strength else base_size
+                        
+                        pt_color = get_aug_color(i, len(noise_levels), color_by_strength)
+                        if pt_color is None:
+                            pt_color = pop_color
+                        line_color = pt_color if color_by_strength else pop_color
+                        
+                        if use_arrows:
+                            ax.annotate('', xy=(ax_pt[0], ay_pt[0]), xytext=(ox[0], oy[0]),
+                                       arrowprops=dict(arrowstyle='->', color=line_color, alpha=0.5, lw=0.8))
+                        else:
+                            ax.plot([ox[0], ax_pt[0]], [oy[0], ay_pt[0]], color=line_color, alpha=0.4, lw=0.8)
+                        
+                        ax.scatter(ax_pt, ay_pt, s=size, c=[pt_color], alpha=0.85, marker='o', 
+                                  edgecolors='none', zorder=5)
+                
+                # Original dot: transparent fill, black outline, BEHIND augmented dots
+                ax.scatter(ox, oy, s=base_size * 1.2, c='none', marker='o', 
+                          edgecolors='black', linewidths=1.5, zorder=2, alpha=1.0)
+            
+            ax.set_xlim(xlim)
+            ax.set_ylim(ylim)
+            if square_subplots:
+                ax.set_aspect('equal', adjustable='box')
+            ax.set_xlabel(x_col, fontsize=10)
+            ax.set_ylabel(y_col, fontsize=10)
+            pop_display = pop.replace('_', ' ').title()
+            ax.set_title(f'{pop_display}', fontsize=11, fontweight='bold', color='black')
+            ax.set_aspect('equal', adjustable='box')
+        
+        # Hide unused axes
+        for idx in range(n_pops, len(axes)):
+            axes[idx].set_visible(False)
+        
+        plt.suptitle('Feature Space Movement by Population (NOISE)', fontsize=13, fontweight='bold', y=1.02)
+        plt.tight_layout()
+        
+        # Add legend (sequential) or colorbar (gradient) OUTSIDE plots
+        if color_by_strength:
+            fig.subplots_adjust(right=0.85)
+            
+            if color_by_strength == 'sequential':
+                legend_handles = []
+                for i, level in enumerate(noise_levels):
+                    color = SEQUENTIAL_COLORS[min(i, len(SEQUENTIAL_COLORS)-1)]
+                    legend_handles.append(Patch(facecolor=color, edgecolor='black', linewidth=0.5, 
+                                               label=f'{level}'))
+                legend_handles.insert(0, plt.Line2D([0], [0], marker='o', color='white', 
+                                     markeredgecolor='black', markeredgewidth=1.0, markersize=8,
+                                     linestyle='None', label='Original'))
+                fig.legend(handles=legend_handles, title='Noise Level', title_fontsize=10,
+                          loc='center right', bbox_to_anchor=(0.98, 0.5), fontsize=9)
+            else:
+                cbar_ax = fig.add_axes([0.88, 0.15, 0.02, 0.7])
+                cmap_for_bar = plt.get_cmap(color_by_strength)
+                sm = plt.cm.ScalarMappable(cmap=cmap_for_bar, norm=plt.Normalize(vmin=0, vmax=1))
+                sm.set_array([])
+                cbar = fig.colorbar(sm, cax=cbar_ax)
+                cbar.set_label('Noise Level', fontsize=11, fontweight='bold')
+                tick_positions = [0.15 + 0.7 * (i / max(1, len(noise_levels) - 1)) for i in range(len(noise_levels))]
+                cbar.set_ticks(tick_positions)
+                cbar.set_ticklabels([str(n) for n in noise_levels])
+        
+        if save_path:
+            from pathlib import Path
+            save_path = Path(save_path)
+            fig.savefig(save_path.parent / f"{save_path.stem}_noise_subplots{save_path.suffix}", 
+                       format='svg', transparent=True, bbox_inches='tight', dpi=150)
+            print(f"Saved: {save_path.stem}_noise_subplots{save_path.suffix}")
+        plt.show()
+        
+        # --- SCALE SUBPLOTS ---
+        fig2, axes2 = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols + 1.5, 5 * n_rows))
+        if n_pops == 1:
+            axes2 = np.array([axes2])
+        axes2 = axes2.flatten()
+        
+        for pop_idx, pop in enumerate(populations):
+            ax = axes2[pop_idx]
+            pop_color = pop_colors.get(pop, '#666666')
+            
+            if isinstance(selected_window_uids, dict):
+                pop_uids = selected_window_uids.get(pop, [])
+            else:
+                pop_uids = classified_df.filter(
+                    (pl.col('track_type') == 'original') & 
+                    (pl.col('window_uid').is_in(all_uids)) &
+                    (pl.col('final_population') == pop)
+                )['window_uid'].to_list()
+            
+            if show_gates and gate_bounds:
+                for name, (x1, x2, y1, y2) in gate_bounds.items():
+                    rect = Rectangle((x1, y1), x2-x1, y2-y1, fill=False, 
+                                     edgecolor='gray', linewidth=1, linestyle='--', alpha=0.5)
+                    ax.add_patch(rect)
+            
+            for wuid in pop_uids:
+                orig = classified_df.filter(
+                    (pl.col('track_type') == 'original') & 
+                    (pl.col('window_uid') == wuid)
+                )
+                if orig.height == 0:
+                    continue
+                ox, oy = scale_features(orig, x_col, y_col, scaler)
+                
+                for i, scale in enumerate(scale_levels):
+                    aug = classified_df.filter(pl.col('window_uid') == f"{wuid}_s_{scale}")
+                    if aug.height > 0:
+                        ax_pt, ay_pt = scale_features(aug, x_col, y_col, scaler)
+                        
+                        size = base_size + (max_size - base_size) * (i / max(1, len(scale_levels) - 1)) if size_by_strength else base_size
+                        
+                        pt_color = get_aug_color(i, len(scale_levels), color_by_strength)
+                        if pt_color is None:
+                            pt_color = pop_color
+                        line_color = pt_color if color_by_strength else pop_color
+                        
+                        if use_arrows:
+                            ax.annotate('', xy=(ax_pt[0], ay_pt[0]), xytext=(ox[0], oy[0]),
+                                       arrowprops=dict(arrowstyle='->', color=line_color, alpha=0.5, lw=0.8))
+                        else:
+                            ax.plot([ox[0], ax_pt[0]], [oy[0], ay_pt[0]], color=line_color, alpha=0.4, lw=0.8)
+                        
+                        ax.scatter(ax_pt, ay_pt, s=size, c=[pt_color], alpha=0.85, marker='o', 
+                                  edgecolors='none', zorder=5)
+                
+                ax.scatter(ox, oy, s=base_size * 1.2, c='white', marker='o', 
+                          edgecolors='black', linewidths=1.0, zorder=2, alpha=0.9)
+            
+            ax.set_xlim(xlim)
+            ax.set_ylim(ylim)
+            if square_subplots:
+                ax.set_aspect('equal', adjustable='box')
+            ax.set_xlabel(x_col, fontsize=10)
+            ax.set_ylabel(y_col, fontsize=10)
+            pop_display = pop.replace('_', ' ').title()
+            ax.set_title(f'{pop_display}', fontsize=11, fontweight='bold', color='black')
+            ax.set_aspect('equal', adjustable='box')
+        
+        for idx in range(n_pops, len(axes2)):
+            axes2[idx].set_visible(False)
+        
+        plt.suptitle('Feature Space Movement by Population (SCALE)', fontsize=13, fontweight='bold', y=1.02)
+        plt.tight_layout()
+        
+        if color_by_strength:
+            fig2.subplots_adjust(right=0.85)
+            
+            if color_by_strength == 'sequential':
+                legend_handles = []
+                for i, level in enumerate(scale_levels):
+                    color = SEQUENTIAL_COLORS[min(i, len(SEQUENTIAL_COLORS)-1)]
+                    legend_handles.append(Patch(facecolor=color, edgecolor='black', linewidth=0.5, 
+                                               label=f'{level}'))
+                legend_handles.insert(0, plt.Line2D([0], [0], marker='o', color='white', 
+                                     markeredgecolor='black', markeredgewidth=1.0, markersize=8,
+                                     linestyle='None', label='Original'))
+                fig2.legend(handles=legend_handles, title='Scale Level', title_fontsize=10,
+                           loc='center right', bbox_to_anchor=(0.98, 0.5), fontsize=9)
+            else:
+                cbar_ax = fig2.add_axes([0.88, 0.15, 0.02, 0.7])
+                cmap_for_bar = plt.get_cmap(color_by_strength)
+                sm = plt.cm.ScalarMappable(cmap=cmap_for_bar, norm=plt.Normalize(vmin=0, vmax=1))
+                sm.set_array([])
+                cbar = fig2.colorbar(sm, cax=cbar_ax)
+                cbar.set_label('Scale Level', fontsize=11, fontweight='bold')
+                tick_positions = [0.15 + 0.7 * (i / max(1, len(scale_levels) - 1)) for i in range(len(scale_levels))]
+                cbar.set_ticks(tick_positions)
+                cbar.set_ticklabels([str(s) for s in scale_levels])
+        
+        if save_path:
+            from pathlib import Path
+            save_path = Path(save_path)
+            fig2.savefig(save_path.parent / f"{save_path.stem}_scale_subplots{save_path.suffix}", 
+                        format='svg', transparent=True, bbox_inches='tight', dpi=150)
+            print(f"Saved: {save_path.stem}_scale_subplots{save_path.suffix}")
+        plt.show()
+        
+        return fig, fig2
+    
+    # ========================
+    # COMBINED VIEW (original behavior)
+    # ========================
+    # Make square subplots: 2 plots side by side, each square
+    subplot_size = 6  # inches per square subplot
+    fig, axes = plt.subplots(1, 2, figsize=(subplot_size * 2 + 1, subplot_size))
+    
+    for ax_idx, (aug_type, levels) in enumerate([('noise', noise_levels), ('scale', scale_levels)]):
+        ax = axes[ax_idx]
+        ax.set_title(f'{aug_type.title()} Augmentation', fontsize=12, fontweight='bold')
+        
+        if show_gates and gate_bounds:
+            for name, (x1, x2, y1, y2) in gate_bounds.items():
+                rect = Rectangle((x1, y1), x2-x1, y2-y1, fill=False, 
+                                 edgecolor='gray', linewidth=1, linestyle='--', alpha=0.5)
+                ax.add_patch(rect)
+        
+        for pop, pop_uids in (selected_window_uids.items() if isinstance(selected_window_uids, dict) else [(None, all_uids)]):
+            pop_color = pop_colors.get(pop, '#666666') if pop else CB_BLUE
+            
+            for wuid in (pop_uids if pop else all_uids):
+                orig = classified_df.filter(
+                    (pl.col('track_type') == 'original') & 
+                    (pl.col('window_uid') == wuid)
+                )
+                if orig.height == 0:
+                    continue
+                ox, oy = scale_features(orig, x_col, y_col, scaler)
+                
+                for i, level in enumerate(levels):
+                    # Handle single-level augmentations with 'applied' suffix
+                    level_str = 'applied' if isinstance(level, bool) or level is True else str(level)
+                    suffix = f"_{aug_type}_{level_str}"
+                    aug = classified_df.filter(pl.col('window_uid') == f"{wuid}{suffix}")
+                    if aug.height > 0:
+                        ax_pt, ay_pt = scale_features(aug, x_col, y_col, scaler)
+                        
+                        if size_by_strength:
+                            size = base_size + (max_size - base_size) * (i / max(1, len(levels) - 1))
+                        else:
+                            size = base_size
+                        
+                        if use_arrows:
+                            ax.annotate('', xy=(ax_pt[0], ay_pt[0]), xytext=(ox[0], oy[0]),
+                                       arrowprops=dict(arrowstyle='->', color=pop_color, alpha=0.3, lw=0.8))
+                        else:
+                            ax.plot([ox[0], ax_pt[0]], [oy[0], ay_pt[0]], color=pop_color, alpha=0.3, lw=0.8)
+                        
+                        # Augmented dots: colored, no outline
+                        ax.scatter(ax_pt, ay_pt, s=size, c=pop_color, alpha=0.6, marker='o',
+                                  edgecolors='none', zorder=5)
+                
+                # Original dot: transparent fill, black outline (same as subplot mode)
+                ax.scatter(ox, oy, s=base_size * 1.2, c='none', marker='o', 
+                          edgecolors='black', linewidths=1.5, zorder=2, alpha=1.0)
+        
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        ax.set_xlabel(x_col, fontsize=11)
+        ax.set_ylabel(y_col, fontsize=11)
+        ax.set_aspect('equal', adjustable='box')  # Make square
+    
+    # Legend for populations
+    legend_elements = [Patch(facecolor=pop_colors.get(p, '#666'), label=p.replace('_', ' ').title()[:12]) 
+                      for p in populations]
+    fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98), fontsize=8)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, format='svg', transparent=True, bbox_inches='tight', dpi=150)
+        print(f"Saved: {save_path}")
+    
+    plt.show()
+    return fig, axes
+
+
+def plot_population_stability_heatmap(
+    classified_df,
+    selected_window_uids=None,
+    noise_levels=None,
+    scale_levels=None,
+    n_tracks=None,
+    tracks_per_pop=None,
+    row_height=None,
+    min_row_height=0.02,
+    max_row_height=0.5,
+    figsize=None,
+    cmap_stable='#2E5A87',
+    cmap_changed='#E85D04',
+    boundary_color='white',
+    boundary_width=2,
+    save_path=None,
+    show_pct_labels=True,
+    title=None,
+    highlight_uids=None,
+    use_recalculated_baseline=True,
+    aug_uid_format='new',
+    color_by_population=False,
+):
+    """
+    Create a stacked population stability heatmap showing which augmentation levels
+    cause tracks to change their final_population classification.
+    
+    Designed to handle from tens to thousands of tracks with adaptive sizing.
+    
+    Parameters
+    ----------
+    classified_df : polars.DataFrame
+        DataFrame with original and augmented tracks containing columns:
+        - 'window_uid': Track ID (augmented have '_n_X' or '_s_X' suffix)
+        - 'track_type': 'original', 'noise', or 'scale'
+        - 'final_population': Classification result
+    selected_window_uids : dict or list, optional
+        Dict mapping population names to window_uid lists, or flat list.
+        If None, uses all original tracks in classified_df.
+    noise_levels : list
+        Noise augmentation levels (e.g., [0.01, 0.02, 0.05, 0.1, 0.2]).
+    scale_levels : list
+        Scale augmentation levels (e.g., [0.05, 0.1, 0.2, 0.3, 0.4]).
+    n_tracks : int, optional
+        Total number of tracks to include. Overrides tracks_per_pop.
+        Tracks are sampled proportionally from each population.
+    tracks_per_pop : int, optional
+        Number of tracks per population. Default: all available.
+    row_height : float, optional
+        Height per row in inches. If None, auto-calculated based on n_tracks.
+    min_row_height : float, default=0.02
+        Minimum row height for very large datasets.
+    max_row_height : float, default=0.5
+        Maximum row height for small datasets.
+    figsize : tuple, optional
+        Figure size (width, height). If None, auto-calculated.
+    cmap_stable : str, default='#2E5A87'
+        Color for stable (unchanged) tracks. Raider navy blue.
+    cmap_changed : str, default='#E85D04'
+        Color for changed tracks. Raider orange/fire.
+    boundary_color : str, default='white'
+        Color for population boundary lines.
+    boundary_width : int, default=2
+        Width of boundary lines.
+    save_path : Path or str, optional
+        Path to save the figure.
+    show_pct_labels : bool, default=True
+        Show percentage labels above each column.
+    title : str, optional
+        Custom title. If None, auto-generated with track count.
+    highlight_uids : list, optional
+        List of window_uids to place at the top of each population group.
+        Useful for highlighting a small selection of tracks.
+    use_recalculated_baseline : bool, default=True
+        If True, compare augmented tracks against recalculated baseline (same calculation method).
+        If False, compare against original (may show calculation differences, not just augmentation effect).
+    aug_uid_format : str, default='new'
+        Format for augmented window_uid lookup:
+        - 'new': Uses '{parent}_noise_{level}' format (from Cell 9)
+        - 'old': Uses '{parent}_n_{level}' format (legacy)
+    color_by_population : bool, default=False
+        If True, color cells by the resulting population (where track ended up).
+        If False (default), use binary stable/changed coloring.
+    
+    Returns
+    -------
+    dict
+        Results dictionary with per-population statistics.
+    
+    Examples
+    --------
+    # Small dataset (tens of tracks)
+    >>> plot_population_stability_heatmap(
+    ...     classified_df, selected_window_uids,
+    ...     noise_levels=[0.01, 0.02, 0.05], scale_levels=[0.1, 0.2, 0.3],
+    ...     tracks_per_pop=10
+    ... )
+    
+    # Large dataset (thousands of tracks)
+    >>> plot_population_stability_heatmap(
+    ...     classified_df, selected_window_uids,
+    ...     noise_levels=[0.01, 0.02, 0.05, 0.1], scale_levels=[0.1, 0.2, 0.3, 0.4],
+    ...     n_tracks=2000  # Auto-scales row height
+    ... )
+    """
+    import matplotlib.colors as mcolors
+    from matplotlib.patches import Patch
+    
+    # Defaults
+    if noise_levels is None:
+        noise_levels = [0.01, 0.02, 0.05, 0.1, 0.2]
+    if scale_levels is None:
+        scale_levels = [0.05, 0.1, 0.2, 0.3, 0.4]
+    
+    # Population color scheme (raider-inspired: bold, high contrast)
+    pop_colors = {
+        'superdiffusive_transport': '#1A365D',   # Deep navy
+        'subdiffusive_motion': '#C53030',        # Deep red
+        'fast_exploratory': '#2F855A',           # Forest green
+        'bound_stationary': '#6B46C1',           # Purple
+        'mixed_exploratory_bound': '#B7791F',    # Gold/brown
+        'ungatedgate1': '#4A5568',               # Steel gray
+        'ungatedgate2': '#2D3748',               # Charcoal
+    }
+    
+    pop_abbrev = {
+        'superdiffusive_transport': 'SD-Trans', 
+        'subdiffusive_motion': 'SubDiff',
+        'fast_exploratory': 'FastExp',
+        'bound_stationary': 'Bound',
+        'mixed_exploratory_bound': 'Mixed',
+        'ungatedgate1': 'UG1',
+        'ungatedgate2': 'UG2'
+    }
+    
+    # Build colormap
+    cmap_binary = mcolors.ListedColormap([cmap_stable, cmap_changed])
+    
+    # COMMON POPULATION COLOR SCHEME (consistent across all visualizations)
+    # This matches plot_tracks_augmentation_panel and notebook gate plots
+    pop_color_map = {
+        'bound_stationary': '#6B46C1',           # Purple
+        'superdiffusive_transport': '#2E86AB',   # Blue
+        'subdiffusive_motion': '#E74C3C',        # Red
+        'mixed_exploratory_bound': '#B7791F',    # Gold/Brown
+        'fast_exploratory': '#2ECC71',           # Green
+        'ungatedgate1': '#888888',               # Gray
+        'ungatedgate2': '#888888',               # Gray
+    }
+    # Build population index mapping for colormap
+    all_pops_for_cmap = ['bound_stationary', 'superdiffusive_transport', 'subdiffusive_motion',
+                         'mixed_exploratory_bound', 'fast_exploratory', 'ungatedgate1', 'ungatedgate2']
+    pop_to_idx = {pop: i for i, pop in enumerate(all_pops_for_cmap)}
+    cmap_population = mcolors.ListedColormap([pop_color_map[p] for p in all_pops_for_cmap])
+    
+    # Get populations and window_uids
+    if selected_window_uids is None:
+        # Use all original tracks
+        originals = classified_df.filter(pl.col('track_type') == 'original')
+        all_uids = originals['window_uid'].to_list()
+        populations = originals['final_population'].unique().to_list()
+        selected_window_uids = {}
+        for pop in populations:
+            pop_uids = originals.filter(pl.col('final_population') == pop)['window_uid'].to_list()
+            selected_window_uids[pop] = pop_uids
+    elif isinstance(selected_window_uids, dict):
+        populations = list(selected_window_uids.keys())
+        all_uids = [uid for uids in selected_window_uids.values() for uid in uids]
+    else:
+        all_uids = list(selected_window_uids)
+        populations = classified_df.filter(
+            (pl.col('track_type') == 'original') & 
+            (pl.col('window_uid').is_in(all_uids))
+        )['final_population'].unique().to_list()
+        # Convert to dict format
+        selected_window_uids = {}
+        for pop in populations:
+            pop_uids = classified_df.filter(
+                (pl.col('track_type') == 'original') & 
+                (pl.col('window_uid').is_in(all_uids)) &
+                (pl.col('final_population') == pop)
+            )['window_uid'].to_list()
+            selected_window_uids[pop] = pop_uids
+    
+    # Determine how many tracks to use
+    total_available = sum(len(uids) for uids in selected_window_uids.values())
+    
+    if n_tracks is not None:
+        # Proportional sampling across populations
+        target_per_pop = {}
+        for pop, uids in selected_window_uids.items():
+            proportion = len(uids) / total_available
+            target_per_pop[pop] = max(1, int(n_tracks * proportion))
+    elif tracks_per_pop is not None:
+        target_per_pop = {pop: tracks_per_pop for pop in selected_window_uids}
+    else:
+        target_per_pop = {pop: len(uids) for pop, uids in selected_window_uids.items()}
+    
+    # Build data matrices
+    all_noise_data = []
+    all_scale_data = []
+    pop_boundaries = [0]
+    pop_labels = []
+    all_results = {}
+    
+    for pop in populations:
+        pop_uids = selected_window_uids.get(pop, [])
+        n_to_use = min(target_per_pop.get(pop, len(pop_uids)), len(pop_uids))
+        
+        # Random sample if needed
+        if n_to_use < len(pop_uids):
+            pop_uids = list(np.random.choice(pop_uids, n_to_use, replace=False))
+        else:
+            pop_uids = pop_uids[:n_to_use]
+        
+        if len(pop_uids) == 0:
+            continue
+        
+        # Sort to put highlighted uids at top of this population
+        if highlight_uids is not None:
+            highlight_set = set(highlight_uids)
+            highlighted = [uid for uid in pop_uids if uid in highlight_set]
+            not_highlighted = [uid for uid in pop_uids if uid not in highlight_set]
+            pop_uids = highlighted + not_highlighted
+        
+        pop_noise_rows = []
+        pop_scale_rows = []
+        
+        for wuid in pop_uids:
+            # Get baseline population (recalculated or original)
+            if use_recalculated_baseline:
+                baseline = classified_df.filter(pl.col('window_uid') == f"{wuid}_recalculated")
+                if baseline.height == 0:
+                    # Fall back to original if no recalculated version
+                    baseline = classified_df.filter(
+                        (pl.col('track_type') == 'original') & 
+                        (pl.col('window_uid') == wuid)
+                    )
+            else:
+                baseline = classified_df.filter(
+                    (pl.col('track_type') == 'original') & 
+                    (pl.col('window_uid') == wuid)
+                )
+            
+            if baseline.height == 0:
+                continue
+            baseline_pop = baseline['final_population'][0]
+            
+            # Build augmented track UIDs based on format
+            noise_row = []
+            for noise in noise_levels:
+                if aug_uid_format == 'new':
+                    aug_uid = f"{wuid}_noise_{noise}"
+                else:
+                    aug_uid = f"{wuid}_n_{noise}"
+                aug = classified_df.filter(pl.col('window_uid') == aug_uid)
+                if aug.height > 0:
+                    aug_pop = aug['final_population'][0]
+                    if color_by_population:
+                        # Store population index for coloring
+                        noise_row.append(pop_to_idx.get(aug_pop, len(all_pops_for_cmap) - 1))
+                    else:
+                        noise_row.append(1 if aug_pop != baseline_pop else 0)
+                else:
+                    noise_row.append(np.nan)
+            
+            scale_row = []
+            for scale in scale_levels:
+                if aug_uid_format == 'new':
+                    aug_uid = f"{wuid}_scale_{scale}"
+                else:
+                    aug_uid = f"{wuid}_s_{scale}"
+                aug = classified_df.filter(pl.col('window_uid') == aug_uid)
+                if aug.height > 0:
+                    aug_pop = aug['final_population'][0]
+                    if color_by_population:
+                        # Store population index for coloring
+                        scale_row.append(pop_to_idx.get(aug_pop, len(all_pops_for_cmap) - 1))
+                    else:
+                        scale_row.append(1 if aug_pop != baseline_pop else 0)
+                else:
+                    scale_row.append(np.nan)
+            
+            pop_noise_rows.append(noise_row)
+            pop_scale_rows.append(scale_row)
+        
+        if len(pop_noise_rows) > 0:
+            all_noise_data.extend(pop_noise_rows)
+            all_scale_data.extend(pop_scale_rows)
+            pop_boundaries.append(len(all_noise_data))
+            pop_labels.append(pop)
+            
+            noise_arr = np.array(pop_noise_rows)
+            scale_arr = np.array(pop_scale_rows)
+            all_results[pop] = {
+                'noise_pct': [np.nanmean(noise_arr[:, j]) * 100 for j in range(len(noise_levels))],
+                'scale_pct': [np.nanmean(scale_arr[:, j]) * 100 for j in range(len(scale_levels))],
+                'n_tracks': len(pop_noise_rows)
+            }
+    
+    noise_data = np.array(all_noise_data)
+    scale_data = np.array(all_scale_data)
+    n_total = len(all_noise_data)
+    
+    if n_total == 0:
+        print("No data to plot!")
+        return {}
+    
+    # Calculate adaptive sizing
+    if row_height is None:
+        # Auto-calculate: smaller rows for more tracks
+        if n_total <= 50:
+            row_height = max_row_height
+        elif n_total >= 2000:
+            row_height = min_row_height
+        else:
+            # Linear interpolation
+            row_height = max_row_height - (max_row_height - min_row_height) * (n_total - 50) / (2000 - 50)
+    
+    row_height = max(min_row_height, min(max_row_height, row_height))
+    
+    # Calculate figure size
+    if figsize is None:
+        # Width: based on number of columns + space for labels
+        n_cols_total = len(noise_levels) + len(scale_levels)
+        col_width = 0.8  # inches per column
+        label_space = 2.5  # inches for y-axis labels
+        gap_space = 1.0  # gap between plots
+        fig_width = label_space + n_cols_total * col_width + gap_space
+        
+        # Height: based on rows + space for title/legend
+        fig_height = max(4, n_total * row_height + 2.5)
+        figsize = (min(16, fig_width), min(20, fig_height))
+    
+    # Create figure
+    fig, axes = plt.subplots(1, 2, figsize=figsize, 
+                             gridspec_kw={'width_ratios': [len(noise_levels), len(scale_levels)]})
+    
+    # --- NOISE HEATMAP ---
+    ax = axes[0]
+    if color_by_population:
+        im = ax.imshow(noise_data, aspect='auto', cmap=cmap_population, 
+                       vmin=0, vmax=len(all_pops_for_cmap)-1, interpolation='nearest')
+    else:
+        im = ax.imshow(noise_data, aspect='auto', cmap=cmap_binary, vmin=0, vmax=1,
+                       interpolation='nearest')
+    
+    # X-axis: actual augmentation values at their positions (0, 1, 2, ...)
+    ax.set_xticks(range(len(noise_levels)))
+    ax.set_xticklabels([f'{n}' for n in noise_levels], fontsize=9, rotation=0)
+    ax.set_xlabel('Noise Level', fontsize=11, fontweight='bold')
+    ax.set_ylabel('Tracks (grouped by population)', fontsize=10)
+    ax.set_title('NOISE Augmentation', fontsize=12, fontweight='bold')
+    
+    # Percentage labels above columns
+    if show_pct_labels:
+        for j in range(len(noise_levels)):
+            col = noise_data[:, j]
+            valid = col[~np.isnan(col)]
+            pct = np.mean(valid) * 100 if len(valid) > 0 else 0
+            color = '#2F855A' if pct < 10 else '#B7791F' if pct < 25 else cmap_changed
+            y_pos = -0.5 - (0.05 * n_total if n_total > 100 else 1)
+            ax.text(j, y_pos, f'{pct:.0f}%', ha='center', va='bottom', fontsize=9, 
+                   color=color, fontweight='bold')
+    
+    # Population separators and labels
+    for i, (start, end, pop) in enumerate(zip(pop_boundaries[:-1], pop_boundaries[1:], pop_labels)):
+        if start > 0:
+            ax.axhline(y=start - 0.5, color=boundary_color, linewidth=boundary_width)
+        mid = (start + end - 1) / 2
+        pop_color = pop_colors.get(pop, '#666666')
+        ax.text(-0.6, mid, pop_abbrev.get(pop, pop[:6]), ha='right', va='center', 
+               fontsize=8, fontweight='bold', color=pop_color)
+    
+    # Remove y-ticks (too many for thousands)
+    if n_total > 100:
+        ax.set_yticks([])
+    else:
+        ax.set_yticks(range(0, n_total, max(1, n_total // 10)))
+    
+    # --- SCALE HEATMAP ---
+    ax = axes[1]
+    if color_by_population:
+        im = ax.imshow(scale_data, aspect='auto', cmap=cmap_population,
+                       vmin=0, vmax=len(all_pops_for_cmap)-1, interpolation='nearest')
+    else:
+        im = ax.imshow(scale_data, aspect='auto', cmap=cmap_binary, vmin=0, vmax=1,
+                       interpolation='nearest')
+    
+    ax.set_xticks(range(len(scale_levels)))
+    ax.set_xticklabels([f'{s}' for s in scale_levels], fontsize=9, rotation=0)
+    ax.set_xlabel('Scale Level', fontsize=11, fontweight='bold')
+    ax.set_ylabel('')
+    ax.set_title('SCALE Augmentation', fontsize=12, fontweight='bold')
+    
+    if show_pct_labels:
+        for j in range(len(scale_levels)):
+            col = scale_data[:, j]
+            valid = col[~np.isnan(col)]
+            pct = np.mean(valid) * 100 if len(valid) > 0 else 0
+            color = '#2F855A' if pct < 10 else '#B7791F' if pct < 25 else cmap_changed
+            y_pos = -0.5 - (0.05 * n_total if n_total > 100 else 1)
+            ax.text(j, y_pos, f'{pct:.0f}%', ha='center', va='bottom', fontsize=9,
+                   color=color, fontweight='bold')
+    
+    # Population separators
+    for start in pop_boundaries[1:-1]:
+        ax.axhline(y=start - 0.5, color=boundary_color, linewidth=boundary_width)
+    
+    ax.set_yticks([])
+    
+    # Legend
+    if color_by_population:
+        # Population-based legend
+        pop_abbrev_for_legend = {
+            'bound_stationary': 'Bound', 
+            'superdiffusive_transport': 'SuperDiff',
+            'subdiffusive_motion': 'SubDiff', 
+            'mixed_exploratory_bound': 'Mixed',
+            'fast_exploratory': 'FastExp'
+        }
+        legend_elements = [
+            Patch(facecolor=pop_color_map[p], edgecolor='black', linewidth=0.5, 
+                  label=pop_abbrev_for_legend.get(p, p))
+            for p in ['bound_stationary', 'superdiffusive_transport', 'subdiffusive_motion',
+                      'mixed_exploratory_bound', 'fast_exploratory']
+        ]
+        fig.legend(handles=legend_elements, loc='lower center', ncol=5, 
+                  bbox_to_anchor=(0.5, -0.01), fontsize=9, frameon=True, 
+                  fancybox=True, shadow=False, title='Resulting Population')
+    else:
+        legend_elements = [
+            Patch(facecolor=cmap_stable, edgecolor='black', linewidth=0.5, label='Stable'),
+            Patch(facecolor=cmap_changed, edgecolor='black', linewidth=0.5, label='Changed')
+        ]
+        fig.legend(handles=legend_elements, loc='lower center', ncol=2, 
+                  bbox_to_anchor=(0.5, -0.01), fontsize=10, frameon=True, 
+                  fancybox=True, shadow=False)
+    
+    # Title
+    if title is None:
+        title = f'Population Stability Heatmap ({n_total:,} tracks)'
+    plt.suptitle(title, fontsize=13, fontweight='bold', y=1.01)
+    
+    plt.tight_layout()
+    fig.subplots_adjust(bottom=0.08, left=0.12, wspace=0.15)
+    
+    if save_path:
+        from pathlib import Path
+        save_path = Path(save_path)
+        fig.savefig(save_path, format='svg', transparent=True, bbox_inches='tight', dpi=150)
+        print(f"💾 Saved: {save_path}")
+    
+    plt.show()
+    
+    # Print summary
+    print("\n" + "="*70)
+    print(f"POPULATION STABILITY SUMMARY ({n_total:,} tracks)")
+    print("="*70)
+    
+    for pop, data in all_results.items():
+        pop_display = pop.replace('_', ' ').title()
+        print(f"\n{pop_display} ({data['n_tracks']} tracks):")
+        
+        safe_noise = [n for j, n in enumerate(noise_levels) if data['noise_pct'][j] < 10]
+        safe_scale = [s for j, s in enumerate(scale_levels) if data['scale_pct'][j] < 10]
+        
+        print(f"   Noise: ", end="")
+        for j, n in enumerate(noise_levels):
+            pct = data['noise_pct'][j]
+            icon = "✓" if pct < 10 else "!" if pct < 25 else "✗"
+            print(f"{n}({icon}:{pct:.0f}%) ", end="")
+        print(f" → max safe: {max(safe_noise) if safe_noise else 'none'}")
+        
+        print(f"   Scale: ", end="")
+        for j, s in enumerate(scale_levels):
+            pct = data['scale_pct'][j]
+            icon = "✓" if pct < 10 else "!" if pct < 25 else "✗"
+            print(f"{s}({icon}:{pct:.0f}%) ", end="")
+        print(f" → max safe: {max(safe_scale) if safe_scale else 'none'}")
+    
+    # Overall recommendations
+    print("\n" + "-"*70)
+    print("OVERALL RECOMMENDATIONS:")
+    overall_noise_pct = [np.nanmean(noise_data[:, j]) * 100 for j in range(len(noise_levels))]
+    overall_scale_pct = [np.nanmean(scale_data[:, j]) * 100 for j in range(len(scale_levels))]
+    
+    safe_noise_all = [n for j, n in enumerate(noise_levels) if overall_noise_pct[j] < 10]
+    safe_scale_all = [s for j, s in enumerate(scale_levels) if overall_scale_pct[j] < 10]
+    
+    print(f"   Max safe NOISE (overall <10% change): {max(safe_noise_all) if safe_noise_all else 'none'}")
+    print(f"   Max safe SCALE (overall <10% change): {max(safe_scale_all) if safe_scale_all else 'none'}")
+    
+    return all_results
+
+
+def plot_multi_augmentation_stability_heatmap(
+    classified_df,
+    selected_window_uids=None,
+    augmentation_config=None,
+    n_tracks=None,
+    tracks_per_pop=None,
+    row_height=None,
+    min_row_height=0.02,
+    max_row_height=0.5,
+    figsize=None,
+    cmap_stable='#2E5A87',
+    cmap_changed='#E85D04',
+    boundary_color='white',
+    boundary_width=2,
+    save_path=None,
+    show_pct_labels=True,
+    title=None,
+    highlight_uids=None,
+    use_recalculated_baseline=True,
+    color_by_population=False,
+):
+    """
+    Create a stacked population stability heatmap for ALL augmentation types.
+    
+    This is an extended version of plot_population_stability_heatmap that handles
+    an arbitrary number of augmentation types via the augmentation_config parameter.
+    
+    Parameters
+    ----------
+    classified_df : polars.DataFrame
+        DataFrame with original and augmented tracks containing columns:
+        - 'window_uid': Track ID (augmented have '_{type}_{level}' suffix)
+        - 'track_type': 'original', 'recalculated', or augmentation type
+        - 'final_population': Classification result
+    selected_window_uids : dict or list, optional
+        Dict mapping population names to window_uid lists, or flat list.
+        If None, uses all original tracks in classified_df.
+    augmentation_config : dict
+        Dictionary mapping augmentation type names to their config:
+        {
+            'noise': {'levels': [0.01, 0.02, ...], 'enabled': True, ...},
+            'scale': {'levels': [0.05, 0.1, ...], 'enabled': True, ...},
+            'rotation': {'levels': [True], 'enabled': True, ...},
+            ...
+        }
+    n_tracks : int, optional
+        Total number of tracks to include.
+    tracks_per_pop : int, optional
+        Number of tracks per population.
+    row_height : float, optional
+        Height per row in inches.
+    min_row_height : float, default=0.02
+        Minimum row height.
+    max_row_height : float, default=0.5
+        Maximum row height.
+    figsize : tuple, optional
+        Figure size (width, height).
+    cmap_stable : str, default='#2E5A87'
+        Color for stable tracks.
+    cmap_changed : str, default='#E85D04'
+        Color for changed tracks.
+    boundary_color : str, default='white'
+        Color for population boundaries.
+    boundary_width : int, default=2
+        Width of boundary lines.
+    save_path : Path or str, optional
+        Path to save the figure.
+    show_pct_labels : bool, default=True
+        Show percentage labels above columns.
+    title : str, optional
+        Custom title.
+    highlight_uids : list, optional
+        List of window_uids to place at the top of each population group.
+    use_recalculated_baseline : bool, default=True
+        If True, compare against recalculated baseline.
+    color_by_population : bool, default=False
+        If True, color cells by resulting population.
+    
+    Returns
+    -------
+    dict
+        Results dictionary with per-population statistics.
+    """
+    import matplotlib.colors as mcolors
+    from matplotlib.patches import Patch
+    
+    # Default augmentation config (for backward compatibility)
+    if augmentation_config is None:
+        augmentation_config = {
+            'noise': {'levels': [0.01, 0.02, 0.05, 0.1, 0.2], 'enabled': True},
+            'scale': {'levels': [0.05, 0.1, 0.2, 0.3, 0.4], 'enabled': True},
+        }
+    
+    # Filter to only enabled augmentation types
+    enabled_augs = {k: v for k, v in augmentation_config.items() if v.get('enabled', True)}
+    
+    if not enabled_augs:
+        print("No augmentation types enabled!")
+        return {}
+    
+    # Population color scheme
+    pop_colors = {
+        'superdiffusive_transport': '#1A365D',
+        'subdiffusive_motion': '#C53030',
+        'fast_exploratory': '#2F855A',
+        'bound_stationary': '#6B46C1',
+        'mixed_exploratory_bound': '#B7791F',
+        'ungatedgate1': '#4A5568',
+        'ungatedgate2': '#2D3748',
+    }
+    
+    pop_abbrev = {
+        'superdiffusive_transport': 'SD-Trans', 
+        'subdiffusive_motion': 'SubDiff',
+        'fast_exploratory': 'FastExp',
+        'bound_stationary': 'Bound',
+        'mixed_exploratory_bound': 'Mixed',
+        'ungatedgate1': 'UG1',
+        'ungatedgate2': 'UG2'
+    }
+    
+    # Build colormaps
+    cmap_binary = mcolors.ListedColormap([cmap_stable, cmap_changed])
+    
+    pop_color_map = {
+        'bound_stationary': '#6B46C1',
+        'superdiffusive_transport': '#2E86AB',
+        'subdiffusive_motion': '#E74C3C',
+        'mixed_exploratory_bound': '#B7791F',
+        'fast_exploratory': '#2ECC71',
+        'ungatedgate1': '#888888',
+        'ungatedgate2': '#888888',
+    }
+    all_pops_for_cmap = ['bound_stationary', 'superdiffusive_transport', 'subdiffusive_motion',
+                         'mixed_exploratory_bound', 'fast_exploratory', 'ungatedgate1', 'ungatedgate2']
+    pop_to_idx = {pop: i for i, pop in enumerate(all_pops_for_cmap)}
+    cmap_population = mcolors.ListedColormap([pop_color_map[p] for p in all_pops_for_cmap])
+    
+    # Get populations and window_uids
+    if selected_window_uids is None:
+        originals = classified_df.filter(pl.col('track_type') == 'original')
+        all_uids = originals['window_uid'].to_list()
+        populations = originals['final_population'].unique().to_list()
+        selected_window_uids = {}
+        for pop in populations:
+            pop_uids = originals.filter(pl.col('final_population') == pop)['window_uid'].to_list()
+            selected_window_uids[pop] = pop_uids
+    elif isinstance(selected_window_uids, dict):
+        populations = list(selected_window_uids.keys())
+        all_uids = [uid for uids in selected_window_uids.values() for uid in uids]
+    else:
+        all_uids = list(selected_window_uids)
+        populations = classified_df.filter(
+            (pl.col('track_type') == 'original') & 
+            (pl.col('window_uid').is_in(all_uids))
+        )['final_population'].unique().to_list()
+        selected_window_uids = {}
+        for pop in populations:
+            pop_uids = classified_df.filter(
+                (pl.col('track_type') == 'original') & 
+                (pl.col('window_uid').is_in(all_uids)) &
+                (pl.col('final_population') == pop)
+            )['window_uid'].to_list()
+            selected_window_uids[pop] = pop_uids
+    
+    # Determine how many tracks to use
+    total_available = sum(len(uids) for uids in selected_window_uids.values())
+    
+    if n_tracks is not None:
+        target_per_pop = {}
+        for pop, uids in selected_window_uids.items():
+            proportion = len(uids) / total_available
+            target_per_pop[pop] = max(1, int(n_tracks * proportion))
+    elif tracks_per_pop is not None:
+        target_per_pop = {pop: tracks_per_pop for pop in selected_window_uids}
+    else:
+        target_per_pop = {pop: len(uids) for pop, uids in selected_window_uids.items()}
+    
+    # Build data matrices for each augmentation type
+    all_aug_data = {aug_type: [] for aug_type in enabled_augs}
+    pop_boundaries = [0]
+    pop_labels = []
+    all_results = {}
+    
+    for pop in populations:
+        pop_uids = selected_window_uids.get(pop, [])
+        n_to_use = min(target_per_pop.get(pop, len(pop_uids)), len(pop_uids))
+        
+        if n_to_use < len(pop_uids):
+            pop_uids = list(np.random.choice(pop_uids, n_to_use, replace=False))
+        else:
+            pop_uids = pop_uids[:n_to_use]
+        
+        if len(pop_uids) == 0:
+            continue
+        
+        # Sort to put highlighted uids at top
+        if highlight_uids is not None:
+            highlight_set = set(highlight_uids)
+            highlighted = [uid for uid in pop_uids if uid in highlight_set]
+            not_highlighted = [uid for uid in pop_uids if uid not in highlight_set]
+            pop_uids = highlighted + not_highlighted
+        
+        pop_aug_rows = {aug_type: [] for aug_type in enabled_augs}
+        
+        for wuid in pop_uids:
+            # Get baseline population
+            if use_recalculated_baseline:
+                baseline = classified_df.filter(pl.col('window_uid') == f"{wuid}_recalculated")
+                if baseline.height == 0:
+                    baseline = classified_df.filter(
+                        (pl.col('track_type') == 'original') & 
+                        (pl.col('window_uid') == wuid)
+                    )
+            else:
+                baseline = classified_df.filter(
+                    (pl.col('track_type') == 'original') & 
+                    (pl.col('window_uid') == wuid)
+                )
+            
+            if baseline.height == 0:
+                continue
+            baseline_pop = baseline['final_population'][0]
+            
+            # Build augmented track UIDs for each type
+            for aug_type, aug_cfg in enabled_augs.items():
+                levels = aug_cfg['levels']
+                aug_row = []
+                
+                for level in levels:
+                    aug_uid = f"{wuid}_{aug_type}_{level}"
+                    aug = classified_df.filter(pl.col('window_uid') == aug_uid)
+                    
+                    if aug.height > 0:
+                        aug_pop = aug['final_population'][0]
+                        if color_by_population:
+                            aug_row.append(pop_to_idx.get(aug_pop, len(all_pops_for_cmap) - 1))
+                        else:
+                            aug_row.append(1 if aug_pop != baseline_pop else 0)
+                    else:
+                        aug_row.append(np.nan)
+                
+                pop_aug_rows[aug_type].append(aug_row)
+        
+        if len(pop_aug_rows[list(enabled_augs.keys())[0]]) > 0:
+            for aug_type in enabled_augs:
+                all_aug_data[aug_type].extend(pop_aug_rows[aug_type])
+            pop_boundaries.append(len(all_aug_data[list(enabled_augs.keys())[0]]))
+            pop_labels.append(pop)
+            
+            # Store results per augmentation type
+            pop_result = {'n_tracks': len(pop_aug_rows[list(enabled_augs.keys())[0]])}
+            for aug_type, aug_cfg in enabled_augs.items():
+                aug_arr = np.array(pop_aug_rows[aug_type])
+                pop_result[f'{aug_type}_pct'] = [
+                    np.nanmean(aug_arr[:, j]) * 100 for j in range(len(aug_cfg['levels']))
+                ]
+            all_results[pop] = pop_result
+    
+    # Convert to numpy arrays
+    aug_arrays = {aug_type: np.array(data) for aug_type, data in all_aug_data.items()}
+    n_total = len(all_aug_data[list(enabled_augs.keys())[0]])
+    
+    if n_total == 0:
+        print("No data to plot!")
+        return {}
+    
+    # Calculate adaptive sizing
+    if row_height is None:
+        if n_total <= 50:
+            row_height = max_row_height
+        elif n_total >= 2000:
+            row_height = min_row_height
+        else:
+            row_height = max_row_height - (max_row_height - min_row_height) * (n_total - 50) / (2000 - 50)
+    row_height = max(min_row_height, min(max_row_height, row_height))
+    
+    # Calculate figure size
+    n_aug_types = len(enabled_augs)
+    if figsize is None:
+        total_cols = sum(len(cfg['levels']) for cfg in enabled_augs.values())
+        col_width = 0.6
+        label_space = 2.5
+        gap_space = 0.5 * (n_aug_types - 1)
+        fig_width = label_space + total_cols * col_width + gap_space
+        fig_height = max(4, n_total * row_height + 2.5)
+        figsize = (min(24, fig_width), min(20, fig_height))
+    
+    # Create figure with one subplot per augmentation type
+    width_ratios = [len(cfg['levels']) for cfg in enabled_augs.values()]
+    fig, axes = plt.subplots(1, n_aug_types, figsize=figsize, 
+                             gridspec_kw={'width_ratios': width_ratios})
+    if n_aug_types == 1:
+        axes = [axes]
+    
+    # Plot each augmentation type
+    for ax_idx, (aug_type, aug_cfg) in enumerate(enabled_augs.items()):
+        ax = axes[ax_idx]
+        data = aug_arrays[aug_type]
+        levels = aug_cfg['levels']
+        
+        # Plot heatmap
+        if color_by_population:
+            im = ax.imshow(data, aspect='auto', cmap=cmap_population, 
+                           vmin=0, vmax=len(all_pops_for_cmap)-1, interpolation='nearest')
+        else:
+            im = ax.imshow(data, aspect='auto', cmap=cmap_binary, vmin=0, vmax=1,
+                           interpolation='nearest')
+        
+        # X-axis labels
+        ax.set_xticks(range(len(levels)))
+        level_labels = [str(l) if not isinstance(l, bool) else ('Y' if l else 'N') for l in levels]
+        ax.set_xticklabels(level_labels, fontsize=8, rotation=45 if len(levels) > 5 else 0)
+        ax.set_xlabel(aug_type.replace('_', ' ').title(), fontsize=10, fontweight='bold')
+        
+        if ax_idx == 0:
+            ax.set_ylabel('Tracks (grouped by population)', fontsize=10)
+        
+        aug_display = aug_type.replace('_', ' ').upper()
+        ax.set_title(aug_display, fontsize=11, fontweight='bold')
+        
+        # Percentage labels
+        if show_pct_labels:
+            for j in range(len(levels)):
+                col = data[:, j]
+                valid = col[~np.isnan(col)]
+                pct = np.mean(valid) * 100 if len(valid) > 0 else 0
+                color = '#2F855A' if pct < 10 else '#B7791F' if pct < 25 else cmap_changed
+                y_pos = -0.5 - (0.03 * n_total if n_total > 100 else 0.5)
+                ax.text(j, y_pos, f'{pct:.0f}%', ha='center', va='bottom', fontsize=7, 
+                       color=color, fontweight='bold')
+        
+        # Population separators and labels
+        for i, (start, end, pop) in enumerate(zip(pop_boundaries[:-1], pop_boundaries[1:], pop_labels)):
+            if start > 0:
+                ax.axhline(y=start - 0.5, color=boundary_color, linewidth=boundary_width)
+            if ax_idx == 0:
+                mid = (start + end - 1) / 2
+                pop_color = pop_colors.get(pop, '#666666')
+                ax.text(-0.6, mid, pop_abbrev.get(pop, pop[:6]), ha='right', va='center', 
+                       fontsize=7, fontweight='bold', color=pop_color)
+        
+        # Y-ticks
+        if n_total > 100:
+            ax.set_yticks([])
+        else:
+            ax.set_yticks(range(0, n_total, max(1, n_total // 10)))
+    
+    # Legend
+    if color_by_population:
+        pop_abbrev_for_legend = {
+            'bound_stationary': 'Bound', 
+            'superdiffusive_transport': 'SuperDiff',
+            'subdiffusive_motion': 'SubDiff', 
+            'mixed_exploratory_bound': 'Mixed',
+            'fast_exploratory': 'FastExp'
+        }
+        legend_elements = [
+            Patch(facecolor=pop_color_map[p], edgecolor='black', linewidth=0.5, 
+                  label=pop_abbrev_for_legend.get(p, p))
+            for p in ['bound_stationary', 'superdiffusive_transport', 'subdiffusive_motion',
+                      'mixed_exploratory_bound', 'fast_exploratory']
+        ]
+        fig.legend(handles=legend_elements, loc='lower center', ncol=5, 
+                  bbox_to_anchor=(0.5, -0.02), fontsize=9, frameon=True, 
+                  fancybox=True, shadow=False, title='Resulting Population')
+    else:
+        legend_elements = [
+            Patch(facecolor=cmap_stable, edgecolor='black', linewidth=0.5, label='Stable'),
+            Patch(facecolor=cmap_changed, edgecolor='black', linewidth=0.5, label='Changed')
+        ]
+        fig.legend(handles=legend_elements, loc='lower center', ncol=2, 
+                  bbox_to_anchor=(0.5, -0.02), fontsize=10, frameon=True, 
+                  fancybox=True, shadow=False)
+    
+    # Title
+    if title is None:
+        title = f'Multi-Augmentation Stability Heatmap ({n_total:,} tracks, {n_aug_types} types)'
+    plt.suptitle(title, fontsize=13, fontweight='bold', y=1.01)
+    
+    plt.tight_layout()
+    fig.subplots_adjust(bottom=0.10, left=0.10, wspace=0.15)
+    
+    if save_path:
+        from pathlib import Path
+        save_path = Path(save_path)
+        fig.savefig(save_path, format='svg', transparent=True, bbox_inches='tight', dpi=150)
+        print(f"💾 Saved: {save_path}")
+    
+    plt.show()
+    
+    # Print summary
+    print("\n" + "="*70)
+    print(f"MULTI-AUGMENTATION STABILITY SUMMARY ({n_total:,} tracks)")
+    print("="*70)
+    
+    for pop, data in all_results.items():
+        pop_display = pop.replace('_', ' ').title()
+        print(f"\n{pop_display} ({data['n_tracks']} tracks):")
+        
+        for aug_type, aug_cfg in enabled_augs.items():
+            levels = aug_cfg['levels']
+            pcts = data.get(f'{aug_type}_pct', [])
+            safe_levels = [l for j, l in enumerate(levels) if j < len(pcts) and pcts[j] < 10]
+            
+            print(f"   {aug_type.capitalize()}: ", end="")
+            for j, level in enumerate(levels):
+                if j < len(pcts):
+                    pct = pcts[j]
+                    icon = "✓" if pct < 10 else "!" if pct < 25 else "✗"
+                    level_str = str(level) if not isinstance(level, bool) else ('Y' if level else 'N')
+                    print(f"{level_str}({icon}:{pct:.0f}%) ", end="")
+            safe_str = str(max(safe_levels)) if safe_levels else 'none'
+            if safe_levels and isinstance(safe_levels[0], bool):
+                safe_str = 'Yes' if any(safe_levels) else 'none'
+            print(f" → max safe: {safe_str}")
+    
+    # Overall recommendations
+    print("\n" + "-"*70)
+    print("OVERALL RECOMMENDATIONS:")
+    for aug_type, aug_cfg in enabled_augs.items():
+        levels = aug_cfg['levels']
+        data = aug_arrays[aug_type]
+        overall_pct = [np.nanmean(data[:, j]) * 100 for j in range(len(levels))]
+        safe_all = [l for j, l in enumerate(levels) if overall_pct[j] < 10]
+        safe_str = str(max(safe_all)) if safe_all else 'none'
+        if safe_all and isinstance(safe_all[0], bool):
+            safe_str = 'Yes' if any(safe_all) else 'none'
+        print(f"   Max safe {aug_type.upper()} (overall <10% change): {safe_str}")
+    
+    return all_results
+
+
+def plot_single_track_augmentation_analysis(
+    window_uid,
+    instant_df,
+    classified_df,
+    aug_type='noise',
+    aug_levels=None,
+    x_col='avg_speed_um_s',
+    y_col='self_intersections',
+    scaler=None,
+    gate_bounds=None,
+    figsize=None,
+    save_path=None,
+    original_color='#0072B2',
+    show_classification_change=True,
+):
+    """
+    Combined visualization showing a single track's trajectory AND its feature space position.
+    
+    Creates a figure with:
+    - Top row: Track trajectory (original + each augmentation level)
+    - Bottom row: Feature space plot showing where original and augmented versions land
+    
+    Parameters
+    ----------
+    window_uid : str
+        The window_uid of the track to visualize.
+    instant_df : polars.DataFrame
+        Instant dataframe with x_um, y_um, frame columns.
+    classified_df : polars.DataFrame
+        Classified dataframe with feature columns and final_population.
+    aug_type : str, default='noise'
+        'noise' or 'scale' augmentation type.
+    aug_levels : list, optional
+        Augmentation levels to show. Defaults to [0.01, 0.02, 0.05, 0.1, 0.2] for noise.
+    x_col : str, default='avg_speed_um_s'
+        Feature column for x-axis in feature space plot.
+    y_col : str, default='self_intersections'
+        Feature column for y-axis in feature space plot.
+    scaler : sklearn scaler, optional
+        Fitted scaler for transforming features.
+    gate_bounds : dict, optional
+        Gate boundaries as {name: (x1, x2, y1, y2)}.
+    figsize : tuple, optional
+        Figure size. Auto-calculated if None.
+    save_path : Path or str, optional
+        Path to save figure.
+    original_color : str, default='#0072B2'
+        Color for original track (colorblind blue).
+    show_classification_change : bool, default=True
+        Highlight if augmented tracks changed classification.
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The generated figure.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+    import numpy as np
+    import polars as pl
+    
+    # Colorblind-friendly sequential palette for augmentation levels
+    CB_PALETTE = [
+        '#0072B2',  # Blue (original)
+        '#E69F00',  # Orange
+        '#009E73',  # Green
+        '#CC79A7',  # Pink
+        '#F0E442',  # Yellow
+        '#56B4E9',  # Light blue
+        '#D55E00',  # Red-orange
+    ]
+    
+    # Population colors (colorblind-friendly)
+    pop_colors = {
+        'superdiffusive_transport': '#0072B2',
+        'subdiffusive_motion': '#D55E00',
+        'fast_exploratory': '#009E73',
+        'bound_stationary': '#CC79A7',
+        'mixed_exploratory_bound': '#F0E442',
+        'ungatedgate1': '#888888',
+        'ungatedgate2': '#555555',
+    }
+    
+    if aug_levels is None:
+        # Default levels for each augmentation type
+        aug_levels_defaults = {
+            'noise': [0.01, 0.02, 0.05, 0.1, 0.2],
+            'scale': [0.05, 0.1, 0.2, 0.3, 0.4],
+            'rotation': [True],
+            'reversal': [True],
+            'proportional_noise': [0.02, 0.05, 0.1, 0.15, 0.2],
+            'velocity_smoothing': [3, 5, 7, 9],
+            'frame_dropout': [0.05, 0.1, 0.15, 0.2, 0.25],
+            'temporal_jitter': [0.2, 0.5, 1.0, 1.5, 2.0],
+            'bidirectional_scale': [0.05, 0.1, 0.2, 0.3, 0.4],
+        }
+        aug_levels = aug_levels_defaults.get(aug_type, [0.05, 0.1, 0.2])
+    
+    n_aug = len(aug_levels)
+    n_cols = n_aug + 2  # Original + augmentations + feature space
+    
+    if figsize is None:
+        figsize = (3 * n_cols, 6)
+    
+    # --- Parse window_uid to get frames ---
+    def parse_window_uid(wuid):
+        parts = wuid.rsplit('_', 2)
+        frame_end = float(parts[-1])
+        frame_start = float(parts[-2])
+        unique_id = '_'.join(parts[:-2]).rsplit('_', 1)[0]
+        return unique_id, int(frame_start), int(frame_end)
+    
+    def get_window_frames(df, wuid):
+        unique_id, frame_start, frame_end = parse_window_uid(wuid)
+        return df.filter(
+            (pl.col('unique_id') == unique_id) &
+            (pl.col('frame') >= frame_start) &
+            (pl.col('frame') <= frame_end)
+        ).sort('frame')
+    
+    # --- Get track data ---
+    track_df = get_window_frames(instant_df, window_uid)
+    if track_df.height == 0:
+        print(f"⚠️ No data found for {window_uid}")
+        return None
+    
+    x = track_df['x_um'].to_numpy()
+    y = track_df['y_um'].to_numpy()
+    x_centered = x - x.mean()
+    y_centered = y - y.mean()
+    dx = np.diff(x, prepend=x[0])
+    dy = np.diff(y, prepend=y[0])
+    
+    # --- Get original classification ---
+    orig_row = classified_df.filter(
+        (pl.col('track_type') == 'original') & 
+        (pl.col('window_uid') == window_uid)
+    )
+    if orig_row.height == 0:
+        print(f"⚠️ No classification found for {window_uid}")
+        return None
+    
+    orig_pop = orig_row['final_population'][0]
+    orig_x = orig_row[x_col][0]
+    orig_y = orig_row[y_col][0]
+    
+    # --- Get augmented classifications ---
+    aug_suffix = 'n' if aug_type == 'noise' else 's'
+    aug_data = []
+    for level in aug_levels:
+        aug_uid = f"{window_uid}_{aug_suffix}_{level}"
+        aug_row = classified_df.filter(pl.col('window_uid') == aug_uid)
+        if aug_row.height > 0:
+            aug_data.append({
+                'level': level,
+                'pop': aug_row['final_population'][0],
+                'x': aug_row[x_col][0],
+                'y': aug_row[y_col][0],
+                'changed': aug_row['final_population'][0] != orig_pop,
+            })
+        else:
+            aug_data.append(None)
+    
+    # --- Compute track extent for axis limits ---
+    max_scale = max(aug_levels) if aug_type == 'scale' else 1.0
+    scale_factor = (1 + max_scale) if aug_type == 'scale' else 1.5
+    extent = max(np.abs(x_centered).max(), np.abs(y_centered).max()) * scale_factor * 1.1
+    
+    # --- Create figure ---
+    fig, axes = plt.subplots(1, n_cols, figsize=figsize)
+    
+    # --- Plot original track (col 0) ---
+    ax = axes[0]
+    ax.plot(x_centered, y_centered, color=CB_PALETTE[0], linewidth=2, alpha=0.9)
+    ax.scatter(x_centered[0], y_centered[0], c='none', s=50, edgecolors='black', linewidths=1.5, zorder=5)
+    ax.set_xlim(-extent, extent)
+    ax.set_ylim(-extent, extent)
+    ax.set_aspect('equal')
+    ax.set_title('Original', fontsize=11, fontweight='bold', color='black')
+    ax.set_xlabel('x (µm)', fontsize=9)
+    ax.set_ylabel('y (µm)', fontsize=9)
+    for spine in ax.spines.values():
+        spine.set_edgecolor('black')
+        spine.set_linewidth(0.8)
+    
+    # --- Plot augmented tracks (cols 1 to n_aug) ---
+    for i, level in enumerate(aug_levels):
+        ax = axes[i + 1]
+        
+        seed = hash(f"{window_uid}_{aug_type}_{level}") % 2**32
+        np.random.seed(seed)
+        
+        # Apply augmentation based on type
+        if aug_type == 'noise':
+            dx_aug = dx + level * np.random.randn(len(dx))
+            dy_aug = dy + level * np.random.randn(len(dy))
+            xa = np.cumsum(dx_aug)
+            ya = np.cumsum(dy_aug)
+        elif aug_type == 'scale':
+            scale_f = 1.0 + (np.random.rand() * 2 - 1) * level
+            dx_aug = dx * scale_f
+            dy_aug = dy * scale_f
+            xa = np.cumsum(dx_aug)
+            ya = np.cumsum(dy_aug)
+        elif aug_type == 'rotation':
+            angle_rad = np.deg2rad(np.random.rand() * 360)
+            xa = x_centered * np.cos(angle_rad) - y_centered * np.sin(angle_rad)
+            ya = x_centered * np.sin(angle_rad) + y_centered * np.cos(angle_rad)
+        elif aug_type == 'reversal':
+            xa = x_centered[::-1].copy()
+            ya = y_centered[::-1].copy()
+        elif aug_type == 'proportional_noise':
+            noise_x = 1.0 + level * np.random.randn(len(dx))
+            noise_y = 1.0 + level * np.random.randn(len(dy))
+            xa = np.cumsum(dx * noise_x)
+            ya = np.cumsum(dy * noise_y)
+        elif aug_type == 'velocity_smoothing':
+            from scipy.ndimage import uniform_filter1d
+            dx_smooth = uniform_filter1d(dx, size=int(level), mode='nearest')
+            dy_smooth = uniform_filter1d(dy, size=int(level), mode='nearest')
+            xa = np.cumsum(dx_smooth)
+            ya = np.cumsum(dy_smooth)
+        elif aug_type == 'frame_dropout':
+            n = len(x_centered)
+            keep_mask = np.random.rand(n) > level
+            keep_mask[0] = True
+            keep_mask[-1] = True
+            indices = np.arange(n)
+            kept_indices = indices[keep_mask]
+            xa = np.interp(indices, kept_indices, x_centered[keep_mask])
+            ya = np.interp(indices, kept_indices, y_centered[keep_mask])
+        elif aug_type == 'temporal_jitter':
+            n = len(x_centered)
+            t_orig = np.arange(n, dtype=float)
+            t_jitter = t_orig + level * np.random.randn(n)
+            t_jitter = np.sort(t_jitter)
+            t_jitter = np.clip(t_jitter, 0, n-1)
+            xa = np.interp(t_orig, t_jitter, x_centered)
+            ya = np.interp(t_orig, t_jitter, y_centered)
+        elif aug_type == 'bidirectional_scale':
+            direction = 1 if np.random.rand() > 0.5 else -1
+            scale_f = 1.0 + direction * level
+            xa = np.cumsum(dx * scale_f)
+            ya = np.cumsum(dy * scale_f)
+        else:
+            xa = x_centered.copy()
+            ya = y_centered.copy()
+        
+        xa = xa - xa.mean()
+        ya = ya - ya.mean()
+        
+        # Color by whether classification changed
+        color_idx = min(i + 1, len(CB_PALETTE) - 1)
+        color = CB_PALETTE[color_idx]
+        
+        ax.plot(xa, ya, color=color, linewidth=2, alpha=0.9)
+        ax.scatter(xa[0], ya[0], c='none', s=50, edgecolors='black', linewidths=1.5, zorder=5)
+        ax.set_xlim(-extent, extent)
+        ax.set_ylim(-extent, extent)
+        ax.set_aspect('equal')
+        
+        # Title shows level and classification change
+        title = f'{aug_type.title()} {level}'
+        if aug_data[i] is not None and aug_data[i]['changed']:
+            title += '\n⚠️ CHANGED'
+            ax.set_title(title, fontsize=10, fontweight='bold', color='#D55E00')
+        else:
+            ax.set_title(title, fontsize=10, fontweight='bold', color='black')
+        
+        ax.set_xlabel('x (µm)', fontsize=9)
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_edgecolor('black')
+            spine.set_linewidth(0.8)
+    
+    # --- Feature space plot (last column) ---
+    ax = axes[-1]
+    
+    # Transform features if scaler provided (suppress sklearn feature name warning)
+    import warnings
+    if scaler is not None:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                orig_transformed = scaler.transform([[orig_x, orig_y]])[0]
+            ox, oy = orig_transformed[0], orig_transformed[1]
+        except:
+            ox, oy = orig_x, orig_y
+    else:
+        ox, oy = orig_x, orig_y
+    
+    # Draw gates
+    if gate_bounds:
+        for name, (x1, x2, y1, y2) in gate_bounds.items():
+            rect = Rectangle((x1, y1), x2-x1, y2-y1, fill=False,
+                            edgecolor='gray', linewidth=1, linestyle='--', alpha=0.5)
+            ax.add_patch(rect)
+    
+    # Plot original point
+    pop_color = pop_colors.get(orig_pop, '#888888')
+    ax.scatter(ox, oy, s=120, c='none', marker='o', edgecolors='black', linewidths=2, zorder=10, label='Original')
+    ax.scatter(ox, oy, s=80, c=pop_color, marker='o', edgecolors='none', zorder=9)
+    
+    # Plot augmented points with lines connecting to original
+    for i, aug in enumerate(aug_data):
+        if aug is None:
+            continue
+        
+        if scaler is not None:
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    aug_transformed = scaler.transform([[aug['x'], aug['y']]])[0]
+                ax_pt, ay_pt = aug_transformed[0], aug_transformed[1]
+            except:
+                ax_pt, ay_pt = aug['x'], aug['y']
+        else:
+            ax_pt, ay_pt = aug['x'], aug['y']
+        
+        color_idx = min(i + 1, len(CB_PALETTE) - 1)
+        color = CB_PALETTE[color_idx]
+        
+        # Line from original to augmented
+        ax.plot([ox, ax_pt], [oy, ay_pt], color=color, linewidth=1, alpha=0.5, zorder=1)
+        
+        # Augmented point
+        marker = 'X' if aug['changed'] else 'o'
+        ax.scatter(ax_pt, ay_pt, s=60, c=color, marker=marker, edgecolors='none', 
+                  alpha=0.9, zorder=5, label=f"{aug['level']}")
+    
+    # Set limits from gate bounds or auto
+    if gate_bounds:
+        all_x = [b[0] for b in gate_bounds.values()] + [b[1] for b in gate_bounds.values()]
+        all_y = [b[2] for b in gate_bounds.values()] + [b[3] for b in gate_bounds.values()]
+        x_margin = (max(all_x) - min(all_x)) * 0.1
+        y_margin = (max(all_y) - min(all_y)) * 0.1
+        ax.set_xlim(min(all_x) - x_margin, max(all_x) + x_margin)
+        ax.set_ylim(min(all_y) - y_margin, max(all_y) + y_margin)
+    
+    ax.set_aspect('equal')
+    ax.set_xlabel(x_col, fontsize=9)
+    ax.set_ylabel(y_col, fontsize=9)
+    ax.set_title(f'Feature Space\n({orig_pop.replace("_", " ").title()})', 
+                fontsize=10, fontweight='bold', color='black')
+    ax.legend(loc='upper right', fontsize=7, framealpha=0.9)
+    
+    for spine in ax.spines.values():
+        spine.set_edgecolor('black')
+        spine.set_linewidth(0.8)
+    
+    # --- Overall title ---
+    fig.suptitle(f'Track: {window_uid[:50]}...\nOriginal: {orig_pop.replace("_", " ").title()}',
+                fontsize=12, fontweight='bold', y=1.05)
+    
+    plt.tight_layout()
+    
+    # --- Save ---
+    if save_path:
+        fig.patch.set_facecolor('none')
+        for ax in axes:
+            ax.set_facecolor('none')
+        fig.savefig(save_path, format='svg', transparent=True, bbox_inches='tight', dpi=150)
+        print(f"💾 Saved: {save_path}")
+    
+    plt.show()
+    return fig
+
+
+def plot_multiple_tracks_augmentation_analysis(
+    window_uids,
+    instant_df,
+    classified_df,
+    aug_type='noise',
+    aug_levels=None,
+    x_col='avg_speed_um_s',
+    y_col='self_intersections',
+    scaler=None,
+    gate_bounds=None,
+    save_folder=None,
+    original_color='#0072B2',
+):
+    """
+    Generate combined track + feature space plots for multiple tracks.
+    
+    Convenience wrapper that calls plot_single_track_augmentation_analysis for each track.
+    
+    Parameters
+    ----------
+    window_uids : list or dict
+        List of window_uids, or dict {population: [uids]} to iterate over.
+    instant_df : polars.DataFrame
+        Instant dataframe with x_um, y_um, frame columns.
+    classified_df : polars.DataFrame
+        Classified dataframe with feature columns and final_population.
+    aug_type : str, default='noise'
+        'noise' or 'scale' augmentation type.
+    aug_levels : list, optional
+        Augmentation levels to show.
+    x_col, y_col : str
+        Feature columns for feature space plot.
+    scaler : sklearn scaler, optional
+        Fitted scaler for transforming features.
+    gate_bounds : dict, optional
+        Gate boundaries.
+    save_folder : Path or str, optional
+        Folder to save individual figures.
+    original_color : str
+        Color for original track.
+        
+    Returns
+    -------
+    figs : list
+        List of generated figures.
+    """
+    from pathlib import Path
+    
+    # Convert dict to flat list
+    if isinstance(window_uids, dict):
+        all_uids = [(pop, uid) for pop, uids in window_uids.items() for uid in uids]
+    else:
+        all_uids = [(None, uid) for uid in window_uids]
+    
+    if save_folder:
+        save_folder = Path(save_folder)
+        save_folder.mkdir(parents=True, exist_ok=True)
+    
+    figs = []
+    for i, (pop, uid) in enumerate(all_uids):
+        print(f"\n[{i+1}/{len(all_uids)}] Processing: {uid[:40]}...")
+        
+        save_path = None
+        if save_folder:
+            safe_uid = uid.replace('/', '_').replace('\\', '_')[:50]
+            save_path = save_folder / f"track_{i+1:03d}_{aug_type}_{safe_uid}.svg"
+        
+        fig = plot_single_track_augmentation_analysis(
+            window_uid=uid,
+            instant_df=instant_df,
+            classified_df=classified_df,
+            aug_type=aug_type,
+            aug_levels=aug_levels,
+            x_col=x_col,
+            y_col=y_col,
+            scaler=scaler,
+            gate_bounds=gate_bounds,
+            save_path=save_path,
+            original_color=original_color,
+        )
+        if fig:
+            figs.append(fig)
+    
+    print(f"\n✅ Generated {len(figs)} track analysis plots")
+    return figs
+
+
+def plot_tracks_augmentation_panel(
+    window_uids,
+    instant_df,
+    classified_df,
+    aug_type='noise',
+    aug_levels=None,
+    x_col='avg_speed_um_s',
+    y_col='self_intersections',
+    scaler=None,
+    gate_bounds=None,
+    figsize_per_cell=(2.5, 2.5),
+    save_path=None,
+    population_order=None,
+    show_boundaries=True,
+    color_by_population=True,
+    show_recalculated=True,
+    feature_marker_size=40,
+    # Gate 2 settings (for superdiffusive/subdiffusive tracks)
+    show_gate2=True,
+    x_col_gate2='anomalous_exponent',
+    y_col_gate2='cum_displacement_um',
+    scaler_gate2=None,
+    gate_bounds_gate2=None,
+    gate2_populations=None,
+    gate2_all_populations=True,  # NEW: Show Gate 2 for ALL populations
+    # Layout settings
+    interleave_populations=False,
+    tracks_per_population=None,
+):
+    """
+    Create a comprehensive panel showing multiple tracks with trajectories, feature space, AND heatmaps.
+    
+    Layout: Each row = one track
+    Columns = [Original] [Recalculated] [Aug 1] ... [Aug N] [Gate1 Feature] [Gate2 Feature*] [Heatmap]
+    *Gate2 shown for all tracks if gate2_all_populations=True, or only for gate2_populations if False
+    
+    Parameters
+    ----------
+    window_uids : dict or list
+        Dict mapping population names to lists of window_uids, or flat list.
+    instant_df : polars.DataFrame
+        Instant dataframe with x_um, y_um, frame columns.
+    classified_df : polars.DataFrame
+        Classified dataframe with feature columns and final_population.
+    aug_type : str, default='noise'
+        'noise' or 'scale' augmentation type.
+    color_by_population : bool, default=True
+        If True, color tracks by their final_population (makes changes obvious).
+        If False, use fixed colors (blue=original, orange=augmented).
+    show_recalculated : bool, default=True
+        If True, show a "Recalculated" column after Original as sanity check.
+    feature_marker_size : int, default=40
+        Size of markers in the feature space plot (all dots same size).
+    aug_levels : list, optional
+        Augmentation levels to show.
+    x_col : str, default='avg_speed_um_s'
+        Feature column for x-axis in Gate 1 feature space plot.
+    y_col : str, default='self_intersections'
+        Feature column for y-axis in Gate 1 feature space plot.
+    scaler : sklearn scaler, optional
+        Fitted scaler for transforming Gate 1 features.
+    gate_bounds : dict, optional
+        Gate 1 boundaries as {name: (x1, x2, y1, y2)}.
+    figsize_per_cell : tuple, default=(2.5, 2.5)
+        Size of each subplot in inches.
+    save_path : Path or str, optional
+        Path to save figure.
+    population_order : list, optional
+        Order of populations to display.
+    show_boundaries : bool, default=True
+        Draw lines between populations.
+    show_gate2 : bool, default=True
+        If True, show Gate 2 feature space plot for relevant populations.
+    x_col_gate2 : str, default='anomalous_exponent'
+        Feature column for x-axis in Gate 2 feature space plot.
+    y_col_gate2 : str, default='cum_displacement_um'
+        Feature column for y-axis in Gate 2 feature space plot.
+    scaler_gate2 : sklearn scaler, optional
+        Fitted scaler for Gate 2 features (usually None - Gate 2 uses raw values).
+    gate_bounds_gate2 : dict, optional
+        Gate 2 boundaries (polygon regions for superdiffusive/subdiffusive).
+    gate2_populations : list, optional
+        Populations used for Gate 2 region boundaries. Default: ['superdiffusive_transport', 'subdiffusive_motion']
+    gate2_all_populations : bool, default=True
+        If True, show Gate 2 dots for ALL populations (not just gate2_populations).
+        If False, only show Gate 2 for tracks in gate2_populations list.
+    interleave_populations : bool, default=False
+        If True, interleave tracks by population (1 bound, 1 super, 1 sub, 1 mixed, 1 fast, repeat).
+        If False (default), group all tracks of each population together.
+    tracks_per_population : int, optional
+        Number of tracks per population. If None, uses all provided tracks.
+        When interleave_populations=True, this is especially useful to set to 1 for clean layout.
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The generated figure.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+    from matplotlib.colors import ListedColormap
+    import numpy as np
+    import polars as pl
+    
+    # Colorblind-friendly palettes
+    CB_PALETTE = [
+        '#0072B2',  # Blue (original)
+        '#E69F00',  # Orange
+        '#009E73',  # Green
+        '#CC79A7',  # Pink
+        '#F0E442',  # Yellow
+        '#56B4E9',  # Light blue
+        '#D55E00',  # Red-orange
+    ]
+    
+    # COMMON POPULATION COLOR SCHEME (consistent across all visualizations)
+    # Use this same scheme in heatmaps and gate plots!
+    pop_colors = {
+        'bound_stationary': '#6B46C1',           # Purple
+        'superdiffusive_transport': '#2E86AB',   # Blue
+        'subdiffusive_motion': '#E74C3C',        # Red
+        'mixed_exploratory_bound': '#B7791F',    # Gold/Brown
+        'fast_exploratory': '#2ECC71',           # Green
+        'ungatedgate1': '#888888',               # Gray
+        'ungatedgate2': '#888888',               # Gray
+    }
+    
+    pop_abbrev = {
+        'superdiffusive_transport': 'Super',
+        'subdiffusive_motion': 'Sub',
+        'fast_exploratory': 'Fast',
+        'bound_stationary': 'Bound',
+        'mixed_exploratory_bound': 'Mixed',
+    }
+    
+    DEFAULT_POP_ORDER = [
+        'bound_stationary',
+        'superdiffusive_transport',
+        'subdiffusive_motion',
+        'mixed_exploratory_bound',
+        'fast_exploratory'
+    ]
+    
+    if aug_levels is None:
+        # Default levels for each augmentation type
+        aug_levels_defaults = {
+            'noise': [0.01, 0.02, 0.05, 0.1, 0.2],
+            'scale': [0.05, 0.1, 0.2, 0.3, 0.4],
+            'rotation': [True],  # Single-level: random rotation
+            'reversal': [True],  # Single-level: time reversal
+            'proportional_noise': [0.02, 0.05, 0.1, 0.15, 0.2],
+            'velocity_smoothing': [3, 5, 7, 9],
+            'frame_dropout': [0.05, 0.1, 0.15, 0.2, 0.25],
+            'temporal_jitter': [0.2, 0.5, 1.0, 1.5, 2.0],
+            'bidirectional_scale': [0.05, 0.1, 0.2, 0.3, 0.4],
+        }
+        aug_levels = aug_levels_defaults.get(aug_type, [0.05, 0.1, 0.2])
+    
+    if population_order is None:
+        population_order = DEFAULT_POP_ORDER
+    
+    # --- Parse window_uid helpers ---
+    def parse_window_uid(wuid):
+        parts = wuid.rsplit('_', 2)
+        frame_end = float(parts[-1])
+        frame_start = float(parts[-2])
+        unique_id = '_'.join(parts[:-2]).rsplit('_', 1)[0]
+        return unique_id, int(frame_start), int(frame_end)
+    
+    def get_window_frames(df, wuid):
+        unique_id, frame_start, frame_end = parse_window_uid(wuid)
+        return df.filter(
+            (pl.col('unique_id') == unique_id) &
+            (pl.col('frame') >= frame_start) &
+            (pl.col('frame') <= frame_end)
+        ).sort('frame')
+    
+    # --- Organize tracks by population ---
+    if isinstance(window_uids, dict):
+        selection = window_uids
+    else:
+        # Convert flat list to dict by population
+        selection = {}
+        for uid in window_uids:
+            orig_row = classified_df.filter(
+                (pl.col('track_type') == 'original') & 
+                (pl.col('window_uid') == uid)
+            )
+            if orig_row.height > 0:
+                pop = orig_row['final_population'][0]
+                if pop not in selection:
+                    selection[pop] = []
+                selection[pop].append(uid)
+    
+    # Order populations
+    ordered_pops = []
+    for pop in population_order:
+        if pop in selection:
+            ordered_pops.append(pop)
+    for pop in selection:
+        if pop not in ordered_pops:
+            ordered_pops.append(pop)
+    
+    # Limit tracks per population if specified
+    if tracks_per_population is not None:
+        for pop in selection:
+            selection[pop] = selection[pop][:tracks_per_population]
+    
+    # Build ordered list of tracks with population boundaries
+    tracks = []
+    pop_boundaries = []
+    
+    if interleave_populations:
+        # Interleave: cycle through populations (bound, super, sub, mixed, fast, bound, super, ...)
+        max_tracks = max(len(selection.get(pop, [])) for pop in ordered_pops)
+        current_row = 0
+        for i in range(max_tracks):
+            for pop in ordered_pops:
+                if pop in selection and i < len(selection[pop]):
+                    if len(tracks) == 0 or tracks[-1][0] != pop:
+                        pop_boundaries.append((current_row, pop))
+                    tracks.append((pop, selection[pop][i]))
+                    current_row += 1
+    else:
+        # Grouped: all tracks of one population, then next population
+        current_row = 0
+        for pop in ordered_pops:
+            if pop not in selection:
+                continue
+            pop_boundaries.append((current_row, pop))
+            for uid in selection[pop]:
+                tracks.append((pop, uid))
+                current_row += 1
+    
+    n_tracks = len(tracks)
+    n_aug = len(aug_levels)
+    # Columns: Original + (Recalculated) + augmentations + Gate1 feature space + (Gate2 feature space) + heatmap
+    n_recalc = 1 if show_recalculated else 0
+    n_gate2 = 1 if show_gate2 else 0
+    n_cols = 1 + n_recalc + n_aug + 1 + n_gate2 + 1  # Original + recalc? + augs + Gate1 + Gate2? + heatmap
+    
+    # Default Gate 2 populations (only these get Gate 2 plot)
+    if gate2_populations is None:
+        gate2_populations = ['superdiffusive_transport', 'subdiffusive_motion']
+    
+    if n_tracks == 0:
+        print("⚠️ No tracks to plot!")
+        return None
+    
+    # --- First pass: cache track data and compute global extent ---
+    track_cache = {}  # {uid: dict with all track info}
+    global_extent = 0
+    # Compute scale factor for axis limits based on augmentation type
+    if aug_type in ('scale', 'bidirectional_scale'):
+        max_scale = max(aug_levels)
+        scale_factor = 1 + max_scale
+    else:
+        scale_factor = 1.5
+    
+    # Augmentation suffix uses the full aug_type name
+    aug_suffix = aug_type  # e.g., 'noise', 'scale', 'rotation', etc.
+    
+    for pop, uid in tracks:
+        track_df = get_window_frames(instant_df, uid)
+        if track_df.height == 0:
+            continue
+        
+        x = track_df['x_um'].to_numpy()
+        y = track_df['y_um'].to_numpy()
+        x_centered = x - x.mean()
+        y_centered = y - y.mean()
+        dx = np.diff(x, prepend=x[0])
+        dy = np.diff(y, prepend=y[0])
+        
+        extent = max(np.abs(x_centered).max(), np.abs(y_centered).max()) * scale_factor
+        global_extent = max(global_extent, extent)
+        
+        # Get original classification
+        orig_row = classified_df.filter(
+            (pl.col('track_type') == 'original') & 
+            (pl.col('window_uid') == uid)
+        )
+        if orig_row.height == 0:
+            continue
+        
+        orig_pop = orig_row['final_population'][0]
+        orig_x = orig_row[x_col][0]
+        orig_y = orig_row[y_col][0]
+        
+        # Gate 2 features (for superdiffusive/subdiffusive)
+        orig_x_g2 = orig_row[x_col_gate2][0] if x_col_gate2 in orig_row.columns else None
+        orig_y_g2 = orig_row[y_col_gate2][0] if y_col_gate2 in orig_row.columns else None
+        
+        # Get recalculated classification (sanity check - should match original)
+        recalc_data = None
+        if show_recalculated:
+            recalc_uid = f"{uid}_recalculated"  # Match Cell 9 format: {parent}_recalculated
+            recalc_row = classified_df.filter(pl.col('window_uid') == recalc_uid)
+            if recalc_row.height > 0:
+                recalc_pop = recalc_row['final_population'][0]
+                recalc_data = {
+                    'pop': recalc_pop,
+                    'x': recalc_row[x_col][0],
+                    'y': recalc_row[y_col][0],
+                    'x_g2': recalc_row[x_col_gate2][0] if x_col_gate2 in recalc_row.columns else None,
+                    'y_g2': recalc_row[y_col_gate2][0] if y_col_gate2 in recalc_row.columns else None,
+                    'changed': recalc_pop != orig_pop,  # Should be False if sanity check passes!
+                }
+        
+        # Get augmented classifications
+        aug_data = []
+        for level in aug_levels:
+            # Handle single-level augmentations (like rotation, reversal) that use 'applied' or 'True'
+            if isinstance(level, bool) or level is True:
+                level_str = 'applied'
+            else:
+                level_str = str(level)
+            aug_uid = f"{uid}_{aug_suffix}_{level_str}"
+            aug_row = classified_df.filter(pl.col('window_uid') == aug_uid)
+            if aug_row.height > 0:
+                aug_pop = aug_row['final_population'][0]
+                aug_data.append({
+                    'level': level,
+                    'pop': aug_pop,
+                    'x': aug_row[x_col][0],
+                    'y': aug_row[y_col][0],
+                    'x_g2': aug_row[x_col_gate2][0] if x_col_gate2 in aug_row.columns else None,
+                    'y_g2': aug_row[y_col_gate2][0] if y_col_gate2 in aug_row.columns else None,
+                    'changed': aug_pop != orig_pop,
+                })
+            else:
+                aug_data.append(None)
+        
+        track_cache[uid] = {
+            'x': x_centered, 'y': y_centered, 'dx': dx, 'dy': dy,
+            'orig_pop': orig_pop, 'orig_x': orig_x, 'orig_y': orig_y,
+            'orig_x_g2': orig_x_g2, 'orig_y_g2': orig_y_g2,
+            'recalc': recalc_data, 'aug_data': aug_data
+        }
+    
+    global_extent *= 1.1  # Add padding
+    
+    # --- Create figure ---
+    fig_width = figsize_per_cell[0] * n_cols
+    fig_height = figsize_per_cell[1] * n_tracks
+    fig, axes = plt.subplots(n_tracks, n_cols, figsize=(fig_width, fig_height))
+    
+    if n_tracks == 1:
+        axes = axes.reshape(1, -1)
+    
+    # Column labels
+    if show_recalculated:
+        col_labels = ['Original', 'Recalc'] + [f'{aug_type.title()} {lvl}' for lvl in aug_levels]
+    else:
+        col_labels = ['Original'] + [f'{aug_type.title()} {lvl}' for lvl in aug_levels]
+    col_labels.append('Gate 1')
+    if show_gate2:
+        col_labels.append('Gate 2')
+    col_labels.append('Stability')
+    
+    # --- Plot each track ---
+    for row_idx, (pop, uid) in enumerate(tracks):
+        if uid not in track_cache:
+            continue
+        
+        tc = track_cache[uid]
+        x_centered, y_centered = tc['x'], tc['y']
+        dx, dy = tc['dx'], tc['dy']
+        orig_pop = tc['orig_pop']
+        orig_x, orig_y = tc['orig_x'], tc['orig_y']
+        orig_x_g2, orig_y_g2 = tc['orig_x_g2'], tc['orig_y_g2']
+        recalc_data = tc['recalc']
+        aug_data = tc['aug_data']
+        
+        # Use RECALCULATED population for Gate 2 check (if available)
+        # This ensures consistency with the recalculated baseline approach
+        effective_pop = recalc_data['pop'] if recalc_data is not None else orig_pop
+        
+        # Check if this track should show Gate 2
+        # If gate2_all_populations=True, show for ALL tracks
+        # If False, only show for tracks in gate2_populations list
+        if gate2_all_populations:
+            show_gate2_for_track = show_gate2
+        else:
+            show_gate2_for_track = show_gate2 and (effective_pop in gate2_populations)
+        
+        # Column offset for augmented tracks (depends on whether recalc shown)
+        aug_col_start = 1 + n_recalc
+        
+        # === Column 0: Original track ===
+        ax = axes[row_idx, 0]
+        # Color by population if enabled
+        if color_by_population:
+            track_color = pop_colors.get(orig_pop, '#888888')
+        else:
+            track_color = CB_PALETTE[0]
+        ax.plot(x_centered, y_centered, color=track_color, linewidth=1.5, alpha=0.9)
+        ax.scatter(x_centered[0], y_centered[0], c='none', s=30, edgecolors='black', linewidths=1, zorder=5)
+        ax.set_xlim(-global_extent, global_extent)
+        ax.set_ylim(-global_extent, global_extent)
+        ax.set_aspect('equal')
+        
+        if row_idx == 0:
+            ax.set_title(col_labels[0], fontsize=10, fontweight='bold', color='black')
+        
+        # Population label on y-axis
+        is_pop_start = any(row_idx == bnd[0] for bnd in pop_boundaries)
+        if is_pop_start:
+            pop_name = next(bnd[1] for bnd in pop_boundaries if bnd[0] == row_idx)
+            ax.set_ylabel(pop_abbrev.get(pop_name, pop_name[:6]), fontsize=9, fontweight='bold',
+                         color=pop_colors.get(pop_name, '#888888'))
+        
+        ax.tick_params(labelsize=6)
+        for spine in ax.spines.values():
+            spine.set_edgecolor('black')
+            spine.set_linewidth(0.5)
+        
+        # === Column 1 (if show_recalculated): Recalculated track ===
+        if show_recalculated:
+            ax = axes[row_idx, 1]
+            # Recalculated uses same trajectory (no augmentation), but color by its classification
+            if recalc_data is not None and color_by_population:
+                track_color = pop_colors.get(recalc_data['pop'], '#888888')
+            elif color_by_population:
+                track_color = pop_colors.get(orig_pop, '#888888')
+            else:
+                track_color = CB_PALETTE[0]
+            
+            ax.plot(x_centered, y_centered, color=track_color, linewidth=1.5, alpha=0.9)
+            ax.scatter(x_centered[0], y_centered[0], c='none', s=30, edgecolors='black', linewidths=1, zorder=5)
+            ax.set_xlim(-global_extent, global_extent)
+            ax.set_ylim(-global_extent, global_extent)
+            ax.set_aspect('equal')
+            
+            if row_idx == 0:
+                ax.set_title(col_labels[1], fontsize=10, fontweight='bold', color='black')
+            
+            # Annotation if recalculated differs from original (SANITY CHECK FAILURE!)
+            if recalc_data is not None and recalc_data['changed']:
+                new_pop_short = pop_abbrev.get(recalc_data['pop'], recalc_data['pop'][:6])
+                ax.annotate(f'⚠️→{new_pop_short}', xy=(0.5, 1.02), xycoords='axes fraction',
+                           ha='center', va='bottom', fontsize=7, fontweight='bold',
+                           color='#D55E00')
+            
+            ax.set_yticks([])
+            ax.tick_params(labelsize=6)
+            for spine in ax.spines.values():
+                spine.set_edgecolor('black')
+                spine.set_linewidth(0.5)
+        
+        # === Augmented tracks columns ===
+        for col_idx, level in enumerate(aug_levels):
+            ax = axes[row_idx, aug_col_start + col_idx]
+            
+            seed = hash(f"{uid}_{aug_type}_{level}") % 2**32
+            np.random.seed(seed)
+            
+            # Apply augmentation based on type
+            if aug_type == 'noise':
+                dx_aug = dx + level * np.random.randn(len(dx))
+                dy_aug = dy + level * np.random.randn(len(dy))
+                xa = np.cumsum(dx_aug)
+                ya = np.cumsum(dy_aug)
+            elif aug_type == 'scale':
+                scale_f = 1.0 + (np.random.rand() * 2 - 1) * level
+                dx_aug = dx * scale_f
+                dy_aug = dy * scale_f
+                xa = np.cumsum(dx_aug)
+                ya = np.cumsum(dy_aug)
+            elif aug_type == 'rotation':
+                # Rotate centered coordinates
+                angle_rad = np.deg2rad(np.random.rand() * 360)
+                xa = x_centered * np.cos(angle_rad) - y_centered * np.sin(angle_rad)
+                ya = x_centered * np.sin(angle_rad) + y_centered * np.cos(angle_rad)
+            elif aug_type == 'reversal':
+                # Time reversal
+                xa = x_centered[::-1].copy()
+                ya = y_centered[::-1].copy()
+            elif aug_type == 'proportional_noise':
+                noise_x = 1.0 + level * np.random.randn(len(dx))
+                noise_y = 1.0 + level * np.random.randn(len(dy))
+                xa = np.cumsum(dx * noise_x)
+                ya = np.cumsum(dy * noise_y)
+            elif aug_type == 'velocity_smoothing':
+                from scipy.ndimage import uniform_filter1d
+                dx_smooth = uniform_filter1d(dx, size=int(level), mode='nearest')
+                dy_smooth = uniform_filter1d(dy, size=int(level), mode='nearest')
+                xa = np.cumsum(dx_smooth)
+                ya = np.cumsum(dy_smooth)
+            elif aug_type == 'frame_dropout':
+                n = len(x_centered)
+                keep_mask = np.random.rand(n) > level
+                keep_mask[0] = True
+                keep_mask[-1] = True
+                indices = np.arange(n)
+                kept_indices = indices[keep_mask]
+                xa = np.interp(indices, kept_indices, x_centered[keep_mask])
+                ya = np.interp(indices, kept_indices, y_centered[keep_mask])
+            elif aug_type == 'temporal_jitter':
+                n = len(x_centered)
+                t_orig = np.arange(n, dtype=float)
+                t_jitter = t_orig + level * np.random.randn(n)
+                t_jitter = np.sort(t_jitter)
+                t_jitter = np.clip(t_jitter, 0, n-1)
+                xa = np.interp(t_orig, t_jitter, x_centered)
+                ya = np.interp(t_orig, t_jitter, y_centered)
+            elif aug_type == 'bidirectional_scale':
+                direction = 1 if np.random.rand() > 0.5 else -1
+                scale_f = 1.0 + direction * level
+                xa = np.cumsum(dx * scale_f)
+                ya = np.cumsum(dy * scale_f)
+            else:
+                # Unknown type - just use original
+                xa = x_centered.copy()
+                ya = y_centered.copy()
+            
+            xa = xa - xa.mean()
+            ya = ya - ya.mean()
+            
+            # Color by population of this augmented track's classification
+            if aug_data[col_idx] is not None and color_by_population:
+                track_color = pop_colors.get(aug_data[col_idx]['pop'], '#888888')
+            elif color_by_population:
+                track_color = pop_colors.get(orig_pop, '#888888')
+            else:
+                color_idx = min(col_idx + 1, len(CB_PALETTE) - 1)
+                track_color = CB_PALETTE[color_idx]
+            
+            ax.plot(xa, ya, color=track_color, linewidth=1.5, alpha=0.9)
+            ax.scatter(xa[0], ya[0], c='none', s=30, edgecolors='black', linewidths=1, zorder=5)
+            ax.set_xlim(-global_extent, global_extent)
+            ax.set_ylim(-global_extent, global_extent)
+            ax.set_aspect('equal')
+            
+            # Header row: show column label
+            if row_idx == 0:
+                ax.set_title(col_labels[aug_col_start + col_idx], fontsize=10, fontweight='bold', color='black')
+            
+            # Annotation if changed - show new category above plot
+            if aug_data[col_idx] is not None and aug_data[col_idx]['changed']:
+                new_pop = aug_data[col_idx]['pop']
+                new_pop_short = pop_abbrev.get(new_pop, new_pop[:6])
+                ax.annotate(f'→{new_pop_short}', xy=(0.5, 1.02), xycoords='axes fraction',
+                           ha='center', va='bottom', fontsize=7, fontweight='bold',
+                           color='#D55E00')
+            
+            ax.set_yticks([])
+            ax.tick_params(labelsize=6)
+            for spine in ax.spines.values():
+                spine.set_edgecolor('black')
+                spine.set_linewidth(0.5)
+        
+        # === Feature space column (Gate 1) ===
+        feature_col = aug_col_start + n_aug
+        ax = axes[row_idx, feature_col]
+        
+        # Transform features if scaler provided (suppress sklearn feature name warning)
+        import warnings
+        
+        # Use RECALCULATED as reference point (not original)
+        # This ensures arrows show TRUE augmentation effect
+        if recalc_data is not None:
+            ref_x, ref_y = recalc_data['x'], recalc_data['y']
+            ref_pop = recalc_data['pop']
+        else:
+            ref_x, ref_y = orig_x, orig_y
+            ref_pop = orig_pop
+        
+        if scaler is not None:
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    ref_transformed = scaler.transform([[ref_x, ref_y]])[0]
+                rx, ry = ref_transformed[0], ref_transformed[1]
+            except:
+                rx, ry = ref_x, ref_y
+        else:
+            rx, ry = ref_x, ref_y
+        
+        # Draw gates
+        if gate_bounds:
+            for name, (x1, x2, y1, y2) in gate_bounds.items():
+                rect = Rectangle((x1, y1), x2-x1, y2-y1, fill=False,
+                                edgecolor='gray', linewidth=0.5, linestyle='--', alpha=0.3)
+                ax.add_patch(rect)
+        
+        # Plot recalculated reference point (colored by population, with thin black outline)
+        ref_color = pop_colors.get(ref_pop, '#888888')
+        ax.scatter(rx, ry, s=feature_marker_size, c=ref_color, marker='o', 
+                  edgecolors='black', linewidths=0.8, zorder=10, alpha=0.9)
+        
+        # Plot augmented points (colored by their classification, arrows from recalculated)
+        for i, aug in enumerate(aug_data):
+            if aug is None:
+                continue
+            
+            if scaler is not None:
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        aug_transformed = scaler.transform([[aug['x'], aug['y']]])[0]
+                    ax_pt, ay_pt = aug_transformed[0], aug_transformed[1]
+                except:
+                    ax_pt, ay_pt = aug['x'], aug['y']
+            else:
+                ax_pt, ay_pt = aug['x'], aug['y']
+            
+            # Color by augmented track's population
+            if color_by_population:
+                pt_color = pop_colors.get(aug['pop'], '#888888')
+            else:
+                color_idx = min(i + 1, len(CB_PALETTE) - 1)
+                pt_color = CB_PALETTE[color_idx]
+            
+            # Arrow from recalculated reference to augmented
+            ax.plot([rx, ax_pt], [ry, ay_pt], color=pt_color, linewidth=0.5, alpha=0.3, zorder=1)
+            marker = 'X' if aug['changed'] else 'o'
+            ax.scatter(ax_pt, ay_pt, s=feature_marker_size, c=pt_color, marker=marker, 
+                      edgecolors='none', alpha=0.9, zorder=5)
+        
+        if gate_bounds:
+            all_x = [b[0] for b in gate_bounds.values()] + [b[1] for b in gate_bounds.values()]
+            all_y = [b[2] for b in gate_bounds.values()] + [b[3] for b in gate_bounds.values()]
+            ax.set_xlim(min(all_x) * 0.9, max(all_x) * 1.1)
+            ax.set_ylim(min(all_y) * 0.9, max(all_y) * 1.1)
+        
+        ax.set_aspect('equal')
+        if row_idx == 0:
+            ax.set_title(col_labels[feature_col], fontsize=10, fontweight='bold', color='black')
+        
+        # Add axis labels for feature space
+        ax.set_xlabel(x_col, fontsize=7)
+        ax.set_ylabel(y_col, fontsize=7)
+        
+        ax.tick_params(labelsize=6)
+        for spine in ax.spines.values():
+            spine.set_edgecolor('black')
+            spine.set_linewidth(0.5)
+        
+        # === Gate 2 feature space column (only for superdiffusive/subdiffusive) ===
+        gate2_col = feature_col + 1
+        if show_gate2:
+            ax = axes[row_idx, gate2_col]
+            
+            if show_gate2_for_track:
+                # Use RECALCULATED as reference for Gate 2 (same as Gate 1)
+                if recalc_data is not None:
+                    ref_x_g2 = recalc_data.get('x_g2')
+                    ref_y_g2 = recalc_data.get('y_g2')
+                    ref_pop_g2 = recalc_data['pop']
+                else:
+                    ref_x_g2 = orig_x_g2
+                    ref_y_g2 = orig_y_g2
+                    ref_pop_g2 = orig_pop
+                
+                if ref_x_g2 is not None and ref_y_g2 is not None:
+                    # Transform Gate 2 features if scaler provided
+                    if scaler_gate2 is not None:
+                        try:
+                            with warnings.catch_warnings():
+                                warnings.simplefilter("ignore")
+                                g2_transformed = scaler_gate2.transform([[ref_x_g2, ref_y_g2]])[0]
+                            rx_g2, ry_g2 = g2_transformed[0], g2_transformed[1]
+                        except:
+                            rx_g2, ry_g2 = ref_x_g2, ref_y_g2
+                    else:
+                        rx_g2, ry_g2 = ref_x_g2, ref_y_g2
+                    
+                    # Draw Gate 2 boundaries (polygons) if provided
+                    if gate_bounds_gate2:
+                        from matplotlib.patches import Polygon as MplPolygon
+                        for name, coords in gate_bounds_gate2.items():
+                            if isinstance(coords, list) and len(coords) > 2:
+                                poly = MplPolygon(coords, fill=False, edgecolor='gray', 
+                                                linewidth=0.5, linestyle='--', alpha=0.3)
+                                ax.add_patch(poly)
+                    
+                    # Plot recalculated reference point (colored by population)
+                    ref_color_g2 = pop_colors.get(ref_pop_g2, '#888888')
+                    ax.scatter(rx_g2, ry_g2, s=feature_marker_size, c=ref_color_g2, marker='o', 
+                              edgecolors='black', linewidths=0.8, zorder=10, alpha=0.9)
+                    
+                    # Plot augmented points (arrows from recalculated reference)
+                    for i, aug in enumerate(aug_data):
+                        if aug is None:
+                            continue
+                        ax_g2, ay_g2 = aug.get('x_g2'), aug.get('y_g2')
+                        if ax_g2 is None or ay_g2 is None:
+                            continue
+                        
+                        if scaler_gate2 is not None:
+                            try:
+                                with warnings.catch_warnings():
+                                    warnings.simplefilter("ignore")
+                                    g2_transformed = scaler_gate2.transform([[ax_g2, ay_g2]])[0]
+                                ax_g2, ay_g2 = g2_transformed[0], g2_transformed[1]
+                            except:
+                                pass
+                        
+                        if color_by_population:
+                            pt_color = pop_colors.get(aug['pop'], '#888888')
+                        else:
+                            color_idx = min(i + 1, len(CB_PALETTE) - 1)
+                            pt_color = CB_PALETTE[color_idx]
+                        
+                        # Arrow from recalculated reference to augmented
+                        ax.plot([rx_g2, ax_g2], [ry_g2, ay_g2], color=pt_color, linewidth=0.5, alpha=0.3, zorder=1)
+                        marker = 'X' if aug['changed'] else 'o'
+                        ax.scatter(ax_g2, ay_g2, s=feature_marker_size, c=pt_color, marker=marker, 
+                                  edgecolors='none', alpha=0.9, zorder=5)
+                    
+                    # Set axis limits for Gate 2
+                    ax.set_xlim(0, 3)   # alpha (anomalous_exponent) range
+                    ax.set_ylim(0, 7)   # cum_displacement_um range
+                else:
+                    ax.text(0.5, 0.5, 'N/A', transform=ax.transAxes, ha='center', va='center',
+                           fontsize=10, color='gray', alpha=0.5)
+            else:
+                # Not a Gate 2 track - show empty/grayed out
+                ax.text(0.5, 0.5, 'N/A', transform=ax.transAxes, ha='center', va='center',
+                       fontsize=10, color='gray', alpha=0.5)
+            
+            # Make the plot visually square: use 'auto' aspect with box_aspect=1
+            ax.set_aspect('auto')
+            ax.set_box_aspect(1)
+            if row_idx == 0:
+                ax.set_title(col_labels[gate2_col], fontsize=10, fontweight='bold', color='black')
+            
+            # Add axis labels for Gate 2
+            if show_gate2_for_track:
+                ax.set_xlabel('α', fontsize=7)
+                ax.set_ylabel('cum_disp', fontsize=7)
+            
+            ax.tick_params(labelsize=6)
+            for spine in ax.spines.values():
+                spine.set_edgecolor('black')
+                spine.set_linewidth(0.5)
+        
+        # === Heatmap column (single track) ===
+        heatmap_col = feature_col + 1 + n_gate2
+        ax = axes[row_idx, heatmap_col]
+        
+        # Create 1-row heatmap data (include recalculated if shown)
+        heatmap_data = []
+        if show_recalculated:
+            if recalc_data is not None:
+                heatmap_data.append(1 if recalc_data['changed'] else 0)
+            else:
+                heatmap_data.append(np.nan)
+        
+        for aug in aug_data:
+            if aug is None:
+                heatmap_data.append(np.nan)
+            else:
+                heatmap_data.append(1 if aug['changed'] else 0)
+        
+        heatmap_arr = np.array([heatmap_data])
+        
+        # Custom colormap: blue=stable, orange=changed
+        cmap = ListedColormap(['#2E5A87', '#E85D04'])
+        
+        ax.imshow(heatmap_arr, aspect='auto', cmap=cmap, vmin=0, vmax=1, interpolation='nearest')
+        
+        # X-tick labels: Recalc + aug levels
+        if show_recalculated:
+            heatmap_labels = ['R'] + [f'{lvl}' for lvl in aug_levels]
+        else:
+            heatmap_labels = [f'{lvl}' for lvl in aug_levels]
+        ax.set_xticks(range(len(heatmap_labels)))
+        ax.set_xticklabels(heatmap_labels, fontsize=6, rotation=45)
+        ax.set_yticks([])
+        
+        if row_idx == 0:
+            ax.set_title(col_labels[heatmap_col], fontsize=10, fontweight='bold', color='black')
+        
+        for spine in ax.spines.values():
+            spine.set_edgecolor('black')
+            spine.set_linewidth(0.5)
+    
+    # --- Overall title ---
+    recalc_str = " + Recalculated" if show_recalculated else ""
+    color_str = " (colored by population)" if color_by_population else ""
+    fig.suptitle(f'{aug_type.upper()} Augmentation Analysis: {n_tracks} Tracks{color_str}\n'
+                f'Columns: [Original]{recalc_str} [Aug Levels] [Feature Space] [Stability]',
+                fontsize=12, fontweight='bold', y=1.02)
+    
+    plt.tight_layout()
+    
+    # --- Add color legend for populations ---
+    if color_by_population:
+        from matplotlib.patches import Patch
+        # Get unique populations present in the data
+        present_pops = list(set(tc['orig_pop'] for tc in track_cache.values()))
+        legend_elements = []
+        for pop_name in population_order:
+            if pop_name in present_pops:
+                color = pop_colors.get(pop_name, '#888888')
+                label = pop_abbrev.get(pop_name, pop_name[:10])
+                legend_elements.append(Patch(facecolor=color, edgecolor='black', linewidth=0.5, label=label))
+        
+        # Place legend below figure
+        fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.01),
+                  ncol=len(legend_elements), fontsize=9, framealpha=0.9,
+                  title='Population Colors', title_fontsize=10)
+    
+    # --- Draw population boundaries ---
+    if show_boundaries and len(pop_boundaries) > 1:
+        for i, (row_idx, pop) in enumerate(pop_boundaries[1:], 1):
+            for col_idx in range(n_cols):
+                ax = axes[row_idx, col_idx]
+                bbox = ax.get_position()
+                line = plt.Line2D([bbox.x0, bbox.x1], [bbox.y1, bbox.y1],
+                                 transform=fig.transFigure, color='black',
+                                 linewidth=2, clip_on=False)
+                fig.add_artist(line)
+    
+    # --- Save ---
+    if save_path:
+        fig.patch.set_facecolor('none')
+        for ax_row in axes:
+            for ax in ax_row:
+                ax.set_facecolor('none')
+        fig.savefig(save_path, format='svg', transparent=True, bbox_inches='tight', dpi=150)
+        print(f"💾 Saved: {save_path}")
+    
+    plt.show()
+    return fig
