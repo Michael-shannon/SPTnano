@@ -525,7 +525,7 @@ class TimeAwareTrajectoryDataset(Dataset):
             'time_window_t1': (row_start_t1 - track_start) // self.step_size,
             'condition': condition,
         }
-    
+        
     def get_single_windows(self):
         """
         Get all unique windows for inference.
@@ -541,7 +541,8 @@ class TimeAwareTrajectoryDataset(Dataset):
         single_windows = []
         seen_keys = set()
         
-        for unique_id, row_start_t, row_start_t1 in tqdm(self.pair_indices, desc="Extracting unique windows"):
+        # First, extract all windows from pairs (existing logic)
+        for unique_id, row_start_t, row_start_t1 in tqdm(self.pair_indices, desc="Extracting unique windows from pairs"):
             info = self.track_index[unique_id]
             track_start = info["start_row"]
             condition = info["condition"]
@@ -550,7 +551,6 @@ class TimeAwareTrajectoryDataset(Dataset):
             time_window_t = (row_start_t - track_start) // self.step_size
             start_frame_t = self.frames[row_start_t]
             end_frame_t = self.frames[row_start_t + self.window_size - 1]
-            # Create window_uid matching features.py format
             window_uid_t = f"{unique_id}_{time_window_t}_{start_frame_t}_{end_frame_t}"
             key_t = f"{unique_id}_{time_window_t}"
             if key_t not in seen_keys:
@@ -583,7 +583,238 @@ class TimeAwareTrajectoryDataset(Dataset):
                     'condition': condition,
                 })
         
-        return single_windows
+        # NEW: Extract remaining windows that don't form pairs (last windows in tracks)
+        print("   Extracting remaining windows (not in pairs)...")
+        for unique_id, info in tqdm(self.track_index.items(), desc="Extracting remaining windows"):
+            n_frames = info["n_frames"]
+            start_row = info["start_row"]
+            track_start = start_row
+            condition = info["condition"]
+            
+            # Find the last window that fits
+            max_window_start = n_frames - self.window_size
+            
+            if max_window_start >= 0:
+                # Check all possible window starts
+                for local_start in range(0, max_window_start + 1, self.step_size):
+                    time_window = local_start // self.step_size
+                    key = f"{unique_id}_{time_window}"
+                    
+                    # Only add if not already seen (from pairs)
+                    if key not in seen_keys:
+                        row_start = start_row + local_start
+                        start_frame = self.frames[row_start]
+                        end_frame = self.frames[row_start + self.window_size - 1]
+                        window_uid = f"{unique_id}_{time_window}_{start_frame}_{end_frame}"
+                        
+                        seen_keys.add(key)
+                        single_windows.append({
+                            'features': self._extract_features(row_start, row_start + self.window_size),
+                            'unique_id': unique_id,
+                            'window_uid': window_uid,
+                            'time_window': time_window,
+                            'start_frame': start_frame,
+                            'end_frame': end_frame,
+                            'condition': condition,
+                        })
+        
+        return single_windows    
+    # def get_single_windows(self):
+    #     """
+    #     Get all unique windows for inference.
+        
+    #     Returns a list of dictionaries, each containing:
+    #     - features: numpy array of shape (window_size, 3)
+    #     - unique_id: Track identifier
+    #     - window_uid: Unique window ID (format: unique_id_timewindow_framestart_frameend)
+    #     - time_window: Window index within track
+    #     - start_frame, end_frame: Frame range
+    #     - condition: Experimental condition
+    #     """
+    #     single_windows = []
+    #     seen_keys = set()
+        
+    #     for unique_id, row_start_t, row_start_t1 in tqdm(self.pair_indices, desc="Extracting unique windows"):
+    #         info = self.track_index[unique_id]
+    #         track_start = info["start_row"]
+    #         condition = info["condition"]
+            
+    #         # Window t
+    #         time_window_t = (row_start_t - track_start) // self.step_size
+    #         start_frame_t = self.frames[row_start_t]
+    #         end_frame_t = self.frames[row_start_t + self.window_size - 1]
+    #         # Create window_uid matching features.py format
+    #         window_uid_t = f"{unique_id}_{time_window_t}_{start_frame_t}_{end_frame_t}"
+    #         key_t = f"{unique_id}_{time_window_t}"
+    #         if key_t not in seen_keys:
+    #             seen_keys.add(key_t)
+    #             single_windows.append({
+    #                 'features': self._extract_features(row_start_t, row_start_t + self.window_size),
+    #                 'unique_id': unique_id,
+    #                 'window_uid': window_uid_t,
+    #                 'time_window': time_window_t,
+    #                 'start_frame': start_frame_t,
+    #                 'end_frame': end_frame_t,
+    #                 'condition': condition,
+    #             })
+            
+    #         # Window t+1
+    #         time_window_t1 = (row_start_t1 - track_start) // self.step_size
+    #         start_frame_t1 = self.frames[row_start_t1]
+    #         end_frame_t1 = self.frames[row_start_t1 + self.window_size - 1]
+    #         window_uid_t1 = f"{unique_id}_{time_window_t1}_{start_frame_t1}_{end_frame_t1}"
+    #         key_t1 = f"{unique_id}_{time_window_t1}"
+    #         if key_t1 not in seen_keys:
+    #             seen_keys.add(key_t1)
+    #             single_windows.append({
+    #                 'features': self._extract_features(row_start_t1, row_start_t1 + self.window_size),
+    #                 'unique_id': unique_id,
+    #                 'window_uid': window_uid_t1,
+    #                 'time_window': time_window_t1,
+    #                 'start_frame': start_frame_t1,
+    #                 'end_frame': end_frame_t1,
+    #                 'condition': condition,
+    #             })
+        
+    #     return single_windows
+
+
+def extract_all_windows(instant_df, window_size=60, overlap=30, min_track_length=60):
+    """
+    Standalone window extraction for inference — no pair infrastructure.
+    
+    Generates ALL valid windows from an instant-level DataFrame, using the
+    EXACT SAME windowing logic as features.py:
+      - for start in range(0, n_frames - window_size + 1, step_size)
+      - time_window_num = start // step_size
+      - window_uid = f"{unique_id}_{time_window_num}_{frame_start}_{frame_end}"
+    
+    Unlike TimeAwareTrajectoryDataset.get_single_windows(), this function:
+      - Does NOT require windows to form temporal pairs
+      - Uses min_track_length directly (no forced min_track_length = window_size + step_size)
+      - Extracts EVERY valid window, including the last window in each track
+    
+    Parameters
+    ----------
+    instant_df : pl.DataFrame or pd.DataFrame
+        DataFrame with trajectory data containing columns:
+        - unique_id: Track identifier
+        - frame: Frame number
+        - x_um, y_um: Positions in microns
+        - condition: Experimental condition
+        - direction_rad (optional): Pre-computed direction
+    window_size : int, default=60
+        Number of frames per window
+    overlap : int, default=30
+        Overlap between consecutive windows
+    min_track_length : int, default=60
+        Minimum track length to include (NOT inflated by step_size)
+        
+    Returns
+    -------
+    list of dict
+        Each dict contains:
+        - features: numpy array (window_size, 3) with [dx, dy, direction]
+        - unique_id: Track identifier
+        - window_uid: Unique window ID (matches features.py format)
+        - time_window: Window index within track
+        - start_frame, end_frame: Frame range
+        - condition: Experimental condition
+    """
+    print(f"📊 Extracting all windows (standalone, no pair constraint)...")
+    print(f"   window_size={window_size}, overlap={overlap}, min_track_length={min_track_length}")
+    
+    step_size = window_size - overlap
+    
+    # Convert to Polars if needed
+    if isinstance(instant_df, pl.DataFrame):
+        df = instant_df.sort(["unique_id", "frame"])
+    else:
+        df = pl.from_pandas(instant_df).sort(["unique_id", "frame"])
+    
+    has_direction = 'direction_rad' in df.columns
+    
+    # Get track lengths and filter
+    track_lengths = df.group_by("unique_id").agg([
+        pl.len().alias("n_frames"),
+        pl.col("condition").first().alias("condition")
+    ]).filter(pl.col("n_frames") >= min_track_length)
+    
+    n_valid = len(track_lengths)
+    print(f"   Found {n_valid:,} tracks with >= {min_track_length} frames")
+    
+    # Build track index (row ranges in sorted df)
+    df_with_idx = df.with_row_index("row_idx")
+    track_ranges = df_with_idx.group_by("unique_id").agg([
+        pl.col("row_idx").min().alias("start_row"),
+        pl.col("row_idx").max().alias("end_row"),
+        pl.len().alias("n_frames"),
+        pl.col("condition").first().alias("condition"),
+    ]).filter(pl.col("n_frames") >= min_track_length)
+    
+    track_index = {}
+    for row in track_ranges.iter_rows(named=True):
+        track_index[row["unique_id"]] = {
+            "start_row": row["start_row"],
+            "n_frames": row["n_frames"],
+            "condition": row["condition"],
+        }
+    
+    # Pre-extract numpy arrays for fast slicing
+    x_um = df["x_um"].to_numpy()
+    y_um = df["y_um"].to_numpy()
+    frames = df["frame"].to_numpy()
+    if has_direction:
+        direction_rad = df["direction_rad"].to_numpy()
+    else:
+        direction_rad = None
+    
+    def _extract_features(row_start, row_end):
+        """Extract [dx, dy, direction] features from row range."""
+        x = x_um[row_start:row_end]
+        y = y_um[row_start:row_end]
+        dx = np.diff(x, prepend=x[0])
+        dy = np.diff(y, prepend=y[0])
+        if direction_rad is not None:
+            direction = direction_rad[row_start:row_end]
+        else:
+            direction = np.arctan2(dy, dx)
+            direction = np.nan_to_num(direction, 0)
+        features = np.column_stack([dx, dy, direction])
+        features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+        return features.astype(np.float32)
+    
+    # Generate ALL valid windows — matching features.py logic exactly
+    single_windows = []
+    
+    for unique_id, info in tqdm(track_index.items(), desc="Extracting windows"):
+        n_frames = info["n_frames"]
+        start_row = info["start_row"]
+        condition = info["condition"]
+        
+        # EXACT same loop as features.py:
+        # for start in range(0, n_frames - window_size + 1, window_size - overlap):
+        for local_start in range(0, n_frames - window_size + 1, step_size):
+            row_start = start_row + local_start
+            row_end = row_start + window_size
+            
+            time_window = local_start // step_size
+            start_frame = frames[row_start]
+            end_frame = frames[row_end - 1]  # last frame in window
+            window_uid = f"{unique_id}_{time_window}_{start_frame}_{end_frame}"
+            
+            single_windows.append({
+                'features': _extract_features(row_start, row_end),
+                'unique_id': unique_id,
+                'window_uid': window_uid,
+                'time_window': time_window,
+                'start_frame': start_frame,
+                'end_frame': end_frame,
+                'condition': condition,
+            })
+    
+    print(f"   ✅ Extracted {len(single_windows):,} windows from {n_valid:,} tracks")
+    return single_windows
 
 
 def contrastive_loss(z_i, z_j, temperature=0.5):
@@ -1293,6 +1524,7 @@ def get_augmentation_fn(aug_type='noise', strength=0.01, noise_strength=None, sc
     - 'time_warp': Simplified time warping via noise
     - 'crop': Zero out start or end of sequence
     - 'combined': Apply both noise and scale
+    - 'shuffle_scale_angle': Settled augmentation (3-seg shuffle + 10-50% scale + 1-10° angle)
     """
     
     if aug_type == 'noise':
@@ -1351,6 +1583,73 @@ def get_augmentation_fn(aug_type='noise', strength=0.01, noise_strength=None, sc
             x = scale_fn(x)
             return x
         return combined_aug
+    
+    elif aug_type == 'shuffle_scale_angle':
+        """
+        Settled augmentation for contrastive learning:
+        - 3-segment shuffle
+        - 10-50% per-segment scaling
+        - 1-10° per-step angular perturbation
+        
+        This is the final settled augmentation configuration.
+        """
+        try:
+            from .augmentations import apply_augmentation_for_training
+        except ImportError:
+            raise ImportError("Cannot import apply_augmentation_for_training from SPTnano.augmentations")
+        
+        def shuffle_scale_angle_aug(x):
+            """
+            Apply settled augmentation to torch tensor features.
+            
+            Args:
+                x: torch.Tensor [B, T, 3] with features [dx, dy, direction]
+            
+            Returns:
+                torch.Tensor [B, T, 3] with augmented features [dx_aug, dy_aug, direction_aug]
+            """
+            import numpy as np
+            
+            device = x.device
+            B, T, F = x.shape
+            
+            # Convert to numpy for augmentation
+            x_np = x.detach().cpu().numpy()
+            
+            # Process each batch item
+            x_aug_list = []
+            for b in range(B):
+                # Extract dx, dy from features
+                dx = x_np[b, :, 0]
+                dy = x_np[b, :, 1]
+                
+                # Convert to x, y coordinates (cumulative sum from origin)
+                x_coords = np.cumsum(dx)
+                y_coords = np.cumsum(dy)
+                
+                # Apply settled augmentation
+                # Use batch index + a hash of the original coordinates as seed for reproducibility
+                seed = hash((b, tuple(x_coords[:5]), tuple(y_coords[:5]))) % 2**32
+                x_aug, y_aug = apply_augmentation_for_training(x_coords, y_coords, seed=seed)
+                
+                # Convert back to dx, dy
+                dx_aug = np.diff(x_aug, prepend=x_aug[0])
+                dy_aug = np.diff(y_aug, prepend=y_aug[0])
+                
+                # Recompute direction from augmented dx, dy
+                direction_aug = np.arctan2(dy_aug, dx_aug)
+                direction_aug = np.nan_to_num(direction_aug, nan=0.0)
+                
+                # Stack features
+                features_aug = np.column_stack([dx_aug, dy_aug, direction_aug])
+                features_aug = np.nan_to_num(features_aug, nan=0.0, posinf=0.0, neginf=0.0)
+                x_aug_list.append(features_aug)
+            
+            # Convert back to torch tensor
+            x_aug_tensor = torch.from_numpy(np.array(x_aug_list)).float().to(device)
+            return x_aug_tensor
+        
+        return shuffle_scale_angle_aug
     
     else:
         raise ValueError(f"Unknown augmentation type: {aug_type}")
@@ -1877,7 +2176,7 @@ class TimeAwareMotionTrainer:
         self.use_scheduler = use_scheduler
         if use_scheduler:
             self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                self.optimizer, mode='min', factor=0.5, patience=5, verbose=True
+                self.optimizer, mode='min', factor=0.5, patience=5
             )
         
         # TensorBoard
@@ -4574,6 +4873,9 @@ def create_smart_train_val_test_split(
     save_train=False,
     save_val=False,
     save_test=False,
+    save_pickle=False,
+    window_size=None,
+    overlap=None,
 ):
     """
     Create smart train/validation/test splits with multiple strategies.
@@ -4638,6 +4940,14 @@ def create_smart_train_val_test_split(
         Whether to save validation dataframe to parquet
     save_test : bool, default=False
         Whether to save test dataframe to parquet
+    save_pickle : bool, default=False
+        Whether to save a pickle file with dataframes and split configuration.
+        Saves everything needed to reload splits: train_df, val_df, test_df, and split_config.
+        Similar to the manual pickle approach in notebooks.
+    window_size : int, optional
+        Window size used for creating windows (for inclusion in split_config if save_pickle=True)
+    overlap : int, optional
+        Overlap between windows (for inclusion in split_config if save_pickle=True)
 
     Returns
     -------
@@ -5244,6 +5554,71 @@ def create_smart_train_val_test_split(
                 test_df.to_parquet(test_path)
             print(f"   ✅ Saved test_df: {test_path}")
             split_info["test_path"] = str(test_path)
+    
+    # Save pickle file with dataframes and configuration (similar to notebook approach)
+    # Always save DataFrames as parquet files (no conversion) and store paths in pickle
+    if save_pickle and save_dir:
+        import pickle
+        
+        save_path = Path(save_dir)
+        save_path.mkdir(parents=True, exist_ok=True)
+        
+        # Build split_config similar to notebook
+        split_config = {
+            'random_seed': random_seed,
+            'split_strategy': split_strategy,
+            'val_split': val_split,
+            'test_split': test_split,
+            'balancing_features': balancing_features,
+            'cells_per_condition': cells_per_condition,
+            'test_condition_col': test_condition_col,
+            'is_polars': is_polars,  # Remember original type
+        }
+        
+        # Add window_size and overlap if provided
+        if window_size is not None:
+            split_config['window_size'] = window_size
+        if overlap is not None:
+            split_config['overlap'] = overlap
+        
+        # Always save DataFrames as parquet files (no conversion, memory efficient)
+        train_parquet = save_path / "train_df.parquet"
+        val_parquet = save_path / "val_df.parquet"
+        test_parquet = save_path / "test_df.parquet"
+        
+        if is_polars:
+            # Polars: write directly to parquet
+            train_df.write_parquet(train_parquet)
+            val_df.write_parquet(val_parquet)
+            test_df.write_parquet(test_parquet)
+        else:
+            # Pandas: convert to parquet (no Polars conversion needed)
+            train_df.to_parquet(train_parquet)
+            val_df.to_parquet(val_parquet)
+            test_df.to_parquet(test_parquet)
+        
+        # Store paths in config
+        split_config['train_path'] = str(train_parquet)
+        split_config['val_path'] = str(val_parquet)
+        split_config['test_path'] = str(test_parquet)
+        
+        # Create split_data with paths only (not dataframes)
+        split_data = {
+            'split_config': split_config,
+            'dataframes_in_parquet': True,  # Flag indicating dataframes are in parquet files
+        }
+        
+        # Save pickle file (contains only paths and config, not dataframes)
+        pickle_path = save_path / "data_splits.pkl"
+        with open(pickle_path, 'wb') as f:
+            pickle.dump(split_data, f)
+        
+        print(f"\n💾 Saved pickle file: {pickle_path}")
+        print(f"   DataFrames saved as parquet files (paths stored in pickle)")
+        print(f"   Train: {len(train_df):,} points → {train_parquet.name}")
+        print(f"   Val:   {len(val_df):,} points → {val_parquet.name}")
+        print(f"   Test:  {len(test_df):,} points → {test_parquet.name}")
+        split_info["pickle_path"] = str(pickle_path)
 
     return train_df, val_df, test_df, split_info
 

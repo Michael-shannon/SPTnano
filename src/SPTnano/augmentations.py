@@ -544,3 +544,44 @@ def apply_augmentation_for_training(x, y, seed=None):
         seed = np.random.randint(0, 2**32)
     
     return aug_shuffle_scale_noise(x, y, nseg, scale_range, angle_range, seed)
+
+
+# ============================================================================
+# LEGACY AUGMENTATION FUNCTIONS (for backward compatibility)
+# ============================================================================
+# These are old augmentation functions kept for compatibility with older notebooks.
+# The settled augmentation is apply_augmentation_for_training() above.
+
+def augment_noise(x, y, noise, seed):
+    """
+    Legacy noise augmentation: Add Gaussian noise to displacements.
+    
+    Args:
+        x, y: Track coordinates (numpy arrays)
+        noise: Noise level (standard deviation)
+        seed: Random seed
+    
+    Returns:
+        x_aug, y_aug: Augmented coordinates
+    """
+    np.random.seed(seed)
+    dx, dy = np.diff(x, prepend=x[0]), np.diff(y, prepend=y[0])
+    return np.cumsum(dx + noise*np.random.randn(len(dx))), np.cumsum(dy + noise*np.random.randn(len(dy)))
+
+
+def augment_scale(x, y, scale, seed):
+    """
+    Legacy scale augmentation: Randomly scale displacement magnitudes.
+    
+    Args:
+        x, y: Track coordinates (numpy arrays)
+        scale: Scale level (0-1, applied as 1 ± scale)
+        seed: Random seed
+    
+    Returns:
+        x_aug, y_aug, scale_factor: Augmented coordinates and applied scale factor
+    """
+    np.random.seed(seed)
+    dx, dy = np.diff(x, prepend=x[0]), np.diff(y, prepend=y[0])
+    f = 1.0 + (np.random.rand()*2-1)*scale
+    return np.cumsum(dx*f), np.cumsum(dy*f), f

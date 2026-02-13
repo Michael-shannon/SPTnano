@@ -104,6 +104,67 @@ ANALYSIS_PARAMS = {
     "dpi": 100,
 }
 
+# =============================================================================
+# TRANSFORMER GRID SEARCH CONFIGURATION
+# =============================================================================
+# Configuration for architecture × temperature grid search training
+
+# Model architectures to train
+TRANSFORMER_ARCHITECTURES = [
+    {'name': 'med64_h4_ff128_L2',  'embed_dim': 64,  'num_heads': 4, 'ff_dim': 128, 'num_layers': 2},  # Baseline
+    {'name': 'med64_h4_ff256_L3',  'embed_dim': 64,  'num_heads': 4, 'ff_dim': 256, 'num_layers': 3},  # Deeper
+    {'name': 'med128_h4_ff256_L2', 'embed_dim': 128, 'num_heads': 4, 'ff_dim': 256, 'num_layers': 2},  # Bigger embed
+    {'name': 'med128_h8_ff512_L3', 'embed_dim': 128, 'num_heads': 8, 'ff_dim': 512, 'num_layers': 3},  # Full capacity
+]
+
+# Temperature values for contrastive loss
+TRANSFORMER_TEMPERATURES = [0.2, 0.5]  # Low (sharp) and Mid (balanced) - MATCHES NOTEBOOK
+
+# Training hyperparameters
+TRANSFORMER_TRAINING = {
+    "batch_size": 256,
+    "epochs": 100,
+    "learning_rate": 1e-4,
+    "window_size": 60,
+    "overlap": 30,
+    "min_track_length": 60,
+    
+    # Loss settings
+    "use_adjacent_subwindow": False,  # MATCHES NOTEBOOK (was True)
+    "adjacent_subwindow_weight": 0.5,
+    "adjacent_temperature": 0.7,
+    "subwindow_size": 10,
+    "mask_same_track_negatives": True,
+    
+    # Augmentation (optimized from AUGMENTATION_DOCUMENTATION.md)
+    "augmentation_type": "shuffle_scale_angle",  # 3-seg shuffle + 10-50% scale + 1-10° angle
+    "noise_strength": 0.012,  # Not used for shuffle_scale_angle, kept for compatibility
+    "scale_strength": 0.3,    # Not used for shuffle_scale_angle, kept for compatibility
+    
+    # Checkpointing & Early Stopping
+    "save_best_model": True,
+    "checkpoint_interval": 5,
+    "early_stopping_patience": 15,
+    "use_tensorboard": True,
+    "use_scheduler": True,
+    
+    # Data loading (for WSL2/Linux - use multiprocessing)
+    "num_workers": 8,  # Optimal for most systems (4-8 is usually best, 14 was too high causing slowdown)
+    "pin_memory": True,  # Faster CPU→GPU transfer
+}
+
+# Data paths (will be auto-detected for WSL2)
+# NOTE: Everything is on D: drive now (models, checkpoints, logs, splits, etc.)
+TRANSFORMER_DATA = {
+    "data_drive": "F:",  # Windows drive letter (for INPUT data files only)
+    "data_dir": "Analyzed/HIERARCHICAL_GATES_20260119_102840",
+    "instant_df_name": "instant_df_hierarchical_gates.parquet",
+    "windowed_df_name": "windowed_df_hierarchical_gates.parquet",
+    "output_drive": "D:",  # Drive for ALL OUTPUTS (models, checkpoints, logs, splits)
+    "splits_dir": "TRANSFORMER_DEVELOPMENT/saved_data/models/data_splits_withheirarchalgates/",  # Directory containing data_splits.pkl
+    "splits_drive": "D:",  # Drive where splits are stored
+}
+
 # Create necessary directories
 os.makedirs(SAVED_DATA, exist_ok=True)
 os.makedirs(TENSORBOARD_LOGS, exist_ok=True)

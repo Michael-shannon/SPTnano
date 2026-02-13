@@ -8695,3 +8695,165 @@ def has_complete_frames(df, wuid):
         (pl.col('frame') <= fe)
     ).height
     return actual_frames == expected_frames
+
+
+def msd_model(t, D, alpha):
+    """
+    MSD model function for fitting: MSD = 4*D*t^alpha
+    
+    Args:
+        t: Time lag
+        D: Diffusion coefficient
+        alpha: Anomalous exponent
+    
+    Returns:
+        MSD value
+    """
+    return 4 * D * t**alpha
+
+
+def compute_windowed_features_proper(track_df, time_between_frames):
+    """
+    Compute windowed features EXACTLY like features.py does.
+    Uses existing speed_um_s for avg_speed, recomputes segment_len for cum_disp.
+    
+    Args:
+        track_df: Polars DataFrame with trajectory data (must have x_um, y_um, speed_um_s columns)
+        time_between_frames: Time step in seconds
+    
+    Returns:
+        dict: Dictionary with features: avg_speed_um_s, cum_displacement_um, 
+              self_intersections, anomalous_exponent
+    """
+    import scipy.optimize
+    
+    x = track_df['x_um'].to_numpy()
+    y = track_df['y_um'].to_numpy()
+    n_frames = len(x)
+    
+    if n_frames < 3:
+        return {'avg_speed_um_s': 0, 'cum_displacement_um': 0, 
+                'self_intersections': 0, 'anomalous_exponent': 1.0}
+    
+    # 1. avg_speed_um_s: mean of EXISTING speed_um_s column
+    avg_speed = track_df['speed_um_s'].mean()
+    
+    # 2. cum_displacement_um: RECOMPUTE segment_len within window (first=0)
+    x_prev = np.roll(x, 1)
+    y_prev = np.roll(y, 1)
+    seg_lens = np.sqrt((x - x_prev)**2 + (y - y_prev)**2)
+    seg_lens[0] = 0  # First frame has no previous
+    cum_disp = seg_lens.sum()
+    
+    # 3. self_intersections: compute from x, y
+    intersections = calc_intersections(x, y)
+    
+    # 4. anomalous_exponent: MSD fitting (matching features.py)
+    lag_times = np.arange(1, n_frames) * time_between_frames
+    msd_values = np.zeros(len(lag_times))
+    for lag in range(1, len(lag_times) + 1):
+        disps = (x[lag:] - x[:-lag])**2 + (y[lag:] - y[:-lag])**2
+        msd_values[lag - 1] = np.mean(disps)
+    
+    try:
+        popt, _ = scipy.optimize.curve_fit(msd_model, lag_times, msd_values, maxfev=5000)
+        alpha = popt[1]
+    except:
+        alpha = np.nan
+    
+    return {
+        'avg_speed_um_s': avg_speed,
+        'cum_displacement_um': cum_disp,
+        'self_intersections': intersections,
+        'anomalous_exponent': alpha
+    }
+
+
+def compute_augmented_features(x, y, time_between_frames):
+    """
+    Compute features for AUGMENTED tracks (no existing speed_um_s column).
+    Computes everything from scratch.
+    
+    Args:
+        x: X coordinates (numpy array)
+        y: Y coordinates (numpy array)
+        time_between_frames: Time step in seconds
+    
+    Returns:
+        dict: Dictionary with features: avg_speed_um_s, cum_displacement_um, 
+              self_intersections, anomalous_exponent
+    """
+    import scipy.optimize
+    
+    n_frames = len(x)
+    if n_frames < 3:
+        return {'avg_speed_um_s': 0, 'cum_displacement_um': 0, 
+                'self_intersections': 0, 'anomalous_exponent': 1.0}
+    
+    # 1. Compute segment lengths and speeds from scratch
+    step_lens = np.sqrt(np.diff(x)**2 + np.diff(y)**2)
+    speeds = step_lens / time_between_frames
+    avg_speed = speeds.mean()
+    
+    # 2. cum_displacement: sum of step lengths (same as features.py for window)
+    cum_disp = step_lens.sum()
+    
+    # 3. self_intersections
+    intersections = calc_intersections(x, y)
+    
+    # 4. anomalous_exponent: MSD fitting
+    lag_times = np.arange(1, n_frames) * time_between_frames
+    msd_values = np.zeros(len(lag_times))
+    for lag in range(1, len(lag_times) + 1):
+        disps = (x[lag:] - x[:-lag])**2 + (y[lag:] - y[:-lag])**2
+        msd_values[lag - 1] = np.mean(disps)
+    
+    try:
+        popt, _ = scipy.optimize.curve_fit(msd_model, lag_times, msd_values, maxfev=5000)
+        alpha = popt[1]
+    except:
+        alpha = np.nan
+    
+    return {
+        'avg_speed_um_s': avg_speed,
+        'cum_displacement_um': cum_disp,
+        'self_intersections': intersections,
+        'anomalous_exponent': alpha
+    }
+
+
+def classify_population(gate_name, gate2_name):
+    """
+    Classify population from gate names (Gate 1 and Gate 2).
+    
+    Args:
+        gate_name: Name from Gate 1 (speed vs intersections)
+        gate2_name: Name from Gate 2 (anomalous exponent vs displacement)
+    
+    Returns:
+        str: Population name
+    """
+    if gate_name == 'low_speed_low_intersections':
+        if gate2_name == 'high_a_low_displacement': 
+            return 'superdiffusive_transport'
+        elif gate2_name == 'low_a_high_displacement': 
+            return 'subdiffusive_motion'
+        else: 
+            return 'ungatedgate2'
+    elif gate_name == 'high_speed_low_intersections': 
+        return 'fast_exploratory'
+    elif gate_name == 'low_speed_high_intersections': 
+        return 'bound_stationary'
+    elif gate_name == 'high_speed_high_intersections': 
+        return 'mixed_exploratory_bound'
+    elif gate_name == 'ungated': 
+        return 'ungatedgate1'
+    return 'other'
+    uid, fs, fe = parse_window_uid(wuid)
+    expected_frames = fe - fs + 1
+    actual_frames = df.filter(
+        (pl.col('unique_id') == uid) & 
+        (pl.col('frame') >= fs) & 
+        (pl.col('frame') <= fe)
+    ).height
+    return actual_frames == expected_frames

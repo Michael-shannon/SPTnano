@@ -806,3 +806,73 @@ Balance: {evaluator.metrics['cluster_balance']:.3f}
 
     plt.show()
     return fig
+
+
+def get_epoch_range(loss_list, total):
+    """
+    Returns (start_epoch, epochs_list) for a loss list that may be shorter than total.
+    
+    This is useful when some loss components (e.g., adjacent_subwindow_losses) 
+    were added partway through training.
+    
+    Args:
+        loss_list: List of loss values (may be shorter than total epochs)
+        total: Total number of epochs
+    
+    Returns:
+        tuple: (start_epoch, list of epoch numbers)
+    """
+    if len(loss_list) == 0:
+        return total, []
+    start = total - len(loss_list) + 1
+    return start, list(range(start, total + 1))
+
+
+def analyze_loss(name, losses, total_epochs):
+    """
+    Analyze and print statistics for a loss list.
+    
+    Args:
+        name: Name of the loss (for display)
+        losses: List of loss values
+        total_epochs: Total number of epochs
+    """
+    print(f"\n{'─' * 40}")
+    print(f"📊 {name}")
+    print(f"{'─' * 40}")
+    
+    if not losses:
+        print("   ❌ EMPTY LIST")
+        return
+    
+    arr = np.array(losses)
+    start_epoch = total_epochs - len(losses) + 1
+    
+    print(f"   Length: {len(losses)} entries (epochs {start_epoch}-{total_epochs})")
+    print(f"   Min:    {arr.min():.6f}")
+    print(f"   Max:    {arr.max():.6f}")
+    print(f"   Mean:   {arr.mean():.6f}")
+    print(f"   Std:    {arr.std():.6f}")
+    
+    # Check if constant
+    if arr.std() < 1e-10:
+        print(f"   ⚠️  WARNING: Values appear CONSTANT!")
+    
+    # Check for NaN/Inf
+    if np.any(np.isnan(arr)):
+        print(f"   ⚠️  WARNING: Contains NaN values!")
+    if np.any(np.isinf(arr)):
+        print(f"   ⚠️  WARNING: Contains Inf values!")
+    
+    # Print first 5 and last 5 values
+    print(f"\n   First 5 values (epochs {start_epoch}-{min(start_epoch+4, total_epochs)}):")
+    for i, v in enumerate(losses[:5]):
+        print(f"      Epoch {start_epoch + i}: {v:.6f}")
+    
+    if len(losses) > 10:
+        print(f"   ...")
+    
+    print(f"   Last 5 values (epochs {max(total_epochs-4, start_epoch)}-{total_epochs}):")
+    for i, v in enumerate(losses[-5:]):
+        ep = total_epochs - 4 + i
+        print(f"      Epoch {ep}: {v:.6f}")
