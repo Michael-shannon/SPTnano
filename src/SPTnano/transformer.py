@@ -679,6 +679,200 @@ class TimeAwareTrajectoryDataset(Dataset):
     #     return single_windows
 
 
+class AugmentationContrastiveDataset(Dataset):
+    """
+    Memory-efficient dataset for augmentation-based contrastive learning.
+    
+    Unlike TimeAwareTrajectoryDataset (which generates temporal pairs), this dataset
+    extracts ALL valid single windows — no pair constraint required. Positive pairs
+    are created by the trainer via augmentation, not by temporal adjacency.
+    
+    Advantages over TimeAwareTrajectoryDataset for augmentation-only training:
+    1. Uses min_track_length directly (no silent inflation to window_size + step_size)
+    2. Extracts ALL valid windows including last window per track
+    3. Returns only features_t (no wasted features_t1 computation/GPU transfer)
+    4. Matches features.py windowing exactly
+    
+    Parameters
+    ----------
+    instant_df : pl.DataFrame or pd.DataFrame
+        DataFrame with trajectory data containing columns:
+        - unique_id: Track identifier
+        - frame: Frame number
+        - x_um, y_um: Positions in microns
+        - condition: Experimental condition
+        - direction_rad (optional): Pre-computed direction
+    window_size : int, default=60
+        Number of frames per window
+    overlap : int, default=30
+        Overlap between consecutive windows
+    min_track_length : int, default=60
+        Minimum track length to include (used directly, NOT inflated)
+        
+    Examples
+    --------
+    >>> dataset = AugmentationContrastiveDataset(instant_df, window_size=60, overlap=30)
+    >>> print(f"Created {len(dataset)} windows")
+    >>> batch = dataset[0]
+    >>> print(batch['features_t'].shape)  # torch.Size([60, 3])
+    """
+    
+    def __init__(self, instant_df, window_size=60, overlap=30, min_track_length=60):
+        self.window_size = window_size
+        self.overlap = overlap
+        self.step_size = window_size - overlap
+        # NO inflation — use min_track_length directly
+        self.min_track_length = max(min_track_length, window_size)
+        
+        # Keep in Polars — much more memory efficient
+        if isinstance(instant_df, pl.DataFrame):
+            self.df = instant_df.sort(["unique_id", "frame"])
+        else:
+            self.df = pl.from_pandas(instant_df).sort(["unique_id", "frame"])
+        
+        # Check if direction_rad column exists
+        self.has_direction = 'direction_rad' in self.df.columns
+        
+        # Step 1: Get track lengths efficiently using Polars aggregation
+        print("📊 Analyzing track lengths...")
+        track_lengths = self.df.group_by("unique_id").agg([
+            pl.len().alias("n_frames"),
+            pl.col("condition").first().alias("condition")
+        ]).filter(pl.col("n_frames") >= self.min_track_length)
+        
+        n_valid = len(track_lengths)
+        print(f"   Found {n_valid:,} tracks with >= {self.min_track_length} frames")
+        
+        # Step 2: Build track lookup with row indices
+        print("📍 Building track index...")
+        self._build_track_index()
+        
+        # Step 3: Generate ALL valid window indices (matching features.py logic)
+        print("📋 Generating window indices (all valid windows)...")
+        self.window_indices = self._generate_window_indices()
+        
+        n_windows = len(self.window_indices)
+        print(f"✅ Created {n_windows:,} window indices (no pair constraint)")
+        print(f"   ⚡ Features computed on-the-fly during training")
+    
+    def _build_track_index(self):
+        """Build index mapping unique_id -> row range in sorted DataFrame."""
+        df_with_idx = self.df.with_row_index("row_idx")
+        
+        track_ranges = df_with_idx.group_by("unique_id").agg([
+            pl.col("row_idx").min().alias("start_row"),
+            pl.col("row_idx").max().alias("end_row"),
+            pl.len().alias("n_frames"),
+            pl.col("condition").first().alias("condition"),
+        ]).filter(pl.col("n_frames") >= self.min_track_length)
+        
+        self.track_index = {}
+        for row in track_ranges.iter_rows(named=True):
+            self.track_index[row["unique_id"]] = {
+                "start_row": row["start_row"],
+                "end_row": row["end_row"],
+                "n_frames": row["n_frames"],
+                "condition": row["condition"],
+            }
+        
+        # Pre-extract columns as numpy arrays for fast slicing
+        print("   Extracting coordinate arrays...")
+        self.x_um = self.df["x_um"].to_numpy()
+        self.y_um = self.df["y_um"].to_numpy()
+        self.frames = self.df["frame"].to_numpy()
+        if self.has_direction:
+            self.direction_rad = self.df["direction_rad"].to_numpy()
+        else:
+            self.direction_rad = None
+    
+    def _generate_window_indices(self):
+        """
+        Generate indices for ALL valid windows — matching features.py exactly.
+        
+        Loop: for start in range(0, n_frames - window_size + 1, step_size)
+        This captures every valid window, including the last one per track.
+        """
+        window_indices = []
+        
+        for unique_id, info in tqdm(self.track_index.items(), desc="Indexing"):
+            n_frames = info["n_frames"]
+            start_row = info["start_row"]
+            
+            # EXACT same loop as features.py
+            for local_start in range(0, n_frames - self.window_size + 1, self.step_size):
+                window_indices.append((
+                    unique_id,
+                    start_row + local_start,
+                ))
+        
+        return window_indices
+    
+    def _extract_features(self, row_start, row_end):
+        """Extract motion features from global row indices: [dx, dy, direction]"""
+        x = self.x_um[row_start:row_end]
+        y = self.y_um[row_start:row_end]
+        
+        dx = np.diff(x, prepend=x[0])
+        dy = np.diff(y, prepend=y[0])
+        
+        if self.direction_rad is not None:
+            direction = self.direction_rad[row_start:row_end]
+        else:
+            direction = np.arctan2(dy, dx)
+            direction = np.nan_to_num(direction, 0)
+        
+        features = np.column_stack([dx, dy, direction])
+        features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        return features.astype(np.float32)
+    
+    def __len__(self):
+        return len(self.window_indices)
+    
+    def __getitem__(self, idx):
+        """Return a single window with features_t key (compatible with trainer)."""
+        unique_id, row_start = self.window_indices[idx]
+        
+        features = self._extract_features(row_start, row_start + self.window_size)
+        condition = self.track_index[unique_id]["condition"]
+        track_start = self.track_index[unique_id]["start_row"]
+        
+        return {
+            'features_t': torch.from_numpy(features),
+            'unique_id': unique_id,
+            'time_window': (row_start - track_start) // self.step_size,
+            'condition': condition,
+        }
+    
+    def get_single_windows(self):
+        """
+        Get all windows for inference (same as extract_all_windows but using this dataset's index).
+        
+        Returns list of dicts with features, unique_id, window_uid, etc.
+        """
+        single_windows = []
+        
+        for unique_id, row_start in tqdm(self.window_indices, desc="Extracting windows"):
+            track_start = self.track_index[unique_id]["start_row"]
+            condition = self.track_index[unique_id]["condition"]
+            time_window = (row_start - track_start) // self.step_size
+            start_frame = self.frames[row_start]
+            end_frame = self.frames[row_start + self.window_size - 1]
+            window_uid = f"{unique_id}_{time_window}_{start_frame}_{end_frame}"
+            
+            single_windows.append({
+                'features': self._extract_features(row_start, row_start + self.window_size),
+                'unique_id': unique_id,
+                'window_uid': window_uid,
+                'time_window': time_window,
+                'start_frame': start_frame,
+                'end_frame': end_frame,
+                'condition': condition,
+            })
+        
+        return single_windows
+
+
 def extract_all_windows(instant_df, window_size=60, overlap=30, min_track_length=60):
     """
     Standalone window extraction for inference — no pair infrastructure.
@@ -2259,15 +2453,18 @@ class TimeAwareMotionTrainer:
         epoch_adjacent_subwindow = 0
         
         for batch in dataloader:
-            # Get window pairs and track IDs
+            # Get features and track IDs
             x_t = batch['features_t'].to(self.device)
-            x_t1 = batch['features_t1'].to(self.device)
             track_ids = batch['unique_id']  # List of track IDs for masking
             
-            # Optional: augment temporal pairs too
-            if self.augment_temporal_pairs:
-                x_t = self.augmentation_fn(x_t)
-                x_t1 = self.augmentation_fn(x_t1)
+            # Only load features_t1 if temporal loss is needed (saves compute when using augmentation-only)
+            x_t1 = None
+            if self.temporal_weight > 0 and 'features_t1' in batch:
+                x_t1 = batch['features_t1'].to(self.device)
+                # Optional: augment temporal pairs too
+                if self.augment_temporal_pairs:
+                    x_t = self.augmentation_fn(x_t)
+                    x_t1 = self.augmentation_fn(x_t1)
             
             # Forward pass for full windows
             z_t = self.model(x_t)
@@ -2280,7 +2477,7 @@ class TimeAwareMotionTrainer:
             adjacent_subwindow_loss_val = 0.0
             
             # === TEMPORAL LOSS (legacy, often too easy with overlapping windows) ===
-            if self.temporal_weight > 0:
+            if self.temporal_weight > 0 and x_t1 is not None:
                 z_t1 = self.model(x_t1)
                 temporal_loss = time_aware_contrastive_loss(
                     z_t, z_t1, self.temperature,
@@ -2401,8 +2598,12 @@ class TimeAwareMotionTrainer:
         with torch.no_grad():
             for batch in dataloader:
                 x_t = batch['features_t'].to(self.device)
-                x_t1 = batch['features_t1'].to(self.device)
                 track_ids = batch['unique_id']
+                
+                # Only load features_t1 if temporal loss is needed
+                x_t1 = None
+                if self.temporal_weight > 0 and 'features_t1' in batch:
+                    x_t1 = batch['features_t1'].to(self.device)
                 
                 # Forward pass for full windows
                 z_t = self.model(x_t)
@@ -2415,7 +2616,7 @@ class TimeAwareMotionTrainer:
                 adjacent_subwindow_loss_val = 0.0
                 
                 # === TEMPORAL LOSS (if enabled in training) ===
-                if self.temporal_weight > 0:
+                if self.temporal_weight > 0 and x_t1 is not None:
                     z_t1 = self.model(x_t1)
                     temporal_loss = time_aware_contrastive_loss(
                         z_t, z_t1, self.temperature,

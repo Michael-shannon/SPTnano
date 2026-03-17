@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-WSL2 Training Script for Transformer Grid Search
-================================================
+WSL2 Training Script for Transformer (Single Model or Grid)
+WSL2 Training Script for Transformer (Single Model or Grid)
+============================================================
 
 This script trains transformer models with proper Linux multiprocessing for optimal
 GPU utilization. Designed to run on WSL2 (Linux) with full multiprocessing support.
@@ -12,23 +13,27 @@ Features:
 - Same training logic as notebook
 - Resume from checkpoint support
 - Automatic model skipping
+- **Continue training a specific completed model** beyond its original epoch count
 
 Usage:
 ------
-    # Train all models (auto mode - skips completed, resumes incomplete):
-    python train_transformer_grid_wsl2.py
+    # Continue training a specific model (e.g., from 100 → 200 epochs):
+    python train_transformer_single_wsl2.py --model-name med128_h8_ff512_L3_t0.2 --epochs 200
 
-    # Resume specific model:
-    python train_transformer_grid_wsl2.py --resume 0
+    # Train all models (auto mode - skips completed, resumes incomplete):
+    python train_transformer_single_wsl2.py
+
+    # Resume specific model by index:
+    python train_transformer_single_wsl2.py --resume 0
 
     # Train specific models only:
-    python train_transformer_grid_wsl2.py --models 0 1 2
+    python train_transformer_single_wsl2.py --models 0 1 2
 
     # Start fresh (ignore checkpoints):
-    python train_transformer_grid_wsl2.py --fresh
+    python train_transformer_single_wsl2.py --fresh
 
     # Adjust number of data loading workers:
-    python train_transformer_grid_wsl2.py --workers 16
+    python train_transformer_single_wsl2.py --workers 16
 
 Requirements:
 -------------
@@ -358,15 +363,29 @@ def is_model_complete(model_dir):
     return os.path.exists(final_path)
 
 
-def find_best_checkpoint(checkpoint_dir):
-    """Find checkpoint with most epochs."""
-    checkpoints = glob.glob(os.path.join(checkpoint_dir, "checkpoint_epoch_*.pt"))
-    if not checkpoints:
-        return None, 0
+def find_best_checkpoint(checkpoint_dir, model_dir=None):
+    """
+    Find checkpoint with most epochs.
     
+    Also checks final_model.pt as a fallback if no checkpoint has more epochs.
+    This allows continuing training on models that completed their original epoch target.
+    
+    Parameters
+    ----------
+    checkpoint_dir : str
+        Directory containing checkpoint_epoch_*.pt files
+    model_dir : str, optional
+        Parent model directory (to check final_model.pt as fallback)
+    
+    Returns
+    -------
+    tuple : (checkpoint_path, epoch_count)
+    """
     best_checkpoint = None
     best_epoch_count = 0
     
+    # Check regular checkpoints
+    checkpoints = glob.glob(os.path.join(checkpoint_dir, "checkpoint_epoch_*.pt"))
     for cp_path in checkpoints:
         try:
             cp_data = torch.load(cp_path, map_location='cpu', weights_only=False)
@@ -377,6 +396,21 @@ def find_best_checkpoint(checkpoint_dir):
         except Exception as e:
             print(f"   ⚠️  Could not load {os.path.basename(cp_path)}: {e}")
             continue
+    
+    # Fallback: check final_model.pt if no checkpoint was better
+    # This handles the case where training completed but we want to continue
+    if model_dir is not None:
+        final_path = os.path.join(model_dir, "final_model.pt")
+        if os.path.exists(final_path):
+            try:
+                final_data = torch.load(final_path, map_location='cpu', weights_only=False)
+                final_epoch_count = len(final_data.get('train_losses', []))
+                if final_epoch_count > best_epoch_count:
+                    best_epoch_count = final_epoch_count
+                    best_checkpoint = final_path
+                    print(f"   📁 Using final_model.pt as resume point ({final_epoch_count} epochs)")
+            except Exception as e:
+                print(f"   ⚠️  Could not load final_model.pt: {e}")
     
     return best_checkpoint, best_epoch_count
 
@@ -410,8 +444,8 @@ def train_model(model_index, config, train_loader, val_loader, paths, args):
     resume_epoch = 0
     checkpoint_to_load = None
     
-    if args.mode in ["auto", "resume"]:
-        checkpoint_to_load, resume_epoch = find_best_checkpoint(checkpoint_dir)
+    if args.mode in ["auto", "resume", "continue"]:
+        checkpoint_to_load, resume_epoch = find_best_checkpoint(checkpoint_dir, model_dir=model_dir)
         if checkpoint_to_load:
             if resume_epoch < max_epochs:
                 print(f"📂 Found checkpoint: {os.path.basename(checkpoint_to_load)} ({resume_epoch} epochs)")
@@ -446,10 +480,13 @@ def train_model(model_index, config, train_loader, val_loader, paths, args):
     print(f"   Parameters: {n_params:,}")
     
     # Load checkpoint if resuming
+    is_final_model = False
     if checkpoint_to_load:
         checkpoint = torch.load(checkpoint_to_load, map_location='cpu', weights_only=False)
         model.load_state_dict(checkpoint['model_state_dict'])
-        print(f"   ✅ Loaded model state from checkpoint")
+        is_final_model = os.path.basename(checkpoint_to_load) == "final_model.pt"
+        source_label = "final_model.pt" if is_final_model else "checkpoint"
+        print(f"   ✅ Loaded model state from {source_label}")
     
     # Create trainer
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -486,6 +523,9 @@ def train_model(model_index, config, train_loader, val_loader, paths, args):
         trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         if 'scheduler_state_dict' in checkpoint and trainer.scheduler:
             trainer.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        elif is_final_model and trainer.scheduler:
+            print(f"   ⚠️  No scheduler state in final_model.pt — scheduler will reset")
+            print(f"   💡 This is normal when continuing past the original epoch target")
         
         # Restore loss history
         trainer.train_losses = checkpoint.get('train_losses', [])
@@ -505,7 +545,7 @@ def train_model(model_index, config, train_loader, val_loader, paths, args):
         trainer.best_model_state = checkpoint.get('best_model_state', None)
         trainer.epochs_without_improvement = checkpoint.get('epochs_without_improvement', 0)
         
-        print(f"   ✅ Restored trainer state (optimizer, scheduler, loss history)")
+        print(f"   ✅ Restored trainer state (optimizer, {'scheduler, ' if 'scheduler_state_dict' in checkpoint else ''}loss history)")
         print(f"   📊 Continuing from epoch {resume_epoch}")
     
     # Train
@@ -554,15 +594,28 @@ def train_model(model_index, config, train_loader, val_loader, paths, args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Train transformer models with WSL2 multiprocessing support"
+        description="Train transformer models with WSL2 multiprocessing support.\n\n"
+                    "CONTINUE TRAINING EXAMPLE:\n"
+                    "  python train_transformer_single_wsl2.py "
+                    "--model-name med128_h8_ff512_L3_t0.2 --epochs 200\n"
+                    "  (Loads from epoch 100 checkpoint and trains to 200 total epochs)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--mode",
-        choices=["auto", "resume", "fresh", "specific"],
+        choices=["auto", "resume", "fresh", "specific", "continue"],
         default="auto",
         help="Training mode: auto (skip completed, resume incomplete), "
-             "resume (resume specific model), fresh (start all from scratch), "
-             "specific (train only specified models)",
+             "resume (resume specific model by index), fresh (start all from scratch), "
+             "specific (train only specified models by index), "
+             "continue (continue a specific model by name, use with --model-name)",
+    )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default=None,
+        help="Name of a specific model to continue training (e.g., 'med128_h8_ff512_L3_t0.2'). "
+             "Automatically sets mode to 'continue'. Use with --epochs to set the new target.",
     )
     parser.add_argument(
         "--resume",
@@ -604,7 +657,8 @@ def main():
         "--epochs",
         type=int,
         default=None,
-        help="Override number of epochs to train (default: from config.py)",
+        help="Override total number of epochs to train (default: from config.py). "
+             "When continuing a model, this is the NEW total target (e.g., 200 to go from 100→200).",
     )
     parser.add_argument(
         "--temporal-pairs",
@@ -631,6 +685,14 @@ def main():
     # Override mode if --fresh is used
     if args.fresh:
         args.mode = "fresh"
+    
+    # Override mode if --model-name is used
+    if args.model_name:
+        args.mode = "continue"
+        if args.epochs is None:
+            print("⚠️  --model-name requires --epochs to set the new training target.")
+            print("   Example: --model-name med128_h8_ff512_L3_t0.2 --epochs 200")
+            sys.exit(1)
     
     # Get paths
     paths = get_data_paths()
@@ -695,7 +757,27 @@ def main():
     models_to_train = []
     models_to_skip = []
     
-    if args.mode == "specific":
+    if args.mode == "continue":
+        # Continue training a specific model by name (e.g., --model-name med128_h8_ff512_L3_t0.2)
+        target_name = args.model_name
+        found = False
+        for i, cfg in enumerate(model_configs):
+            if cfg['name'] == target_name:
+                models_to_train = [i]
+                models_to_skip = [j for j in range(num_models) if j != i]
+                found = True
+                break
+        if not found:
+            available = [cfg['name'] for cfg in model_configs]
+            print(f"❌ Model '{target_name}' not found in config!")
+            print(f"   Available models:")
+            for j, name in enumerate(available):
+                print(f"     [{j}] {name}")
+            sys.exit(1)
+        print(f"🔄 CONTINUING model: {target_name}")
+        print(f"   New epoch target: {args.epochs}")
+        
+    elif args.mode == "specific":
         models_to_train = [i for i in args.models if 0 <= i < num_models]
         models_to_skip = [i for i in range(num_models) if i not in models_to_train]
         print(f"📌 Training specific models: {models_to_train}")
