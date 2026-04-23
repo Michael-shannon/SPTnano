@@ -1,5 +1,6 @@
 import os
 import re
+import warnings
 from collections import Counter
 
 import numpy as np
@@ -5734,7 +5735,8 @@ def create_fixed_length_superwindows(
     window_uid_col : str, default='window_uid'
         Column containing unique window identifiers
     additional_cols : list, optional
-        Additional metadata columns to include
+        Additional metadata columns to include. Names not present in ``windowed_df``
+        are skipped with a ``UserWarning``.
     min_superwindows : int, default=1
         Minimum number of complete superwindows required to include a track
         
@@ -5761,6 +5763,17 @@ def create_fixed_length_superwindows(
     
     # Sort by track and time
     df = df.sort_values([unique_id_col, time_col])
+
+    if additional_cols:
+        missing = [c for c in additional_cols if c not in df.columns]
+        if missing:
+            warnings.warn(
+                "create_fixed_length_superwindows: ignoring additional_cols not in "
+                f"windowed_df: {missing}",
+                UserWarning,
+                stacklevel=2,
+            )
+        additional_cols = [c for c in additional_cols if c in df.columns]
     
     superwindows = []
     
@@ -6337,20 +6350,69 @@ def calculate_between_molecule_similarity(
     }
 
 
+def _collect_states_from_sequences(sequences):
+    all_states = set()
+    for seq in sequences:
+        if isinstance(seq, (list, tuple)):
+            all_states.update(seq)
+        else:
+            all_states.update(list(seq))
+    all_states.discard(None)
+    return all_states
+
+
+def _sequences_to_one_hot_arrays(sequences, state_order):
+    """
+    Each sequence -> (T, K) float array; rows are one-hot for that timestep's state.
+
+    Unknown states (not in state_order) raise ValueError.
+    """
+    state_to_idx = {s: i for i, s in enumerate(state_order)}
+    k = len(state_order)
+    out = []
+    for seq in sequences:
+        if not isinstance(seq, (list, tuple)):
+            seq = list(seq)
+        t = len(seq)
+        oh = np.zeros((t, k), dtype=np.float64)
+        for ti, s in enumerate(seq):
+            if s is None:
+                continue
+            if s not in state_to_idx:
+                raise ValueError(
+                    f"State {s!r} not in vocabulary. "
+                    f"Pass a complete state_order= list (known states: {sorted(state_to_idx)})"
+                )
+            oh[ti, state_to_idx[s]] = 1.0
+        out.append(oh)
+    return out
+
+
+def _estimate_dense_pairwise_matrix_gb(n, dtype):
+    """RAM for one n×n dense array in GiB (power-of-two definition)."""
+    if n <= 0:
+        return 0.0
+    itemsize = np.dtype(dtype).itemsize
+    return (n * n * itemsize) / (1024.0 ** 3)
+
+
 def calculate_similarity_with_dtw(
     sequence_df,
     sequence_col='state_sequence',
     unique_id_col='unique_id',
     sample_size=None,
     random_seed=42,
-    window=None
+    window=None,
+    encoding='integer',
+    state_order=None,
+    distance_dtype=np.float64,
 ):
     """
     Calculate pairwise similarity using Dynamic Time Warping (DTW).
-    
-    DTW allows elastic alignment of sequences - useful for comparing sequences
-    that have similar patterns but at different temporal scales.
-    
+
+    DTW allows elastic alignment of sequences — useful when patterns align at
+    different temporal scales.
+
     Parameters
     ----------
     sequence_df : pl.DataFrame or pd.DataFrame
@@ -6364,12 +6426,31 @@ def calculate_similarity_with_dtw(
     random_seed : int, default=42
         Random seed
     window : int, optional
-        Sakoe-Chiba window constraint (limits warping)
-        
+        Sakoe-Chiba window constraint (limits warping); passed to dtaidistance.
+    encoding : {'integer', 'onehot'}, default='integer'
+        How to represent each timestep before DTW:
+
+        - ``integer``: map states to 0..K-1 and use **univariate** DTW (default).
+          Step cost is based on **numeric difference** between indices, so states
+          that are far apart in sort order are treated as farther — often
+          **misleading for nominal labels**.
+
+        - ``onehot``: encode each timestep as a length-K **one-hot vector** and
+          use **multivariate** DTW (``dtw_ndim``) with squared Euclidean step cost.
+          Any **mismatch between different** states has the same cost; all states
+          are on an equal footing (nominal / categorical).
+
+    state_order : list, optional
+        Order of state columns for one-hot (and inclusion set). If None, uses
+        sorted unique states observed in the data.
+    distance_dtype : numpy dtype, default numpy.float64
+        Storage dtype for the pairwise distance matrix. Use ``numpy.float32``
+        to roughly halve RAM (sklearn steps may still upcast temporarily).
+
     Returns
     -------
     dict
-        Dictionary with distance_matrix, similarity_matrix, and stats
+        Dictionary with distance_matrix, similarity_matrix, stats, and metadata.
     """
     try:
         from dtaidistance import dtw
@@ -6378,67 +6459,111 @@ def calculate_similarity_with_dtw(
             "DTW requires 'dtaidistance' package. "
             "Install with: pip install dtaidistance"
         )
-    
+
+    encoding = (encoding or "integer").lower()
+    if encoding not in ("integer", "onehot"):
+        raise ValueError("encoding must be 'integer' or 'onehot'")
+
+    if encoding == "onehot":
+        try:
+            from dtaidistance import dtw_ndim
+        except ImportError:
+            raise ImportError(
+                "One-hot DTW requires 'dtaidistance' with dtw_ndim. "
+                "Install with: pip install dtaidistance"
+            )
+
     is_polars = isinstance(sequence_df, pl.DataFrame)
     if is_polars:
         df = sequence_df.to_pandas()
     else:
         df = sequence_df.copy()
-    
+
     # Sample if requested
     if sample_size and len(df) > sample_size:
         df = df.sample(n=sample_size, random_state=random_seed)
         print(f"Sampled {sample_size} sequences for DTW calculation")
-    
+
     track_ids = df[unique_id_col].tolist()
     sequences = df[sequence_col].tolist()
     n_tracks = len(track_ids)
-    
-    # Convert sequences to numeric
-    all_states = set()
-    for seq in sequences:
-        if isinstance(seq, (list, tuple)):
-            all_states.update(seq)
-        else:
-            all_states.update(list(seq))
-    
-    all_states.discard(None)
-    state_to_num = {state: idx for idx, state in enumerate(sorted(all_states))}
-    
-    # Convert to numeric sequences
-    numeric_sequences = []
-    for seq in sequences:
-        if not isinstance(seq, list):
-            seq = list(seq)
-        numeric_seq = [state_to_num[s] for s in seq if s is not None]
-        numeric_sequences.append(numeric_seq)
-    
-    # Calculate DTW distances
-    print(f"Calculating DTW distances for {n_tracks} sequences...")
-    distance_matrix = np.zeros((n_tracks, n_tracks))
-    
+
+    all_states = _collect_states_from_sequences(sequences)
+    if state_order is None:
+        vocab = sorted(all_states, key=str)
+    else:
+        missing = [s for s in all_states if s not in state_order]
+        if missing:
+            raise ValueError(
+                f"States in data but not in state_order: {missing}. "
+                "Extend state_order or set state_order=None to use sorted data states."
+            )
+        vocab = list(state_order)
+
+    if encoding == "integer":
+        state_to_num = {state: idx for idx, state in enumerate(sorted(all_states))}
+        numeric_sequences = []
+        for seq in sequences:
+            if not isinstance(seq, list):
+                seq = list(seq)
+            numeric_seq = [state_to_num[s] for s in seq if s is not None]
+            numeric_sequences.append(numeric_seq)
+    else:
+        numeric_sequences = _sequences_to_one_hot_arrays(sequences, vocab)
+        print(
+            f"DTW with one-hot encoding: K={len(vocab)} states, multivariate DTW "
+            f"(uniform cost between distinct states)."
+        )
+
+    distance_dtype = np.dtype(distance_dtype)
+    est_gb = _estimate_dense_pairwise_matrix_gb(n_tracks, distance_dtype)
+    print(
+        f"Dense pairwise distance matrix ~{est_gb:.2f} GiB ({distance_dtype.name}); "
+        f"computing DTW for {n_tracks} sequences (encoding={encoding})..."
+    )
+    distance_matrix = np.zeros((n_tracks, n_tracks), dtype=distance_dtype)
+
     from tqdm import tqdm
+
+    def _pair_distance_ndim(a, b):
+        """a, b: (T, K) arrays."""
+        la, lb = a.shape[0], b.shape[0]
+        if la == 0 and lb == 0:
+            return 0.0
+        if la == 0 or lb == 0:
+            return np.inf
+        dist = dtw_ndim.distance(np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64), window=window)
+        avg_len = (la + lb) / 2.0
+        return float(dist / avg_len) if avg_len > 0 else 0.0
+
     for i in tqdm(range(n_tracks), desc="Computing DTW"):
         for j in range(i, n_tracks):
             if i == j:
-                dist = 0
-            else:
+                dist = 0.0
+            elif encoding == "integer":
                 dist = dtw.distance(numeric_sequences[i], numeric_sequences[j], window=window)
-                # Normalize by average length
                 avg_len = (len(numeric_sequences[i]) + len(numeric_sequences[j])) / 2
                 dist = dist / avg_len if avg_len > 0 else 0
-            
-            distance_matrix[i, j] = dist
-            distance_matrix[j, i] = dist
-    
+            else:
+                dist = _pair_distance_ndim(numeric_sequences[i], numeric_sequences[j])
+
+            distance_matrix[i, j] = np.asarray(dist, dtype=distance_dtype)
+            distance_matrix[j, i] = np.asarray(dist, dtype=distance_dtype)
+
+    # Replace inf with finite max for similarity scaling (pathological empty seq pairs)
+    finite = distance_matrix[np.isfinite(distance_matrix)]
+    max_finite = finite.max() if finite.size else 0.0
+    if not np.isfinite(distance_matrix).all() and max_finite > 0:
+        distance_matrix = np.where(np.isfinite(distance_matrix), distance_matrix, max_finite * 2)
+
     # Convert to dataframes
     distance_df = pd.DataFrame(distance_matrix, index=track_ids, columns=track_ids)
-    
+
     # Calculate similarity
-    max_dist = distance_matrix.max()
+    max_dist = float(np.nanmax(distance_matrix)) if distance_matrix.size else 0.0
     similarity_matrix = 1 - (distance_matrix / max_dist) if max_dist > 0 else np.ones_like(distance_matrix)
     similarity_df = pd.DataFrame(similarity_matrix, index=track_ids, columns=track_ids)
-    
+
     # Statistics
     mask = ~np.eye(n_tracks, dtype=bool)
     stats = {
@@ -6448,19 +6573,23 @@ def calculate_similarity_with_dtw(
         'avg_similarity': similarity_matrix[mask].mean(),
         'std_similarity': similarity_matrix[mask].std(),
         'method': 'dtw',
-        'window': window
+        'encoding': encoding,
+        'n_states': len(vocab),
+        'window': window,
     }
-    
+
     print(f"\n✅ DTW analysis complete!")
     print(f"   Average pairwise similarity: {stats['avg_similarity']:.3f}")
     print(f"   Average pairwise distance: {stats['avg_distance']:.3f}")
-    
+
     return {
         'distance_matrix': distance_df,
         'similarity_matrix': similarity_df,
         'track_ids': track_ids,
         'stats': stats,
-        'method': 'dtw'
+        'method': 'dtw',
+        'encoding': encoding,
+        'state_order': vocab,
     }
 
 
@@ -6475,7 +6604,15 @@ def compute_sequence_similarity_embeddings(
     n_components_pca=10,
     umap_n_neighbors=15,
     umap_min_dist=0.1,
-    random_seed=42
+    random_seed=42,
+    sequence_encoding='integer',
+    state_order=None,
+    distance_dtype=np.float64,
+    attach_row_distance_vectors=True,
+    warn_if_pairwise_ram_exceeds_gb=16.0,
+    abort_if_pairwise_ram_exceeds_gb=None,
+    compute_pca=True,
+    compute_umap=True,
 ):
     """
     Compute sequence similarity distance matrix and optional PCA/UMAP embeddings.
@@ -6499,7 +6636,8 @@ def compute_sequence_similarity_embeddings(
     center_scale : bool, default=False
         Center and scale distances before PCA/UMAP
     normalize : bool, default=True
-        Normalize distances by sequence length
+        Normalize distances by sequence length (used for Damerau-Levenshtein path;
+        DTW length normalization is inside DTW routines)
     n_components_pca : int, default=10
         Number of PCA components
     umap_n_neighbors : int, default=15
@@ -6508,17 +6646,43 @@ def compute_sequence_similarity_embeddings(
         UMAP min_dist parameter
     random_seed : int, default=42
         Random seed
-        
+    sequence_encoding : {'integer', 'onehot'}, default='integer'
+        Only for ``method='dtw'``. See :func:`calculate_similarity_with_dtw`.
+        Use ``onehot`` so each nominal state has equal weight (no arbitrary ordering).
+    state_order : list, optional
+        Only for DTW one-hot: fixed state column order (must include all states
+        present in the data).
+    distance_dtype : str or numpy dtype, default numpy.float64
+        Storage for the dense pairwise matrix (``method='dtw'``). ``'float32'``
+        roughly halves RAM versus float64; PCA/UMAP may temporarily use float64.
+    attach_row_distance_vectors : bool, default True
+        If True, each output row stores the full length-``n`` distance vector to
+        all points (duplicates memory in the returned DataFrame). Set False if
+        you only need ``pca_embedding`` / ``umap_embedding`` and want a smaller
+        result object.
+    warn_if_pairwise_ram_exceeds_gb : float or None, default 16.0
+        Emit a warning when the estimated size of the *pairwise matrix alone*
+        exceeds this many GiB. Set ``None`` to disable.
+    abort_if_pairwise_ram_exceeds_gb : float or None, default None
+        If set, raise ``MemoryError`` when the estimated pairwise-matrix size
+        exceeds this threshold (fail-fast before allocating). Use to guard HPC
+        jobs.
+    compute_pca : bool, default True
+        If False, skip PCA (saves time and RAM).
+    compute_umap : bool, default True
+        If False, skip UMAP. Set **both** ``compute_pca=False`` and
+        ``compute_umap=False`` for pairwise **DTW only** (no sklearn projection).
+
     Returns
     -------
     pd.DataFrame
-        DataFrame with added similarity_distance, similarity_distance_scaled, 
-        pca_embedding, and umap_embedding columns
+        DataFrame with distance columns (when ``attach_row_distance_vectors``)
+        and, unless disabled, ``pca_embedding`` / ``umap_embedding``.
     """
-    from sklearn.decomposition import PCA
-    from sklearn.preprocessing import StandardScaler
     import pandas as pd
     import numpy as np
+
+    distance_dtype = np.dtype(distance_dtype)
     
     is_polars = isinstance(sequence_df, pl.DataFrame)
     if is_polars:
@@ -6530,12 +6694,38 @@ def compute_sequence_similarity_embeddings(
     if sample_size and len(df) > sample_size:
         df = df.sample(n=sample_size, random_state=random_seed)
         print(f"Sampled {sample_size} superwindows for computation")
+
+    n_rows = len(df)
+    est_mtx_gb = _estimate_dense_pairwise_matrix_gb(n_rows, distance_dtype)
+    if abort_if_pairwise_ram_exceeds_gb is not None and est_mtx_gb > float(
+        abort_if_pairwise_ram_exceeds_gb
+    ):
+        raise MemoryError(
+            f"Estimated pairwise distance matrix ~{est_mtx_gb:.2f} GiB exceeds "
+            f"abort_if_pairwise_ram_exceeds_gb={abort_if_pairwise_ram_exceeds_gb}. "
+            "Use sample_size, distance_dtype='float32', or a machine with more RAM."
+        )
+    if warn_if_pairwise_ram_exceeds_gb is not None and est_mtx_gb > float(
+        warn_if_pairwise_ram_exceeds_gb
+    ):
+        warnings.warn(
+            f"Dense pairwise distance matrix ~{est_mtx_gb:.2f} GiB for n={n_rows} "
+            f"({distance_dtype.name}). Exact all-pairs DTW is O(n²) in RAM and "
+            f"time; enable PCA/UMAP only if needed (``compute_pca`` / ``compute_umap``). "
+            f"Consider sample_size, float32 storage, or landmark / subsampled pipelines.",
+            UserWarning,
+            stacklevel=2,
+        )
     
     print(f"\n{'='*80}")
     print(f"SEQUENCE SIMILARITY SPACE COMPUTATION")
     print(f"{'='*80}")
     print(f"Method: {method.upper()}")
-    print(f"Computing distances for {len(df)} superwindows (all molecules together)...")
+    if method == "dtw":
+        print(f"DTW sequence_encoding: {sequence_encoding}")
+    print(
+        f"Computing distances for {n_rows} superwindows (~{est_mtx_gb:.2f} GiB matrix as {distance_dtype.name})..."
+    )
     
     # Calculate distance matrix based on method
     if method == 'dtw':
@@ -6544,7 +6734,10 @@ def compute_sequence_similarity_embeddings(
             sequence_col=sequence_col,
             unique_id_col=unique_id_col,
             sample_size=None,
-            random_seed=random_seed
+            random_seed=random_seed,
+            encoding=sequence_encoding,
+            state_order=state_order,
+            distance_dtype=distance_dtype,
         )
         distance_matrix = result['distance_matrix'].values
         track_ids = result['track_ids']
@@ -6566,62 +6759,82 @@ def compute_sequence_similarity_embeddings(
     
     print(f"✅ Distance matrix computed: {distance_matrix.shape}")
     
-    # Center-scale if requested
+    # Center-scale if requested (also common before PCA/UMAP on row-wise distance vectors)
     if center_scale:
+        from sklearn.preprocessing import StandardScaler
+
         print("Applying center scaling to distances...")
         scaler = StandardScaler()
         distance_matrix_scaled = scaler.fit_transform(distance_matrix)
     else:
         distance_matrix_scaled = distance_matrix.copy()
-    
-    # PCA
-    print(f"Computing PCA embeddings...")
-    n_comp = min(n_components_pca, len(track_ids) - 1)
-    pca = PCA(n_components=n_comp, random_state=random_seed)
-    pca_embedding = pca.fit_transform(distance_matrix_scaled)
-    print(f"  PCA variance explained: {pca.explained_variance_ratio_.sum():.2%}")
-    
-    # UMAP
-    try:
-        import umap
-        print(f"Computing UMAP embeddings...")
-        n_neighbors = min(umap_n_neighbors, len(track_ids) - 1)
-        reducer = umap.UMAP(n_neighbors=n_neighbors, min_dist=umap_min_dist, 
-                           random_state=random_seed)
-        umap_embedding = reducer.fit_transform(distance_matrix_scaled)
-        print(f"  ✅ UMAP complete")
-    except ImportError:
-        print("⚠️ UMAP not available - install with: pip install umap-learn")
-        umap_embedding = np.array([[np.nan, np.nan]] * len(track_ids))
+
+    pca_embedding = None
+    umap_embedding = None
+    pca_var_ratio_sum = np.nan
+
+    if compute_pca:
+        from sklearn.decomposition import PCA
+
+        print("Computing PCA embeddings...")
+        n_comp = min(n_components_pca, len(track_ids) - 1)
+        pca = PCA(n_components=n_comp, random_state=random_seed)
+        pca_embedding = pca.fit_transform(distance_matrix_scaled)
+        pca_var_ratio_sum = float(pca.explained_variance_ratio_.sum())
+        print(f"  PCA variance explained: {pca_var_ratio_sum:.2%}")
+
+    if compute_umap:
+        try:
+            import umap
+
+            print("Computing UMAP embeddings...")
+            n_neighbors = min(umap_n_neighbors, len(track_ids) - 1)
+            reducer = umap.UMAP(
+                n_neighbors=n_neighbors,
+                min_dist=umap_min_dist,
+                random_state=random_seed,
+            )
+            umap_embedding = reducer.fit_transform(distance_matrix_scaled)
+            print("  ✅ UMAP complete")
+        except ImportError:
+            print("⚠️ UMAP not available - install with: pip install umap-learn")
+            umap_embedding = np.array([[np.nan, np.nan]] * len(track_ids))
     
     # Create result dataframe
     result_df = df[df[unique_id_col].isin(track_ids)].copy()
     result_df = result_df.set_index(unique_id_col).loc[track_ids].reset_index()
     
-    # Store distances as row vectors (generic names for compatibility)
-    result_df['similarity_distance'] = list(distance_matrix)
-    result_df['similarity_distance_scaled'] = list(distance_matrix_scaled)
+    # Store distances as row vectors (optional; duplicates ~n² floats in the DataFrame)
+    if attach_row_distance_vectors:
+        result_df['similarity_distance'] = list(distance_matrix)
+        result_df['similarity_distance_scaled'] = list(distance_matrix_scaled)
+        if method == 'dtw':
+            result_df['dtw_distance'] = list(distance_matrix)
+            result_df['dtw_distance_scaled'] = list(distance_matrix_scaled)
     
-    # Also keep method-specific names for backward compatibility
-    if method == 'dtw':
-        result_df['dtw_distance'] = list(distance_matrix)
-        result_df['dtw_distance_scaled'] = list(distance_matrix_scaled)
-    
-    # Store embeddings
-    result_df['pca_embedding'] = list(pca_embedding)
-    result_df['umap_embedding'] = list(umap_embedding)
-    
+    # Optional embeddings
+    if compute_pca:
+        result_df['pca_embedding'] = list(pca_embedding)
+    if compute_umap:
+        result_df['umap_embedding'] = list(umap_embedding)
+
     # Metadata
-    result_df['pca_variance_explained'] = pca.explained_variance_ratio_.sum()
+    result_df['pca_variance_explained'] = pca_var_ratio_sum
     result_df['center_scaled'] = center_scale
     result_df['similarity_method'] = method
+    if method == 'dtw':
+        result_df['dtw_sequence_encoding'] = result.get('encoding', sequence_encoding)
+        result_df['dtw_n_states'] = result['stats'].get('n_states', np.nan)
     
     print(f"\n{'='*80}")
     print("✅ Complete! Added columns:")
-    print(f"   - similarity_distance (raw {method} distance vectors)")
-    print(f"   - similarity_distance_scaled (center-scaled {method})")
-    print(f"   - pca_embedding (PCA of {method})")
-    print(f"   - umap_embedding (UMAP of {method})")
+    if attach_row_distance_vectors:
+        print(f"   - similarity_distance (raw {method} distance vectors)")
+        print(f"   - similarity_distance_scaled (center-scaled {method})")
+    if compute_pca:
+        print(f"   - pca_embedding (PCA of {method})")
+    if compute_umap:
+        print(f"   - umap_embedding (UMAP of {method})")
     print(f"{'='*80}\n")
     
     return result_df
@@ -6634,6 +6847,136 @@ def compute_dtw_similarity_embeddings(*args, **kwargs):
     print("   Use compute_sequence_similarity_embeddings(method='dtw') instead.")
     kwargs['method'] = 'dtw'
     return compute_sequence_similarity_embeddings(*args, **kwargs)
+
+
+def compute_2d_embeddings_from_distance_vectors(
+    df_with_distances,
+    distance_col="dtw_distance",
+    compute_pca=True,
+    compute_umap=True,
+    compute_phate=True,
+    center_scale_for_pca=False,
+    pca_n_components=2,
+    umap_n_neighbors=15,
+    umap_min_dist=0.1,
+    phate_knn=15,
+    phate_decay=40,
+    phate_gamma=1,
+    random_seed=42,
+):
+    """
+    Compute 2D PCA / UMAP / PHATE from an existing *pairwise distance-vector* column.
+
+    This is intended for workflows where DTW was already computed (e.g. via
+    :func:`compute_sequence_similarity_embeddings` with ``attach_row_distance_vectors=True``),
+    and you want to derive multiple 2D visualizations *without* recomputing DTW.
+
+    Important
+    ---------
+    ``distance_col`` must contain, per row, a length-n vector of distances to all
+    points **in the same row order** (i.e., stacking with ``np.vstack`` yields an
+    n×n distance matrix).
+
+    Parameters
+    ----------
+    df_with_distances : pd.DataFrame or pl.DataFrame
+        Must contain ``distance_col`` where each entry is a vector/list of length n.
+    distance_col : str, default 'dtw_distance'
+        Column containing the per-row distance vectors.
+    compute_pca / compute_umap / compute_phate : bool
+        Which embeddings to compute.
+    center_scale_for_pca : bool, default False
+        If True, StandardScale the distance vectors before PCA (treating each row
+        as a feature vector).
+    random_seed : int
+        Seed used for UMAP / PHATE (and PCA for determinism where applicable).
+
+    Returns
+    -------
+    pd.DataFrame or pl.DataFrame
+        Same rows as input with added columns:
+        - 'pca_embedding' (if compute_pca)
+        - 'umap_embedding' (if compute_umap)
+        - 'phate_embedding' (if compute_phate)
+    """
+    import numpy as np
+    import pandas as pd
+
+    try:
+        import polars as pl
+    except ImportError:
+        pl = None
+
+    is_polars = pl is not None and isinstance(df_with_distances, pl.DataFrame)
+    pdf = df_with_distances.to_pandas() if is_polars else df_with_distances.copy()
+
+    if distance_col not in pdf.columns:
+        raise KeyError(
+            f"Missing distance column {distance_col!r}. "
+            "You need attach_row_distance_vectors=True when computing DTW, "
+            "or use a different column like 'similarity_distance'."
+        )
+
+    D = np.vstack(pdf[distance_col].values)
+    if D.ndim != 2 or D.shape[0] != D.shape[1]:
+        raise ValueError(
+            f"{distance_col!r} must stack into an n×n matrix; got shape {D.shape}."
+        )
+
+    # PCA on distance vectors as features (row-wise)
+    if compute_pca:
+        from sklearn.decomposition import PCA
+
+        X = D
+        if center_scale_for_pca:
+            from sklearn.preprocessing import StandardScaler
+
+            X = StandardScaler().fit_transform(X)
+
+        pca = PCA(n_components=min(int(pca_n_components), max(X.shape[0] - 1, 1)), random_state=random_seed)
+        pca_coords = pca.fit_transform(X)
+        if pca_coords.shape[1] < 2:
+            pca_coords = np.pad(pca_coords, ((0, 0), (0, 2 - pca_coords.shape[1])), constant_values=np.nan)
+        pdf["pca_embedding"] = list(pca_coords[:, :2])
+
+    # UMAP using the *precomputed* distance matrix
+    if compute_umap:
+        try:
+            import umap
+        except ImportError as e:
+            raise ImportError("UMAP not available. Install with: pip install umap-learn") from e
+
+        reducer = umap.UMAP(
+            n_neighbors=min(int(umap_n_neighbors), max(D.shape[0] - 1, 1)),
+            min_dist=float(umap_min_dist),
+            n_components=2,
+            metric="precomputed",
+            random_state=random_seed,
+        )
+        umap_coords = reducer.fit_transform(D)
+        pdf["umap_embedding"] = list(umap_coords[:, :2])
+
+    # PHATE using the *precomputed* distance matrix
+    if compute_phate:
+        try:
+            import phate
+        except ImportError as e:
+            raise ImportError("PHATE not available. Install with: pip install phate") from e
+
+        ph = phate.PHATE(
+            n_components=2,
+            knn=int(phate_knn),
+            decay=int(phate_decay),
+            gamma=float(phate_gamma),
+            knn_dist="precomputed",
+            random_state=random_seed,
+        )
+        phate_coords = ph.fit_transform(D)
+        pdf["phate_embedding"] = list(phate_coords[:, :2])
+
+    if is_polars:
+        return pl.from_pandas(pdf)
+    return pdf
 
 
 def add_dtw_clusters(
@@ -6716,8 +7059,12 @@ def add_dtw_clusters(
     """
     from sklearn.cluster import KMeans
     import numpy as np
-    
-    df = sequence_df_with_embeddings.copy()
+
+    is_polars = isinstance(sequence_df_with_embeddings, pl.DataFrame)
+    if is_polars:
+        df = sequence_df_with_embeddings.to_pandas()
+    else:
+        df = sequence_df_with_embeddings.copy()
     
     print(f"\n{'='*80}")
     print(f"CLUSTERING ON DTW SIMILARITY (ALL MOLECULES TOGETHER)")
@@ -6856,7 +7203,77 @@ def add_dtw_clusters(
     print("✅ Clustering complete! Added 'superwindow_cluster' column to dataframe")
     print(f"{'='*80}\n")
     
+    if is_polars:
+        return pl.from_pandas(df)
     return df
+
+
+def map_superwindow_cluster_to_windows_by_window_uid(
+    windowed_df,
+    superwindow_df,
+    window_uids_col="window_uids",
+    superwindow_id_col="superwindow_id",
+    cluster_col="superwindow_cluster",
+    cluster_name_col="superwindow_cluster_name",
+):
+    """
+    Attach ``superwindow_cluster`` (and ``superwindow_id``) to each **window** row using ``window_uid``.
+    If ``superwindow_df`` has ``cluster_name_col`` (default ``superwindow_cluster_name``), that
+    column is propagated alongside ``superwindow_cluster``.
+
+    After :func:`add_dtw_clusters`, each row of ``superwindow_df`` has a cluster label and a
+    ``window_uids`` list (from :func:`create_fixed_length_superwindows`). Exploding that list
+    gives one ``window_uid`` per window; joining on ``window_uid`` is the canonical mapping
+    (no inference from ``unique_id`` + ``time_window``).
+
+    Parameters
+    ----------
+    windowed_df : pl.DataFrame or pd.DataFrame
+        Must contain a ``window_uid`` column.
+    superwindow_df : pl.DataFrame or pd.DataFrame
+        Must contain ``window_uids`` (list column), ``superwindow_id_col``, and ``cluster_col``.
+    cluster_name_col : str, optional
+        Name of optional string label column on ``superwindow_df``. If that column is missing,
+        it is skipped.
+
+    Returns
+    -------
+    pl.DataFrame or pd.DataFrame
+        ``windowed_df`` with added ``superwindow_id`` and ``superwindow_cluster`` (left join),
+        and ``cluster_name_col`` when present on ``superwindow_df``.
+    """
+    is_pl_windowed = isinstance(windowed_df, pl.DataFrame)
+
+    if is_pl_windowed:
+        wdf = windowed_df
+    else:
+        wdf = pl.from_pandas(windowed_df)
+
+    sdf = superwindow_df if isinstance(superwindow_df, pl.DataFrame) else pl.from_pandas(superwindow_df)
+
+    for c in (window_uids_col, superwindow_id_col, cluster_col):
+        if c not in sdf.columns:
+            raise KeyError(f"superwindow_df missing column {c!r}")
+    if "window_uid" not in wdf.columns:
+        raise KeyError("windowed_df must have 'window_uid' for this join.")
+
+    select_cols = [superwindow_id_col, cluster_col]
+    if cluster_name_col and cluster_name_col in sdf.columns:
+        select_cols.append(cluster_name_col)
+    select_cols.append(window_uids_col)
+
+    mapping = (
+        sdf.select(select_cols)
+        .explode(window_uids_col)
+        .rename({window_uids_col: "window_uid"})
+        .unique(subset=["window_uid"], keep="last")
+    )
+
+    out = wdf.join(mapping, on="window_uid", how="left")
+
+    if not is_pl_windowed:
+        return out.to_pandas()
+    return out
 
 
 def add_superwindow_id_to_windowed_data(

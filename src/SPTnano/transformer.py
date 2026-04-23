@@ -1,4 +1,5 @@
 import os
+import platform
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,18 +13,161 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
 
+# ############################################################################
+# #### PERIER — optional raw multi-head self-attention extraction
+# Codeword: perrier
+#
+# ROLLBACK / SAFETY:
+# - Default unchanged: TransformerMotionEncoder(..., use_raw_attention=False)
+#   uses nn.TransformerEncoder + nn.TransformerEncoderLayer (same as before).
+# - Set use_raw_attention=True only when you need true MHA weights in forward.
+# - Checkpoint files on disk are never modified; keep a copy anyway, e.g.:
+#     best_model.pt -> best_model_backup_before_perrier.pt
+# - To revert: use use_raw_attention=False, or git checkout this file.
+# ############################################################################
+
+
+class PerrierTransformerEncoderLayer(nn.TransformerEncoderLayer):
+    """
+    Same parameters/state_dict as nn.TransformerEncoderLayer; overrides _sa_block
+    to optionally capture attn weights (need_weights=True).
+    """
+
+    def _sa_block(self, *args, **kwargs):
+        if getattr(self, "_perrier_capture_attn", False):
+            x = args[0]
+            attn_mask = args[1] if len(args) > 1 else None
+            key_padding_mask = args[2] if len(args) > 2 else None
+            is_causal = kwargs.get("is_causal", False)
+            try:
+                out = self.self_attn(
+                    x,
+                    x,
+                    x,
+                    attn_mask=attn_mask,
+                    key_padding_mask=key_padding_mask,
+                    need_weights=True,
+                    average_attn_weights=False,
+                    is_causal=is_causal,
+                )
+            except TypeError:
+                out = self.self_attn(
+                    x,
+                    x,
+                    x,
+                    attn_mask=attn_mask,
+                    key_padding_mask=key_padding_mask,
+                    need_weights=True,
+                    average_attn_weights=False,
+                )
+            self._perrier_last_attn = out[1]
+            return self.dropout1(out[0])
+        return super()._sa_block(*args, **kwargs)
+
+
+class PerrierTransformerEncoder(nn.TransformerEncoder):
+    """nn.TransformerEncoder with optional return of per-layer attention tensors."""
+
+    def forward(
+        self,
+        src,
+        mask=None,
+        src_key_padding_mask=None,
+        is_causal=False,
+        return_attn=False,
+    ):
+        if not return_attn:
+            try:
+                return super().forward(
+                    src, mask, src_key_padding_mask, is_causal=is_causal
+                )
+            except TypeError:
+                return super().forward(src, mask, src_key_padding_mask)
+        output = src
+        attn_list = []
+        for mod in self.layers:
+            mod._perrier_capture_attn = True
+            mod._perrier_last_attn = None
+            try:
+                output = mod(
+                    output,
+                    src_mask=mask,
+                    src_key_padding_mask=src_key_padding_mask,
+                    is_causal=is_causal,
+                )
+            except TypeError:
+                output = mod(
+                    output,
+                    src_mask=mask,
+                    src_key_padding_mask=src_key_padding_mask,
+                )
+            attn_list.append(getattr(mod, "_perrier_last_attn", None))
+            mod._perrier_capture_attn = False
+        if self.norm is not None:
+            output = self.norm(output)
+        return output, attn_list
+
+
+def summarize_raw_attention_per_window(attn_list):
+    """
+    #### PERIER — frame-order-invariant scalars per layer from raw attention tensors.
+
+    Parameters
+    ----------
+    attn_list : list of Tensor
+        One tensor per layer, typically [B, H, L, L] (batch, heads, seq, seq).
+
+    Returns
+    -------
+    dict
+        Keys like raw_attn_L{layer}_mean_entropy, raw_attn_L{layer}_cls_row_entropy.
+    """
+    if not attn_list:
+        return {}
+    out = {}
+    for i, a in enumerate(attn_list):
+        if a is None:
+            continue
+        p = a.clamp_min(1e-9)
+        p = p / p.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+        ent = -(p * p.log()).sum(dim=-1)
+        out[f"raw_attn_L{i}_mean_entropy"] = float(ent.mean().item())
+        out[f"raw_attn_L{i}_cls_row_entropy"] = float(ent[:, :, 0].mean().item())
+    return out
+
+
+# #### PERIER end (classes + helper)
+
+
 class TransformerMotionEncoder(nn.Module):
     def __init__(
-        self, input_dim=3, embed_dim=64, num_heads=4, ff_dim=128, num_layers=2
+        self,
+        input_dim=3,
+        embed_dim=64,
+        num_heads=4,
+        ff_dim=128,
+        num_layers=2,
+        use_raw_attention=False,
     ):
         super().__init__()
         self.input_proj = nn.Linear(input_dim, embed_dim)
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=embed_dim, nhead=num_heads, dim_feedforward=ff_dim
-        )
-        self.transformer_encoder = nn.TransformerEncoder(
-            encoder_layer, num_layers=num_layers
-        )
+        #### PERIER start — encoder stack (default = identical to pre-perrier)
+        self.use_raw_attention = bool(use_raw_attention)
+        if self.use_raw_attention:
+            encoder_layer = PerrierTransformerEncoderLayer(
+                d_model=embed_dim, nhead=num_heads, dim_feedforward=ff_dim
+            )
+            self.transformer_encoder = PerrierTransformerEncoder(
+                encoder_layer, num_layers=num_layers
+            )
+        else:
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=embed_dim, nhead=num_heads, dim_feedforward=ff_dim
+            )
+            self.transformer_encoder = nn.TransformerEncoder(
+                encoder_layer, num_layers=num_layers
+            )
+        #### PERIER end
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.norm = nn.LayerNorm(embed_dim)
         
@@ -31,24 +175,73 @@ class TransformerMotionEncoder(nn.Module):
         self.store_attention = False
         self.attention_weights = None
 
-    def forward(self, x, return_attention=False):  # x: [B, T, 3]
+    def forward(
+        self,
+        x,
+        src_key_padding_mask=None,
+        return_attention=False,
+        return_raw_attention=False,
+    ):  # x: [B, T, 3]
         """
         Forward pass with optional attention weight extraction.
-        
+
         Args:
             x: Input tensor [B, T, input_dim]
-            return_attention: If True, also return attention weights (slower)
-            
+            src_key_padding_mask: Optional [B, T+1] bool, True = pad/ignore (position 0 = CLS).
+                When provided, passed to ``TransformerEncoder`` so padded frame tokens are not attended.
+            return_attention: Legacy flag; if True and use_raw_attention is False,
+                prints a hint and returns (emb, None).
+            return_raw_attention: If True and use_raw_attention is True, returns
+                (emb, attn_list) with one tensor per layer [B, H, L, L].
+
         Returns:
             embeddings: [B, embed_dim]
             attention_weights (optional): List of attention weight tensors per layer
         """
+        #### PERIER start
+        if return_raw_attention and not self.use_raw_attention:
+            raise ValueError(
+                "return_raw_attention=True requires TransformerMotionEncoder(..., use_raw_attention=True). "
+                "Load the same checkpoint into a model constructed with use_raw_attention=True."
+            )
+        #### PERIER end
         B, T, _ = x.shape
         x = self.input_proj(x)  # [B, T, embed_dim]
         cls_tokens = self.cls_token.expand(B, -1, -1)  # [B, 1, embed_dim]
         x = torch.cat((cls_tokens, x), dim=1)  # [B, T+1, embed_dim]
-        x = self.transformer_encoder(x.permute(1, 0, 2))  # [T+1, B, embed_dim]
-        x = x[0]  # take CLS token [B, embed_dim]
+        seq = x.permute(1, 0, 2)  # [T+1, B, embed_dim]
+        km = None
+        if src_key_padding_mask is not None:
+            km = src_key_padding_mask
+            if km.dtype != torch.bool:
+                km = km.bool()
+            if km.shape[1] != T + 1:
+                raise ValueError(
+                    f"src_key_padding_mask must be [B, {T + 1}] (CLS + frames); got {tuple(km.shape)}"
+                )
+        #### PERIER start
+        attn_list = None
+        if self.use_raw_attention and return_raw_attention:
+            enc_out, attn_list = self.transformer_encoder(
+                seq, return_attn=True, src_key_padding_mask=km
+            )
+        else:
+            try:
+                enc_out = self.transformer_encoder(
+                    seq, is_causal=False, src_key_padding_mask=km
+                )
+            except TypeError:
+                if km is None:
+                    enc_out = self.transformer_encoder(seq)
+                else:
+                    enc_out = self.transformer_encoder(seq, src_key_padding_mask=km)
+        x = enc_out[0]  # take CLS token [B, embed_dim]
+        #### PERIER end
+        
+        emb = self.norm(x)
+        
+        if return_raw_attention and self.use_raw_attention:
+            return emb, attn_list
         
         # Note: Standard PyTorch TransformerEncoder doesn't expose attention weights
         # For full attention extraction, you'd need to use a custom encoder
@@ -59,9 +252,9 @@ class TransformerMotionEncoder(nn.Module):
             # See extract_attention_weights() method for practical alternatives
             print("⚠️ Standard TransformerEncoder doesn't expose attention weights")
             print("💡 Use extract_attention_weights() method for interpretability")
-            return self.norm(x), None
+            return emb, None
         
-        return self.norm(x)
+        return emb
     
     def extract_attention_weights(self, x, method='gradient'):
         """
@@ -133,6 +326,791 @@ class TransformerMotionEncoder(nn.Module):
             importance_scores = torch.stack(importance_scores, dim=1)  # [B, T]
         
         return importance_scores
+
+
+class TransformerMotionClassifier(nn.Module):
+    """
+    Transformer encoder + linear head for supervised class prediction (e.g. final_population).
+    Forward returns logits [B, num_classes].
+    """
+
+    def __init__(
+        self,
+        encoder: "TransformerMotionEncoder",
+        num_classes: int,
+    ):
+        super().__init__()
+        self.encoder = encoder
+        ed = encoder.input_proj.out_features
+        self.head = nn.Linear(ed, num_classes)
+
+    def forward(self, x, src_key_padding_mask=None):
+        emb = self.encoder(x, src_key_padding_mask=src_key_padding_mask)
+        return self.head(emb)
+
+
+def build_encoder_architecture_dict(model: nn.Module) -> dict:
+    """
+    Serialize encoder dims for checkpoints (plain TransformerMotionEncoder or
+    TransformerMotionClassifier wrapping an encoder).
+    """
+    enc = getattr(model, "encoder", None)
+    if enc is not None and hasattr(enc, "input_proj"):
+        m = enc
+    elif hasattr(model, "input_proj"):
+        m = model
+    else:
+        return {}
+    architecture = {
+        "input_dim": int(m.input_proj.in_features),
+        "embed_dim": int(m.input_proj.out_features),
+    }
+    if hasattr(m, "transformer_encoder"):
+        encoder = m.transformer_encoder
+        architecture["num_layers"] = encoder.num_layers
+        if hasattr(encoder, "layers") and len(encoder.layers) > 0:
+            layer = encoder.layers[0]
+            if hasattr(layer, "self_attn"):
+                architecture["num_heads"] = layer.self_attn.num_heads
+            if hasattr(layer, "linear1"):
+                architecture["ff_dim"] = layer.linear1.out_features
+    if hasattr(m, "use_raw_attention"):
+        architecture["use_raw_attention"] = bool(m.use_raw_attention)
+    if hasattr(model, "head"):
+        architecture["num_classes"] = int(model.head.out_features)
+    return architecture
+
+
+def infer_encoder_layout_from_state_dict(state_dict: dict) -> dict:
+    """
+    Infer input_dim, embed_dim, num_layers, ff_dim, num_classes from checkpoint tensors.
+    ``num_heads`` cannot be recovered from weights alone; use checkpoint ``architecture``
+    or notebook globals.
+
+    Returns
+    -------
+    dict
+        Keys may include ``input_dim``, ``embed_dim``, ``num_layers``, ``ff_dim``,
+        ``num_classes``, and ``is_supervised`` (True if keys use an ``encoder.`` prefix).
+    """
+    if not state_dict:
+        return {}
+    keys = list(state_dict.keys())
+    enc_prefix = "encoder." if any(k.startswith("encoder.") for k in keys) else ""
+    ipw = f"{enc_prefix}input_proj.weight"
+    if ipw not in state_dict:
+        return {}
+    w = state_dict[ipw]
+    input_dim = int(w.shape[1])
+    embed_dim = int(w.shape[0])
+    layer_indices = set()
+    prefix_block = f"{enc_prefix}transformer_encoder.layers."
+    for k in keys:
+        if k.startswith(prefix_block) and "self_attn.in_proj_weight" in k:
+            try:
+                rest = k[len(prefix_block) :]
+                li = int(rest.split(".", 1)[0])
+                layer_indices.add(li)
+            except (ValueError, IndexError):
+                continue
+    num_layers = (max(layer_indices) + 1) if layer_indices else 1
+    l1 = f"{enc_prefix}transformer_encoder.layers.0.linear1.weight"
+    ff_dim = int(state_dict[l1].shape[0]) if l1 in state_dict else None
+    num_classes = None
+    if "head.bias" in state_dict:
+        num_classes = int(state_dict["head.bias"].shape[0])
+    return {
+        "input_dim": input_dim,
+        "embed_dim": embed_dim,
+        "num_layers": num_layers,
+        "ff_dim": ff_dim,
+        "num_classes": num_classes,
+        "is_supervised": bool(enc_prefix),
+    }
+
+
+def build_eval_model_from_checkpoint(
+    checkpoint: dict,
+    device,
+    *,
+    use_raw_attention: bool = False,
+    manual: dict | None = None,
+):
+    """
+    Build a ``TransformerMotionEncoder`` and load weights from contrastive or supervised
+    checkpoints.
+
+    Supervised checkpoints store a ``TransformerMotionClassifier`` (``encoder.*`` +
+    ``head.*``). This function loads the full classifier, then returns **only the
+    encoder** so downstream notebook cells that call ``model(x)`` for embeddings keep
+    working. The full classifier is returned in the metadata dict as ``classifier``.
+
+    Parameters
+    ----------
+    checkpoint : dict
+        As returned by ``torch.load(..., weights_only=False)``.
+    device : torch.device | str
+    use_raw_attention : bool
+        Passed to ``TransformerMotionEncoder``.
+    manual : dict, optional
+        Fallback for dims not in ``checkpoint['architecture']`` or inferable from
+        weights (typically ``num_heads``).
+
+    Returns
+    -------
+    model : TransformerMotionEncoder
+        Encoder with loaded weights (embedding / raw-attention API).
+    meta : dict
+        ``kind`` — ``\"contrastive\"`` or ``\"supervised\"``; ``classifier`` — full
+        ``TransformerMotionClassifier`` for supervised runs, else ``None``;
+        ``checkpoint`` — the input dict; ``resolved_arch`` — merged hyperparameters.
+    """
+    manual = manual or {}
+    state = checkpoint.get("best_model_state") or checkpoint.get("model_state_dict")
+    if state is None:
+        raise ValueError("Checkpoint has no best_model_state or model_state_dict")
+    arch = checkpoint.get("architecture") or {}
+    inferred = infer_encoder_layout_from_state_dict(state)
+
+    _tt = checkpoint.get("training_type")
+    is_supervised = _tt in (
+        "supervised_population",
+        "supervised_population_focal_supcon",
+    ) or inferred.get("is_supervised", False)
+
+    def _pick(key, inf_key=None):
+        inf_key = inf_key or key
+        v = arch.get(key)
+        if v is not None:
+            return v
+        v = inferred.get(inf_key)
+        if v is not None:
+            return v
+        return manual.get(key)
+
+    input_dim = _pick("input_dim")
+    embed_dim = _pick("embed_dim")
+    ff_dim = _pick("ff_dim")
+    num_layers = _pick("num_layers")
+    num_heads = _pick("num_heads")
+    num_classes = arch.get("num_classes") or checkpoint.get("num_classes") or inferred.get("num_classes")
+
+    if input_dim is None or embed_dim is None or ff_dim is None or num_layers is None:
+        raise ValueError(
+            "Could not resolve input_dim / embed_dim / ff_dim / num_layers from checkpoint; "
+            "set INPUT_DIM, EMBED_DIM, FF_DIM, NUM_LAYERS in the notebook."
+        )
+    if num_heads is None:
+        raise ValueError(
+            "num_heads is not in checkpoint['architecture'] and cannot be inferred from weights; "
+            "set NUM_HEADS in the notebook to match training."
+        )
+    if is_supervised and num_classes is None:
+        raise ValueError("Supervised checkpoint missing num_classes (expected in checkpoint or head.bias).")
+
+    resolved = {
+        "input_dim": int(input_dim),
+        "embed_dim": int(embed_dim),
+        "num_heads": int(num_heads),
+        "ff_dim": int(ff_dim),
+        "num_layers": int(num_layers),
+    }
+
+    encoder = TransformerMotionEncoder(
+        input_dim=resolved["input_dim"],
+        embed_dim=resolved["embed_dim"],
+        num_heads=resolved["num_heads"],
+        ff_dim=resolved["ff_dim"],
+        num_layers=resolved["num_layers"],
+        use_raw_attention=use_raw_attention,
+    ).to(device)
+
+    if is_supervised:
+        clf = TransformerMotionClassifier(encoder, num_classes=int(num_classes)).to(device)
+        clf.load_state_dict(state, strict=True)
+        clf.eval()
+        return clf.encoder, {
+            "kind": "supervised",
+            "classifier": clf,
+            "num_classes": int(num_classes),
+            "checkpoint": checkpoint,
+            "resolved_arch": {**resolved, "num_classes": int(num_classes)},
+        }
+
+    encoder.load_state_dict(state, strict=True)
+    encoder.eval()
+    return encoder, {
+        "kind": "contrastive",
+        "classifier": None,
+        "checkpoint": checkpoint,
+        "resolved_arch": resolved,
+    }
+
+
+def population_lookup_key(unique_id, time_window):
+    """
+    Stable dict key for joining windowed labels to instant windows.
+    unique_id may be int or str (e.g. 'nch2h_4_19856'); time_window is int-like.
+    """
+    tw = int(time_window)
+    if isinstance(unique_id, str):
+        uid = unique_id.strip()
+    elif isinstance(unique_id, (int, np.integer)):
+        uid = str(int(unique_id))
+    elif isinstance(unique_id, (float, np.floating)):
+        uid = str(int(unique_id)) if float(unique_id).is_integer() else str(unique_id)
+    else:
+        uid = str(unique_id).strip()
+    return (uid, tw)
+
+
+def _wsl_path_if_linux(windows_path):
+    """Windows drive path -> /mnt/x/... on Linux (WSL); unchanged on Windows."""
+    if platform.system() != "Linux":
+        return windows_path
+    path = windows_path.replace("\\", "/")
+    if len(path) >= 2 and path[1] == ":":
+        drive_letter = path[0].lower()
+        rest = path[2:]
+        return f"/mnt/{drive_letter}{rest}"
+    return path
+
+
+def _convert_embedded_split_path(path, splits_drive="D:"):
+    """Normalize paths stored inside data_splits.pkl (F:→D:, WSL)."""
+    if not isinstance(path, str):
+        return path
+    path = path.replace(".pkl\\", "\\").replace(".pkl/", "/")
+    if "F:" in path or "/mnt/f" in path.lower():
+        path = path.replace("F:", splits_drive)
+        path = path.replace("F:\\", f"{splits_drive}\\")
+        path = path.replace("f:", splits_drive.lower())
+        path = path.replace("f:\\", f"{splits_drive.lower()}\\")
+        sd = splits_drive.lower().replace(":", "")
+        path = path.replace("/mnt/f/", f"/mnt/{sd}/")
+        path = path.replace("/mnt/F/", f"/mnt/{sd}/")
+    if platform.system() == "Linux" and path.startswith(
+        ("D:", "D:\\", "d:", "d:\\")
+    ):
+        path = _wsl_path_if_linux(path)
+    return path
+
+
+def resolve_split_parquet_path(path, pickle_dir, path_replacements=()):
+    """
+    Resolve train/val/test parquet paths from data_splits.pkl when they are stale.
+
+    Tries in order:
+    1) Substring replacements (e.g. old Analyzed/... → new folder)
+    2) Same path after dropping an extra ``.../data_splits/...`` segment
+    3) ``os.path.join(pickle_dir, basename)`` — parquets next to ``data_splits.pkl``
+    4) ``os.path.join(pickle_dir, 'data_splits', basename)``
+    """
+    if not path or not isinstance(path, str):
+        return path
+    orig = path
+    path_n = path.replace("\\", "/")
+
+    for old, new in path_replacements:
+        o = old.replace("\\", "/")
+        n = new.replace("\\", "/")
+        if o in path_n:
+            path_n = path_n.replace(o, n, 1)
+            break
+
+    candidates = [path_n]
+    if "/data_splits/" in path_n:
+        candidates.append(path_n.replace("/data_splits/", "/", 1))
+
+    for p in candidates:
+        if os.path.exists(p):
+            if p.rstrip("/") != orig.replace("\\", "/").rstrip("/"):
+                print(f"   ✅ Using parquet: {p}")
+            return p
+
+    base = os.path.basename(path_n.rstrip("/"))
+    for sub in ("", "data_splits"):
+        cand = os.path.join(pickle_dir, sub, base) if sub else os.path.join(
+            pickle_dir, base
+        )
+        cand = os.path.normpath(cand)
+        if os.path.exists(cand):
+            print(f"   ✅ Resolved parquet next to data_splits.pkl: {cand}")
+            return cand
+
+    return orig
+
+
+def load_train_val_test_parquets(
+    splits_path,
+    path_replacements=None,
+    splits_drive=None,
+    verbose=True,
+):
+    """
+    Load train/val/test Polars DataFrames from ``data_splits.pkl``.
+
+    ``splits_path`` may be a directory (containing ``data_splits.pkl``) or the pickle file path.
+
+    Parameters
+    ----------
+    path_replacements : list of (old, new) str tuples, optional
+        Applied as substring replacements on normalized paths. If None, uses
+        ``TRANSFORMER_SUPERVISED['splits_embedded_path_replacements']`` when available,
+        else no replacements.
+    splits_drive : str, optional
+        Target drive for embedded F: paths. Default: ``TRANSFORMER_DATA['splits_drive']`` or ``"D:"``.
+    """
+    import pickle
+
+    if os.path.isdir(splits_path):
+        pickle_file = os.path.join(splits_path, "data_splits.pkl")
+        if not os.path.exists(pickle_file):
+            raise FileNotFoundError(
+                f"data_splits.pkl not found under {splits_path}"
+            )
+        splits_path = pickle_file
+    elif not os.path.isfile(splits_path):
+        raise FileNotFoundError(f"Split path not found: {splits_path}")
+
+    pickle_dir = os.path.dirname(os.path.abspath(splits_path))
+
+    with open(splits_path, "rb") as f:
+        split_data = pickle.load(f)
+
+    split_config = split_data.get("split_config", {})
+    if "train_path" not in split_config:
+        raise KeyError("split_config missing train_path (invalid data_splits.pkl)")
+
+    if splits_drive is None:
+        try:
+            from .config import TRANSFORMER_DATA
+
+            splits_drive = TRANSFORMER_DATA.get("splits_drive", "D:")
+        except ImportError:
+            splits_drive = "D:"
+
+    if path_replacements is None:
+        try:
+            from .config import TRANSFORMER_SUPERVISED
+
+            path_replacements = TRANSFORMER_SUPERVISED.get(
+                "splits_embedded_path_replacements", []
+            )
+        except ImportError:
+            path_replacements = []
+
+    repl = list(path_replacements)
+
+    def _one(p):
+        return resolve_split_parquet_path(
+            _convert_embedded_split_path(p, splits_drive=splits_drive),
+            pickle_dir,
+            path_replacements=repl,
+        )
+
+    train_path = _one(split_config["train_path"])
+    val_path = _one(split_config["val_path"])
+    test_path = _one(split_config["test_path"])
+
+    for label, p in (("train", train_path), ("val", val_path), ("test", test_path)):
+        if not os.path.exists(p):
+            raise FileNotFoundError(
+                f"Split parquet not found for {label}: {p}\n"
+                f"   Pickle directory (place train_df.parquet etc. here): {pickle_dir}\n"
+                f"   Or pass path_replacements= [('old_prefix','new_prefix'), ...] to "
+                f"load_train_val_test_parquets(), or set splits_embedded_path_replacements in config."
+            )
+
+    train_df = pl.read_parquet(train_path)
+    val_df = pl.read_parquet(val_path)
+    test_df = pl.read_parquet(test_path)
+
+    if verbose:
+        print(
+            f"✅ Loaded splits: Train={len(train_df):,}, Val={len(val_df):,}, Test={len(test_df):,}"
+        )
+    return train_df, val_df, test_df
+
+
+def load_windowed_population_lookup(
+    windowed_parquet_path,
+    label_col: str = "final_population",
+):
+    """
+    Load (unique_id, time_window) -> label string from windowed parquet.
+    Last row wins on duplicate keys (matches notebook mapping behavior).
+    """
+    df = pl.read_parquet(windowed_parquet_path)
+    need = ["unique_id", "time_window", label_col]
+    for c in need:
+        if c not in df.columns:
+            raise ValueError(
+                f"Column '{c}' not in {windowed_parquet_path}; have: {df.columns}"
+            )
+    sub = df.select(need).drop_nulls(subset=[label_col])
+    sub = sub.unique(subset=["unique_id", "time_window"], keep="last")
+    lookup = {}
+    for row in sub.iter_rows(named=True):
+        uid = row["unique_id"]
+        tw = row["time_window"]
+        lab = row[label_col]
+        if lab is None:
+            continue
+        if hasattr(lab, "item"):
+            lab = lab.item()
+        lab = str(lab)
+        key = population_lookup_key(uid, tw)
+        lookup[key] = lab
+    return lookup
+
+
+def load_windowed_population_lookup_window_uid(
+    windowed_parquet_path,
+    label_col: str = "final_population",
+):
+    """
+    Load ``window_uid`` -> label string from windowed parquet (one row per window).
+
+    Duplicate ``window_uid`` rows: last wins (same convention as the (unique_id, time_window) loader).
+    """
+    df = pl.read_parquet(windowed_parquet_path)
+    need = ["window_uid", label_col]
+    for c in need:
+        if c not in df.columns:
+            raise ValueError(
+                f"Column '{c}' not in {windowed_parquet_path}; have: {df.columns}"
+            )
+    sub = df.select(need).drop_nulls(subset=[label_col])
+    sub = sub.unique(subset=["window_uid"], keep="last")
+    lookup = {}
+    for row in sub.iter_rows(named=True):
+        wuid = row["window_uid"]
+        if wuid is None:
+            continue
+        wuid = str(wuid).strip()
+        lab = row[label_col]
+        if lab is None:
+            continue
+        if hasattr(lab, "item"):
+            lab = lab.item()
+        lab = str(lab)
+        lookup[wuid] = lab
+    return lookup
+
+
+def fit_str_label_mapping_from_train_strings(train_label_strings):
+    """Sorted unique train labels -> str_to_idx and num_classes."""
+    classes = sorted(set(train_label_strings))
+    str_to_idx = {s: i for i, s in enumerate(classes)}
+    return str_to_idx, len(classes)
+
+
+def build_global_str_to_idx_from_lookup_values(label_lookup_str):
+    """All distinct population strings in windowed lookup -> str_to_idx (sorted)."""
+    classes = sorted(set(label_lookup_str.values()))
+    str_to_idx = {s: i for i, s in enumerate(classes)}
+    return str_to_idx, len(classes)
+
+
+class SupervisedPopulationDataset(Dataset):
+    """
+    Same windowing as AugmentationContrastiveDataset, but only windows with a
+    final_population label from windowed_df joined on (unique_id, time_window).
+    """
+
+    def __init__(
+        self,
+        instant_df,
+        label_lookup_str,
+        str_to_idx,
+        window_size=60,
+        overlap=30,
+        min_track_length=60,
+    ):
+        self.window_size = window_size
+        self.overlap = overlap
+        self.step_size = window_size - overlap
+        self.min_track_length = max(min_track_length, window_size)
+        self.str_to_idx = str_to_idx
+        self.label_lookup_str = label_lookup_str
+
+        if isinstance(instant_df, pl.DataFrame):
+            self.df = instant_df.sort(["unique_id", "frame"])
+        else:
+            self.df = pl.from_pandas(instant_df).sort(["unique_id", "frame"])
+
+        self.has_direction = "direction_rad" in self.df.columns
+
+        track_lengths = self.df.group_by("unique_id").agg(
+            [pl.len().alias("n_frames"), pl.col("condition").first().alias("condition")]
+        ).filter(pl.col("n_frames") >= self.min_track_length)
+
+        print("📊 SupervisedPopulationDataset: building track index...")
+        self._build_track_index()
+
+        print("📋 Filtering to labeled windows (unique_id, time_window)...")
+        raw_indices = self._generate_window_indices()
+        self.samples = []
+        skipped_no_label = 0
+        skipped_unknown_class = 0
+        for unique_id, row_start in raw_indices:
+            track_start = self.track_index[unique_id]["start_row"]
+            tw = (row_start - track_start) // self.step_size
+            key = population_lookup_key(unique_id, tw)
+            if key not in self.label_lookup_str:
+                skipped_no_label += 1
+                continue
+            lab_str = self.label_lookup_str[key]
+            if lab_str not in self.str_to_idx:
+                skipped_unknown_class += 1
+                continue
+            self.samples.append(
+                (unique_id, row_start, self.str_to_idx[lab_str])
+            )
+
+        print(
+            f"   ✅ {len(self.samples):,} labeled windows "
+            f"(skipped no label: {skipped_no_label:,}, unknown class: {skipped_unknown_class:,})"
+        )
+
+    def _build_track_index(self):
+        df_with_idx = self.df.with_row_index("row_idx")
+        track_ranges = df_with_idx.group_by("unique_id").agg(
+            [
+                pl.col("row_idx").min().alias("start_row"),
+                pl.col("row_idx").max().alias("end_row"),
+                pl.len().alias("n_frames"),
+                pl.col("condition").first().alias("condition"),
+            ]
+        ).filter(pl.col("n_frames") >= self.min_track_length)
+
+        self.track_index = {}
+        for row in track_ranges.iter_rows(named=True):
+            self.track_index[row["unique_id"]] = {
+                "start_row": row["start_row"],
+                "end_row": row["end_row"],
+                "n_frames": row["n_frames"],
+                "condition": row["condition"],
+            }
+
+        self.x_um = self.df["x_um"].to_numpy()
+        self.y_um = self.df["y_um"].to_numpy()
+        self.frames = self.df["frame"].to_numpy()
+        if self.has_direction:
+            self.direction_rad = self.df["direction_rad"].to_numpy()
+        else:
+            self.direction_rad = None
+
+    def _generate_window_indices(self):
+        window_indices = []
+        for unique_id, info in self.track_index.items():
+            n_frames = info["n_frames"]
+            start_row = info["start_row"]
+            for local_start in range(0, n_frames - self.window_size + 1, self.step_size):
+                window_indices.append((unique_id, start_row + local_start))
+        return window_indices
+
+    def _extract_features(self, row_start, row_end):
+        x = self.x_um[row_start:row_end]
+        y = self.y_um[row_start:row_end]
+        dx = np.diff(x, prepend=x[0])
+        dy = np.diff(y, prepend=y[0])
+        if self.direction_rad is not None:
+            direction = self.direction_rad[row_start:row_end]
+        else:
+            direction = np.arctan2(dy, dx)
+            direction = np.nan_to_num(direction, 0)
+        features = np.column_stack([dx, dy, direction])
+        features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+        return features.astype(np.float32)
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        unique_id, row_start, label_idx = self.samples[idx]
+        features = self._extract_features(row_start, row_start + self.window_size)
+        track_start = self.track_index[unique_id]["start_row"]
+        condition = self.track_index[unique_id]["condition"]
+        return {
+            "features_t": torch.from_numpy(features),
+            "label": torch.tensor(label_idx, dtype=torch.long),
+            "unique_id": unique_id,
+            "time_window": (row_start - track_start) // self.step_size,
+            "condition": condition,
+        }
+
+
+def apply_key_padding_mask_to_features(x, key_padding_mask_61):
+    """
+    Zero out padded frame slots after augmentation so padding stays at zero.
+
+    Parameters
+    ----------
+    x : Tensor
+        ``[B, T, C]`` motion features (T=60).
+    key_padding_mask_61 : Tensor or None
+        ``[B, 1+T]`` bool, True = ignore (padding). Index 0 is CLS; frame j uses ``[:, 1+j]``.
+    """
+    if key_padding_mask_61 is None:
+        return x
+    fm = key_padding_mask_61[:, 1:]
+    return x.masked_fill(fm.unsqueeze(-1), 0.0)
+
+
+def key_padding_mask_for_padded_frames(n_valid_frames: int, max_seq_len: int = 60):
+    """
+    Build ``src_key_padding_mask`` for TransformerEncoder: length ``1 + max_seq_len`` (CLS + frames).
+
+    The first ``n_valid_frames`` frame positions (seq indices ``1 .. n_valid_frames``) are real;
+    the rest are padding and marked True.
+    """
+    n = int(max(0, min(n_valid_frames, max_seq_len)))
+    m = torch.zeros(1 + max_seq_len, dtype=torch.bool)
+    if n < max_seq_len:
+        m[1 + n :] = True
+    return m
+
+
+class SupervisedPopulationWindowUidDataset(Dataset):
+    """
+    One training example per ``window_uid``: group instant rows, pad/truncate to ``max_seq_len``,
+    and supply a key-padding mask so the encoder ignores padded frame slots.
+
+    Labels come from ``load_windowed_population_lookup_window_uid`` (``window_uid`` -> class).
+    Includes both ~30-frame windows (padded to 60) and full 60-frame windows (no pad).
+
+    **Option B (``input_dim=7``):** batches expose motion ``(T, 3)`` only. The four window scalars
+    are supplied either by recomputing from valid trajectory in :class:`SupervisedPopulationTrainer`
+    (default ``window_scalar_mode='recompute'``), or by z-scored lookup + optional jitter
+    (``lookup_zscore`` / ``lookup_jitter`` with ``window_scalar_lookup``). See dataset
+    ``window_scalar_mode`` and trainer expansion.
+    """
+
+    def __init__(
+        self,
+        instant_df,
+        label_lookup_window_uid,
+        str_to_idx,
+        max_seq_len=60,
+        *,
+        window_scalar_mode: str = "recompute",
+        window_scalar_lookup: dict | None = None,
+    ):
+        """
+        Parameters
+        ----------
+        window_scalar_mode : str
+            - ``"recompute"`` (default): batches are ``(T, 3)`` motion; the trainer recomputes the four
+              window scalars from **valid** trajectory (cumsum dx/dy), z-scores, and broadcasts to 7-D.
+            - ``"lookup_zscore"``: batches are ``(T, 3)`` + ``scalar_z`` (4,) from ``window_scalar_lookup``
+              (e.g. parquet z-scores); trainer broadcasts (fast).
+            - ``"lookup_jitter"``: same as lookup, plus small Gaussian jitter on ``scalar_z`` on the
+              augmented view only.
+        window_scalar_lookup : dict, optional
+            Required for ``lookup_*`` modes: ``window_uid`` -> length-4 float32 vector (z-scored).
+        """
+        self.max_seq_len = max_seq_len
+        self.str_to_idx = str_to_idx
+        self.label_lookup = label_lookup_window_uid
+        self.window_scalar_lookup = window_scalar_lookup
+        self.window_scalar_mode = (window_scalar_mode or "recompute").strip().lower()
+
+        if self.window_scalar_mode not in ("recompute", "lookup_zscore", "lookup_jitter"):
+            raise ValueError(
+                "window_scalar_mode must be 'recompute', 'lookup_zscore', or 'lookup_jitter'"
+            )
+        if self.window_scalar_mode != "recompute" and self.window_scalar_lookup is None:
+            raise ValueError("window_scalar_lookup is required for lookup_zscore / lookup_jitter")
+
+        if isinstance(instant_df, pl.DataFrame):
+            df_in = instant_df
+        else:
+            df_in = pl.from_pandas(instant_df)
+
+        if "window_uid" not in df_in.columns:
+            raise ValueError("instant_df must contain column 'window_uid' for window-UID supervised dataset")
+
+        keys_df = pl.DataFrame({"window_uid": list(label_lookup_window_uid.keys())})
+        df = (
+            df_in.join(keys_df, on="window_uid", how="semi")
+            .sort(["window_uid", "frame"])
+        )
+
+        required = {"window_uid", "unique_id", "frame", "x_um", "y_um", "condition"}
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(f"instant_df missing columns: {sorted(missing)}")
+
+        self.has_direction = "direction_rad" in df.columns
+
+        print("📊 SupervisedPopulationWindowUidDataset: grouping by window_uid (pad/mask to max_seq_len)...")
+        print(f"   window_scalar_mode={self.window_scalar_mode!r} (model input 7-D is built in the trainer)")
+        parts = df.partition_by("window_uid", maintain_order=True)
+        self.samples = []
+        skipped_unknown = 0
+        skipped_missing_scalar = 0
+
+        for sub in tqdm(parts, desc="window_uid labeled windows"):
+            wuid = sub["window_uid"][0]
+            lab_str = self.label_lookup.get(wuid)
+            if lab_str is None:
+                continue
+            if lab_str not in self.str_to_idx:
+                skipped_unknown += 1
+                continue
+            label_idx = self.str_to_idx[lab_str]
+            x_um = sub["x_um"].to_numpy()
+            y_um = sub["y_um"].to_numpy()
+            direction_rad = sub["direction_rad"].to_numpy() if self.has_direction else None
+            feats = _features_from_xy_arrays(x_um, y_um, direction_rad)
+            n_raw = feats.shape[0]
+            feats, _tag = _pad_or_truncate_to_window(feats, self.max_seq_len)
+            n_valid = int(min(n_raw, self.max_seq_len))
+            rec = {
+                "features": feats,
+                "key_padding_mask": key_padding_mask_for_padded_frames(n_valid, self.max_seq_len),
+                "label": label_idx,
+                "window_uid": wuid,
+                "unique_id": sub["unique_id"][0],
+                "n_valid_frames": n_valid,
+            }
+            if self.window_scalar_mode in ("lookup_zscore", "lookup_jitter"):
+                s4 = self.window_scalar_lookup.get(wuid)
+                if s4 is None:
+                    skipped_missing_scalar += 1
+                    continue
+                rec["scalar_z"] = np.asarray(s4, dtype=np.float32).reshape(4)
+            self.samples.append(rec)
+
+        print(
+            f"   ✅ {len(self.samples):,} labeled window_uid windows "
+            f"(skipped unknown class: {skipped_unknown:,}"
+            + (
+                f", missing window scalars: {skipped_missing_scalar:,}"
+                if self.window_scalar_mode in ("lookup_zscore", "lookup_jitter")
+                else ""
+            )
+            + ")"
+        )
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        s = self.samples[idx]
+        out = {
+            "features_t": torch.from_numpy(s["features"]),
+            "key_padding_mask": s["key_padding_mask"].clone(),
+            "label": torch.tensor(s["label"], dtype=torch.long),
+            "window_uid": s["window_uid"],
+            "unique_id": s["unique_id"],
+            "n_valid_frames": s["n_valid_frames"],
+        }
+        if "scalar_z" in s:
+            out["scalar_z"] = torch.from_numpy(s["scalar_z"])
+        return out
 
 
 class TimeWindowDataset(Dataset):
@@ -1011,6 +1989,287 @@ def extract_all_windows(instant_df, window_size=60, overlap=30, min_track_length
     return single_windows
 
 
+def _features_from_xy_arrays(
+    x_um: np.ndarray,
+    y_um: np.ndarray,
+    direction_rad: np.ndarray | None,
+) -> np.ndarray:
+    """Build (n, 3) [dx, dy, direction] array for a contiguous frame segment (same as extract_all_windows)."""
+    dx = np.diff(x_um, prepend=x_um[0])
+    dy = np.diff(y_um, prepend=y_um[0])
+    if direction_rad is not None:
+        direction = direction_rad
+    else:
+        direction = np.arctan2(dy, dx)
+        direction = np.nan_to_num(direction, 0)
+    features = np.column_stack([dx, dy, direction])
+    features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+    return features.astype(np.float32)
+
+
+# --- Option B: four window-level scalars broadcast to every frame (input_dim = 7) ---
+WINDOW_SCALAR_FEATURE_KEYS_DEFAULT = (
+    "self_intersections",
+    "cum_displacement_um",
+    "anomalous_exponent",
+    "avg_speed_um_s",
+)
+
+
+def broadcast_window_scalars_to_frames(
+    motion_3: np.ndarray,
+    scalars_4: np.ndarray,
+) -> np.ndarray:
+    """
+    Concatenate per-frame motion (dx, dy, dir) with the same four window scalars on every row.
+
+    Parameters
+    ----------
+    motion_3 : np.ndarray
+        Shape ``(T, 3)``.
+    scalars_4 : np.ndarray
+        Shape ``(4,)`` — values should already be scaled (e.g. z-scored) if desired.
+
+    Returns
+    -------
+    np.ndarray
+        Shape ``(T, 7)`` — ``[..., :3]`` motion, ``[..., 3:7]`` broadcast scalars.
+    """
+    if motion_3.ndim != 2 or motion_3.shape[1] != 3:
+        raise ValueError(f"motion_3 must be (T, 3), got {motion_3.shape}")
+    s = np.asarray(scalars_4, dtype=np.float32).reshape(4)
+    T = int(motion_3.shape[0])
+    tail = np.broadcast_to(s, (T, 4))
+    return np.concatenate([motion_3.astype(np.float32, copy=False), tail], axis=1).astype(np.float32)
+
+
+def build_window_scalar_lookup_zscored(
+    parquet_path: str,
+    train_window_uids: set,
+    column_names: tuple[str, ...] = WINDOW_SCALAR_FEATURE_KEYS_DEFAULT,
+) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray]:
+    """
+    Load one row per ``window_uid`` from a windowed parquet, z-score columns using **train** uids only,
+    return a lookup suitable for :class:`SupervisedPopulationWindowUidDataset` (broadcast Option B).
+
+    Parameters
+    ----------
+    parquet_path : str
+        Path to windowed dataframe (parquet) with ``window_uid`` and scalar columns.
+    train_window_uids : set
+        Window UIDs in the **training** split (used for mean/std only).
+    column_names : tuple of str
+        Four numeric columns (defaults :data:`WINDOW_SCALAR_FEATURE_KEYS_DEFAULT`).
+
+    Returns
+    -------
+    lookup : dict[str, np.ndarray]
+        ``window_uid`` -> length-4 float32 **z-scored** vector (train mean/std).
+    mean, std : np.ndarray
+        Shape ``(4,)``, for saving in run config / eval parity.
+    """
+    need = ["window_uid"] + list(column_names)
+    df = pl.read_parquet(parquet_path, columns=need)
+    missing = [c for c in column_names if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"Parquet {parquet_path!r} missing columns {missing}. Present: {df.columns}"
+        )
+    # One row per window_uid (mean if duplicates)
+    agg = [pl.col(c).cast(pl.Float64, strict=False).mean().alias(c) for c in column_names]
+    dfu = df.group_by("window_uid").agg(agg)
+
+    mat_all = dfu.select(list(column_names)).to_numpy().astype(np.float64)
+    uid_list = dfu["window_uid"].to_list()
+    train_mask = np.array([u in train_window_uids for u in uid_list], dtype=bool)
+    if int(np.sum(train_mask)) < 2:
+        raise ValueError(
+            "Need at least 2 training windows with scalar features to compute z-score stats."
+        )
+    train_mat = mat_all[train_mask]
+    mean = np.nanmean(train_mat, axis=0)
+    std = np.nanstd(train_mat, axis=0)
+    std = np.maximum(std, 1e-6)
+    z_all = (mat_all - mean) / std
+    z_all = np.nan_to_num(z_all, nan=0.0, posinf=0.0, neginf=0.0)
+    lookup: dict[str, np.ndarray] = {
+        uid_list[i]: z_all[i].astype(np.float32) for i in range(len(uid_list))
+    }
+    return lookup, mean.astype(np.float32), std.astype(np.float32)
+
+
+def _pad_or_truncate_to_window(features: np.ndarray, window_size: int) -> tuple[np.ndarray, str]:
+    """Return ``(window_size, D)`` and a tag: 'ok' | 'padded' | 'truncated'."""
+    n, d = features.shape
+    if n == window_size:
+        return features, "ok"
+    if n > window_size:
+        return features[:window_size].copy(), "truncated"
+    pad = np.zeros((window_size - n, d), dtype=np.float32)
+    return np.vstack([features, pad]), "padded"
+
+
+def windows_from_window_uid_groups(
+    instant_df,
+    window_size=60,
+    sort_window_uids=True,
+    max_uids_to_print=80,
+    window_scalar_lookup=None,
+):
+    """
+    Build one model window per distinct ``window_uid`` from instant-level rows (evaluation / alignment).
+
+    Rows with the same ``window_uid`` are grouped, sorted by ``frame``, and converted to the same
+    ``[dx, dy, direction]`` features as :func:`extract_all_windows`. The feature length is then
+    adjusted to ``window_size``:
+
+    - **n > window_size**: keep the first ``window_size`` frames (after sorting); likely duplicate
+      rows or bad data — see printed warnings for ``window_uid`` values with **more than 60** rows.
+    - **n < window_size**: **zero-pad** at the end so the tensor matches training shape
+      ``(window_size, 3)``. Short windows (e.g. 30 frames) are thus valid *inputs* to the encoder,
+      but embeddings are **not directly comparable** to those from full 60-frame windows unless you
+      account for padding / length mismatch (positional encodings and attention saw many zero tokens).
+
+    Parameters
+    ----------
+    instant_df : pl.DataFrame or pd.DataFrame
+        Must include: ``window_uid``, ``unique_id``, ``frame``, ``x_um``, ``y_um``, ``condition``.
+        Optional: ``direction_rad``, ``time_window`` (first value per group is copied into the dict).
+    window_size : int, default=60
+        Target sequence length (must match the trained model).
+    sort_window_uids : bool, default=True
+        If True, process windows in sorted ``window_uid`` order (reproducible).
+    max_uids_to_print : int, default=80
+        Max ``window_uid`` strings to print per warning block (remainder summarized as count).
+    window_scalar_lookup : dict[str, np.ndarray] | None, optional
+        If provided (same z-scored vectors as training), broadcast four scalars per row → shape
+        ``(window_size, 7)`` for Option B models (``input_dim=7``). Windows missing from the lookup
+        are **skipped**.
+
+    Returns
+    -------
+    list of dict
+        Same keys as :func:`extract_all_windows` where applicable: ``features``, ``unique_id``,
+        ``window_uid``, ``time_window`` (or ``-1`` if missing), ``start_frame``, ``end_frame``,
+        ``condition``. ``time_window`` is taken from the column if present, else ``-1``.
+    """
+    print("📊 windows_from_window_uid_groups: one window per window_uid (no sliding re-windowing)...")
+    print(f"   window_size={window_size}, sort_window_uids={sort_window_uids}")
+    if window_scalar_lookup is not None:
+        print("   Option B: attaching 4 broadcast window scalars → features shape (T, 7)")
+
+    if isinstance(instant_df, pl.DataFrame):
+        df = instant_df.sort(["window_uid", "frame"])
+    else:
+        df = pl.from_pandas(instant_df).sort(["window_uid", "frame"])
+
+    required = {"window_uid", "unique_id", "frame", "x_um", "y_um", "condition"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"instant_df missing required columns: {sorted(missing)}")
+
+    has_direction = "direction_rad" in df.columns
+    has_time_window = "time_window" in df.columns
+
+    counts = df.group_by("window_uid").agg(pl.len().alias("n_rows"))
+    over = counts.filter(pl.col("n_rows") > window_size).sort("n_rows", descending=True)
+    under = counts.filter(pl.col("n_rows") < (window_size - 1)).sort("n_rows")
+
+    n_over = over.height
+    n_under = under.height
+
+    if n_over > 0:
+        print(
+            f"\n⚠️  WARNING: {n_over:,} window_uid(s) have MORE than {window_size} rows "
+            f"(possible duplicate frames or repeated assignments). Listing up to {max_uids_to_print}:"
+        )
+        for row in over.head(max_uids_to_print).iter_rows(named=True):
+            print(f"      {row['window_uid']!r}  (n_rows={row['n_rows']})")
+        if n_over > max_uids_to_print:
+            print(f"      ... and {n_over - max_uids_to_print:,} more window_uid(s).")
+    else:
+        print(f"\n   ✅ No window_uid groups with more than {window_size} rows.")
+
+    if n_under > 0:
+        print(
+            f"\n⚠️  WARNING: {n_under:,} window_uid(s) have FEWER than {window_size - 1} rows "
+            f"(short windows; will be zero-padded to length {window_size}). Listing up to {max_uids_to_print}:"
+        )
+        for row in under.head(max_uids_to_print).iter_rows(named=True):
+            print(f"      {row['window_uid']!r}  (n_rows={row['n_rows']})")
+        if n_under > max_uids_to_print:
+            print(f"      ... and {n_under - max_uids_to_print:,} more window_uid(s).")
+    else:
+        print(
+            f"\n   ✅ No window_uid groups with fewer than {window_size - 1} rows "
+            f"(threshold: warn if n_rows < {window_size - 1}, i.e. 'fewer than 59' when window_size=60)."
+        )
+
+    parts = df.partition_by("window_uid", maintain_order=True)
+    if sort_window_uids:
+        parts.sort(key=lambda sub: sub["window_uid"][0])
+
+    single_windows = []
+    n_trunc = 0
+    n_pad = 0
+    n_skip_scalar = 0
+
+    for sub in tqdm(parts, desc="window_uid groups"):
+        wuid = sub["window_uid"][0]
+        x_um = sub["x_um"].to_numpy()
+        y_um = sub["y_um"].to_numpy()
+        direction_rad = sub["direction_rad"].to_numpy() if has_direction else None
+        feats = _features_from_xy_arrays(x_um, y_um, direction_rad)
+        feats, tag = _pad_or_truncate_to_window(feats, window_size)
+        if tag == "truncated":
+            n_trunc += 1
+        elif tag == "padded":
+            n_pad += 1
+        if window_scalar_lookup is not None:
+            s4 = window_scalar_lookup.get(wuid)
+            if s4 is None:
+                n_skip_scalar += 1
+                continue
+            feats = broadcast_window_scalars_to_frames(feats, s4)
+
+        unique_id = sub["unique_id"][0]
+        frames = sub["frame"].to_numpy()
+        start_frame = int(frames[0])
+        end_frame = int(frames[-1])
+        condition = sub["condition"][0]
+        if has_time_window:
+            tw = sub["time_window"][0]
+            try:
+                time_window = int(tw) if tw is not None else -1
+            except (TypeError, ValueError):
+                time_window = -1
+        else:
+            time_window = -1
+
+        single_windows.append(
+            {
+                "features": feats,
+                "unique_id": unique_id,
+                "window_uid": wuid,
+                "time_window": time_window,
+                "start_frame": start_frame,
+                "end_frame": end_frame,
+                "condition": condition,
+            }
+        )
+
+    if n_trunc or n_pad:
+        print(
+            f"\n   ℹ️  Adjusted sequences: {n_trunc:,} truncated to {window_size}, "
+            f"{n_pad:,} zero-padded to {window_size}."
+        )
+    if window_scalar_lookup is not None and n_skip_scalar:
+        print(f"   ⚠️  Skipped {n_skip_scalar:,} window_uid(s) missing from scalar lookup.")
+
+    print(f"   ✅ Built {len(single_windows):,} windows (one per distinct window_uid).")
+    return single_windows
+
+
 def contrastive_loss(z_i, z_j, temperature=0.5):
     z_i = F.normalize(z_i, dim=1)
     z_j = F.normalize(z_j, dim=1)
@@ -1678,7 +2937,15 @@ def evaluate_cross_molecule_clustering(cluster_labels, molecule_types, n_cluster
 # AUGMENTATION FUNCTIONS FOR CONTRASTIVE LEARNING
 # =============================================================================
 
-def get_augmentation_fn(aug_type='noise', strength=0.01, noise_strength=None, scale_strength=None):
+def get_augmentation_fn(
+    aug_type='noise',
+    strength=0.01,
+    noise_strength=None,
+    scale_strength=None,
+    *,
+    shuffle_segmentation_mode='valid_prefix',
+    shuffle_segment_length_frames=10,
+):
     """
     Get augmentation function for contrastive learning.
     
@@ -1696,11 +2963,18 @@ def get_augmentation_fn(aug_type='noise', strength=0.01, noise_strength=None, sc
         Separate noise strength for 'combined' type
     scale_strength : float, optional
         Separate scale strength for 'combined' type
+    shuffle_segmentation_mode : str, default='valid_prefix'
+        For ``shuffle_scale_angle``: ``valid_prefix`` segments only real frames (uses
+        ``n_valid_frames`` per sample); ``legacy`` keeps three segments over full length T (e.g. 20+20+20).
+    shuffle_segment_length_frames : int, default=10
+        For ``shuffle_scale_angle`` with ``valid_prefix``: contiguous segment length in frames
+        (only the valid prefix is split; padding is not augmented).
     
     Returns
     -------
     callable
-        Augmentation function: x -> augmented_x
+        Augmentation function: ``(x, n_valid_frames=None) -> augmented_x``.
+        ``n_valid_frames`` is optional ``[B]`` long tensor (ignored except for ``shuffle_scale_angle``).
         
     Examples
     --------
@@ -1718,17 +2992,21 @@ def get_augmentation_fn(aug_type='noise', strength=0.01, noise_strength=None, sc
     - 'time_warp': Simplified time warping via noise
     - 'crop': Zero out start or end of sequence
     - 'combined': Apply both noise and scale
-    - 'shuffle_scale_angle': Settled augmentation (3-seg shuffle + 10-50% scale + 1-10° angle)
+    - 'shuffle_scale_angle': Segment shuffle + scale + angle (see ``shuffle_segmentation_mode``)
     """
     
     if aug_type == 'noise':
-        def noise_aug(x):
-            """Add Gaussian noise to motion features"""
-            return x + strength * torch.randn_like(x)
+        def noise_aug(x, n_valid_frames=None):
+            """Add Gaussian noise to motion features (first 3 channels only if F>3)."""
+            if x.shape[2] <= 3:
+                return x + strength * torch.randn_like(x)
+            out = x.clone()
+            out[:, :, :3] = out[:, :, :3] + strength * torch.randn_like(out[:, :, :3])
+            return out
         return noise_aug
     
     elif aug_type == 'scale':
-        def scale_aug(x):
+        def scale_aug(x, n_valid_frames=None):
             """Random scaling of displacement magnitudes"""
             # Scale factor between (1-strength) and (1+strength)
             scale = 1.0 + (torch.rand(1, device=x.device) * 2 - 1) * strength
@@ -1739,18 +3017,17 @@ def get_augmentation_fn(aug_type='noise', strength=0.01, noise_strength=None, sc
         return scale_aug
     
     elif aug_type == 'time_warp':
-        def time_warp_aug(x):
+        def time_warp_aug(x, n_valid_frames=None):
             """Slight time warping by interpolation"""
-            # This is a simplified version - full DTW-based warping is complex
-            # Here we just add small random shifts to the sequence
             B, T, F = x.shape
             noise = torch.randn(B, T, 1, device=x.device) * strength * 0.1
-            # Interpolate features based on noise (simplified)
-            return x + noise * x
+            out = x.clone()
+            out[:, :, :3] = x[:, :, :3] + noise * x[:, :, :3]
+            return out
         return time_warp_aug
     
     elif aug_type == 'crop':
-        def crop_aug(x):
+        def crop_aug(x, n_valid_frames=None):
             """Random cropping and padding"""
             B, T, F = x.shape
             crop_amount = int(T * strength * 0.5)
@@ -1759,9 +3036,11 @@ def get_augmentation_fn(aug_type='noise', strength=0.01, noise_strength=None, sc
             # Random crop from start or end
             x_aug = x.clone()
             if torch.rand(1) > 0.5:
-                x_aug[:, :crop_amount, :] = 0  # Zero out start
+                x_aug[:, :crop_amount, :3] = 0  # Zero out start (motion only)
             else:
-                x_aug[:, -crop_amount:, :] = 0  # Zero out end
+                x_aug[:, -crop_amount:, :3] = 0  # Zero out end
+            if F > 3:
+                x_aug[:, :, 3:] = x[:, :, 3:]
             return x_aug
         return crop_aug
     
@@ -1771,78 +3050,88 @@ def get_augmentation_fn(aug_type='noise', strength=0.01, noise_strength=None, sc
         ss = scale_strength if scale_strength is not None else strength
         noise_fn = get_augmentation_fn('noise', ns)
         scale_fn = get_augmentation_fn('scale', ss)
-        def combined_aug(x):
+        def combined_aug(x, n_valid_frames=None):
             """Apply multiple augmentations"""
-            x = noise_fn(x)
-            x = scale_fn(x)
+            x = noise_fn(x, n_valid_frames=n_valid_frames)
+            x = scale_fn(x, n_valid_frames=n_valid_frames)
             return x
         return combined_aug
     
     elif aug_type == 'shuffle_scale_angle':
         """
-        Settled augmentation for contrastive learning:
-        - 3-segment shuffle
-        - 10-50% per-segment scaling
-        - 1-10° per-step angular perturbation
-        
-        This is the final settled augmentation configuration.
+        Settled augmentation: segment shuffle + per-segment scale + per-step angular noise.
+        ``valid_prefix`` (default): segments only ``n_valid_frames`` real steps; ``legacy``: three segments over full T.
         """
         try:
-            from .augmentations import apply_augmentation_for_training
+            from .augmentations import apply_augmentation_for_training, apply_augmentation_valid_prefix
         except ImportError:
-            raise ImportError("Cannot import apply_augmentation_for_training from SPTnano.augmentations")
-        
-        def shuffle_scale_angle_aug(x):
+            raise ImportError("Cannot import augmentation helpers from SPTnano.augmentations")
+
+        mode = (shuffle_segmentation_mode or "valid_prefix").lower().strip()
+        if mode not in ("valid_prefix", "legacy"):
+            raise ValueError(
+                f"shuffle_segmentation_mode must be 'valid_prefix' or 'legacy', got {shuffle_segmentation_mode!r}"
+            )
+        seg_len = max(1, int(shuffle_segment_length_frames))
+
+        def shuffle_scale_angle_aug(x, n_valid_frames=None):
             """
             Apply settled augmentation to torch tensor features.
-            
+
             Args:
-                x: torch.Tensor [B, T, 3] with features [dx, dy, direction]
-            
+                x: torch.Tensor [B, T, F] with F=3 [dx, dy, direction] or F=7 (Option B: +4 broadcast scalars).
+                n_valid_frames: optional [B] long tensor of valid frame counts per sample (ignored in legacy mode).
+
             Returns:
-                torch.Tensor [B, T, 3] with augmented features [dx_aug, dy_aug, direction_aug]
+                torch.Tensor [B, T, F] — if F>3, columns 3: are copied from ``x`` (scalars unchanged).
             """
             import numpy as np
-            
+
             device = x.device
             B, T, F = x.shape
-            
-            # Convert to numpy for augmentation
+
             x_np = x.detach().cpu().numpy()
-            
-            # Process each batch item
             x_aug_list = []
             for b in range(B):
-                # Extract dx, dy from features
                 dx = x_np[b, :, 0]
                 dy = x_np[b, :, 1]
-                
-                # Convert to x, y coordinates (cumulative sum from origin)
+
                 x_coords = np.cumsum(dx)
                 y_coords = np.cumsum(dy)
-                
-                # Apply settled augmentation
-                # Use batch index + a hash of the original coordinates as seed for reproducibility
+
                 seed = hash((b, tuple(x_coords[:5]), tuple(y_coords[:5]))) % 2**32
-                x_aug, y_aug = apply_augmentation_for_training(x_coords, y_coords, seed=seed)
-                
-                # Convert back to dx, dy
+
+                if mode == "legacy":
+                    x_aug, y_aug = apply_augmentation_for_training(x_coords, y_coords, seed=seed)
+                else:
+                    nv = T
+                    if n_valid_frames is not None:
+                        nv = int(n_valid_frames[b].item())
+                    nv = max(0, min(nv, T))
+                    x_aug, y_aug = apply_augmentation_valid_prefix(
+                        x_coords,
+                        y_coords,
+                        nv,
+                        seg_len,
+                        seed,
+                        max_seq_len=T,
+                    )
+
                 dx_aug = np.diff(x_aug, prepend=x_aug[0])
                 dy_aug = np.diff(y_aug, prepend=y_aug[0])
-                
-                # Recompute direction from augmented dx, dy
+
                 direction_aug = np.arctan2(dy_aug, dx_aug)
                 direction_aug = np.nan_to_num(direction_aug, nan=0.0)
-                
-                # Stack features
+
                 features_aug = np.column_stack([dx_aug, dy_aug, direction_aug])
                 features_aug = np.nan_to_num(features_aug, nan=0.0, posinf=0.0, neginf=0.0)
+                if F > 3:
+                    features_aug = np.concatenate([features_aug, x_np[b, :, 3:F]], axis=1)
                 x_aug_list.append(features_aug)
-            
-            # Convert back to torch tensor
+
             x_aug_tensor = torch.from_numpy(np.array(x_aug_list)).float().to(device)
             return x_aug_tensor
-        
+
         return shuffle_scale_angle_aug
     
     else:
@@ -3228,6 +4517,787 @@ class TimeAwareMotionTrainer:
         
         plt.tight_layout()
         plt.show()
+
+
+class SupervisedPopulationTrainer:
+    """
+    Supervised training for final_population (or similar) with the same augmentation
+    pipeline as TimeAwareMotionTrainer: two views (clean + augmented), CE on both.
+
+    Learning rate schedule: ``ReduceLROnPlateau`` — each epoch the scheduler sees the
+    **validation CE loss** (when a val loader exists). When that loss fails to improve
+    for ``scheduler_patience`` epochs, LR is multiplied by ``scheduler_factor`` (same
+    idea as the contrastive TimeAwareMotionTrainer).
+
+    **Window scalars (Option B, ``input_dim=7``):** batches may be ``(T, 3)`` motion only.
+    Augmentation runs on 3-D features; then this trainer expands to 7-D before the
+    encoder when the model expects ``input_dim=7``. See ``window_scalar_mode``.
+    """
+
+    def __init__(
+        self,
+        model,
+        train_dataloader,
+        val_dataloader=None,
+        lr=1e-4,
+        device="cuda",
+        augmentation_fn=None,
+        class_weights=None,
+        use_scheduler=True,
+        scheduler_patience=5,
+        scheduler_factor=0.5,
+        scheduler_min_lr=0.0,
+        use_tensorboard=False,
+        tensorboard_log_dir=None,
+        save_best_model=True,
+        checkpoint_interval=0,
+        checkpoint_dir=None,
+        early_stopping_patience=0,
+        epoch_offset=0,
+        *,
+        window_scalar_mode: str = "recompute",
+        scalar_mean=None,
+        scalar_std=None,
+        scalar_jitter_sigma: float = 0.05,
+        time_between_frames=None,
+    ):
+        self.model = model.to(device)
+        self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader
+        self.device = device
+        self.augmentation_fn = augmentation_fn
+        if self.augmentation_fn is None:
+            raise ValueError("augmentation_fn is required (use get_augmentation_fn with TRANSFORMER_TRAINING settings)")
+
+        self.window_scalar_mode = (window_scalar_mode or "recompute").strip().lower()
+        self.scalar_jitter_sigma = float(scalar_jitter_sigma)
+        from . import config as _cfg
+
+        self._time_between_frames = float(
+            time_between_frames
+            if time_between_frames is not None
+            else _cfg.TIME_BETWEEN_FRAMES
+        )
+        if scalar_mean is not None:
+            self._scalar_mean_np = np.asarray(scalar_mean, dtype=np.float32).reshape(4)
+        else:
+            self._scalar_mean_np = None
+        if scalar_std is not None:
+            self._scalar_std_np = np.asarray(scalar_std, dtype=np.float32).reshape(4)
+        else:
+            self._scalar_std_np = None
+
+        w = class_weights
+        if w is not None:
+            w = w.to(device) if torch.is_tensor(w) else torch.tensor(w, dtype=torch.float32, device=device)
+        self.criterion = nn.CrossEntropyLoss(weight=w)
+
+        self.optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        self.use_scheduler = use_scheduler
+        if use_scheduler:
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer,
+                mode="min",
+                factor=scheduler_factor,
+                patience=scheduler_patience,
+                min_lr=scheduler_min_lr,
+            )
+            print(
+                f"   📉 ReduceLROnPlateau: multiply LR by {scheduler_factor} when validation CE loss "
+                f"does not improve for {scheduler_patience} epochs "
+                f"(min_lr={scheduler_min_lr})"
+            )
+
+        self.use_tensorboard = use_tensorboard
+        self.tensorboard_log_dir = tensorboard_log_dir
+        self.writer = None
+        if use_tensorboard and tensorboard_log_dir:
+            from torch.utils.tensorboard import SummaryWriter
+
+            os.makedirs(tensorboard_log_dir, exist_ok=True)
+            self.writer = SummaryWriter(log_dir=tensorboard_log_dir)
+
+        self.train_losses = []
+        self.val_losses = []
+        self.val_accuracies = []
+
+        self.save_best_model = save_best_model
+        self.best_val_loss = float("inf")
+        self.best_model_state = None
+        self.best_epoch = -1
+
+        self.checkpoint_interval = checkpoint_interval
+        self.checkpoint_dir = checkpoint_dir or tensorboard_log_dir or "."
+        if checkpoint_interval > 0:
+            os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+        self.early_stopping_patience = early_stopping_patience
+        self.epochs_without_improvement = 0
+        self.epoch_offset = epoch_offset
+
+    def _maybe_expand_motion_to_model_dim(self, x3, batch, *, is_augmented: bool):
+        """
+        If the encoder expects 7-D and ``x3`` is ``[B, T, 3]``, build the last four channels
+        (window scalars, z-scored) and concatenate. Otherwise return ``x3`` unchanged.
+        """
+        in_features = self.model.encoder.input_proj.in_features
+        if x3.shape[-1] == in_features:
+            return x3
+        if x3.shape[-1] == 3 and in_features == 7:
+            return self._expand_three_to_seven(x3, batch, is_augmented=is_augmented)
+        raise ValueError(
+            f"Feature last dim {x3.shape[-1]} does not match model input_dim {in_features}. "
+            "Use motion-only dataset + window_scalar_mode with input_dim=7, or input_dim=3."
+        )
+
+    def _expand_three_to_seven(self, x, batch, *, is_augmented: bool):
+        """``[B, T, 3]`` -> ``[B, T, 7]`` using ``window_scalar_mode``."""
+        from .window_scalar_features import (
+            compute_four_window_scalars_numpy,
+            positions_from_stored_deltas,
+            zscore_numpy,
+        )
+
+        mode = self.window_scalar_mode
+        B, T, _ = x.shape
+        nv = batch.get("n_valid_frames")
+        motion = x[..., :3]
+
+        if mode in ("lookup_zscore", "lookup_jitter"):
+            if "scalar_z" not in batch:
+                raise KeyError(
+                    "Batch missing 'scalar_z' — use SupervisedPopulationWindowUidDataset with "
+                    "window_scalar_mode='lookup_zscore' or 'lookup_jitter' and window_scalar_lookup."
+                )
+            sz = batch["scalar_z"].to(device=x.device, dtype=motion.dtype)
+            if is_augmented and mode == "lookup_jitter" and self.scalar_jitter_sigma > 0:
+                sz = sz + torch.randn_like(sz) * self.scalar_jitter_sigma
+            tail = sz.unsqueeze(1).expand(-1, T, -1)
+            return torch.cat([motion, tail], dim=-1)
+
+        if mode != "recompute":
+            raise ValueError(f"Unknown window_scalar_mode: {mode!r}")
+
+        if self._scalar_mean_np is None or self._scalar_std_np is None:
+            raise ValueError(
+                "window_scalar_mode='recompute' with a 7-D model requires scalar_mean and scalar_std "
+                "from window_scalar_features.precompute_scalar_mean_std_recompute(train_ds.samples)."
+            )
+
+        tb = self._time_between_frames
+        mean = self._scalar_mean_np
+        std = self._scalar_std_np
+        x_np = x.detach().cpu().numpy()
+        if nv is not None:
+            nv_np = nv.cpu().numpy() if torch.is_tensor(nv) else np.asarray(nv)
+        else:
+            nv_np = None
+
+        tail_rows = []
+        for i in range(B):
+            f = x_np[i]
+            nvi = int(nv_np[i]) if nv_np is not None else T
+            dx, dy = f[:, 0], f[:, 1]
+            px, py = positions_from_stored_deltas(dx, dy, nvi)
+            raw = compute_four_window_scalars_numpy(px, py, time_between_frames=tb)
+            z = zscore_numpy(raw, mean, std)
+            z4 = np.asarray(z, dtype=np.float32).reshape(4)
+            tail = np.broadcast_to(z4, (T, 4)).copy()
+            tail_rows.append(tail)
+        tail_t = torch.from_numpy(np.stack(tail_rows, axis=0)).to(
+            device=x.device, dtype=motion.dtype
+        )
+        return torch.cat([motion, tail_t], dim=-1)
+
+    def _train_epoch(self, dataloader):
+        self.model.train()
+        epoch_loss = 0.0
+        n_batches = 0
+        for batch in dataloader:
+            x3 = batch["features_t"].to(self.device)
+            y = batch["label"].to(self.device)
+            km = batch.get("key_padding_mask")
+            km = km.to(self.device) if km is not None else None
+
+            self.optimizer.zero_grad()
+            nv = batch.get("n_valid_frames")
+            nv = nv.to(self.device) if nv is not None else None
+
+            x_clean = self._maybe_expand_motion_to_model_dim(x3, batch, is_augmented=False)
+            x3_aug = self.augmentation_fn(x3, n_valid_frames=nv)
+            x3_aug = apply_key_padding_mask_to_features(x3_aug, km)
+            x_aug = self._maybe_expand_motion_to_model_dim(x3_aug, batch, is_augmented=True)
+
+            logits = self.model(x_clean, src_key_padding_mask=km)
+            logits_aug = self.model(x_aug, src_key_padding_mask=km)
+            loss = (self.criterion(logits, y) + self.criterion(logits_aug, y)) / 2.0
+            loss.backward()
+            self.optimizer.step()
+
+            epoch_loss += loss.item()
+            n_batches += 1
+        return epoch_loss / max(n_batches, 1)
+
+    def _validate_epoch(self, dataloader):
+        if dataloader is None:
+            return None, None
+        self.model.eval()
+        epoch_loss = 0.0
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for batch in dataloader:
+                x3 = batch["features_t"].to(self.device)
+                y = batch["label"].to(self.device)
+                km = batch.get("key_padding_mask")
+                km = km.to(self.device) if km is not None else None
+                x = self._maybe_expand_motion_to_model_dim(x3, batch, is_augmented=False)
+                logits = self.model(x, src_key_padding_mask=km)
+                loss = self.criterion(logits, y)
+                epoch_loss += loss.item()
+                pred = logits.argmax(dim=1)
+                correct += (pred == y).sum().item()
+                total += y.numel()
+        n_batches = len(dataloader)
+        return epoch_loss / max(n_batches, 1), correct / max(total, 1)
+
+    def train(self, epochs=10):
+        import copy
+
+        print(f"\n🚀 Supervised training for {epochs} epochs (CE + augmentation mirror)...")
+        if self.early_stopping_patience > 0:
+            print(f"   Early stopping: {self.early_stopping_patience} epochs without val improvement")
+        print()
+
+        for epoch in range(epochs):
+            global_epoch = self.epoch_offset + epoch
+            train_loss = self._train_epoch(self.train_dataloader)
+            self.train_losses.append(train_loss)
+
+            val_loss, val_acc = self._validate_epoch(self.val_dataloader)
+            if val_loss is not None:
+                self.val_losses.append(val_loss)
+                self.val_accuracies.append(val_acc)
+            else:
+                self.val_losses.append(None)
+                self.val_accuracies.append(None)
+
+            best_marker = ""
+            if self.save_best_model and val_loss is not None:
+                if val_loss < self.best_val_loss:
+                    self.best_val_loss = val_loss
+                    self.best_model_state = copy.deepcopy(self.model.state_dict())
+                    self.best_epoch = global_epoch
+                    self.epochs_without_improvement = 0
+                    best_marker = " ⭐ NEW BEST"
+                else:
+                    self.epochs_without_improvement += 1
+
+            checkpoint_marker = ""
+            if (
+                self.checkpoint_interval > 0
+                and (global_epoch + 1) % self.checkpoint_interval == 0
+            ):
+                ck = os.path.join(self.checkpoint_dir, f"checkpoint_epoch_{global_epoch+1}.pt")
+                self.save_checkpoint(ck, global_epoch)
+                checkpoint_marker = " 💾"
+
+            if self.use_scheduler and val_loss is not None:
+                self.scheduler.step(val_loss)
+            elif self.use_scheduler:
+                self.scheduler.step(train_loss)
+
+            if self.writer is not None:
+                self.writer.add_scalar("Loss/train", train_loss, global_epoch)
+                if val_loss is not None:
+                    self.writer.add_scalar("Loss/val", val_loss, global_epoch)
+                    self.writer.add_scalar("Accuracy/val", val_acc, global_epoch)
+                self.writer.add_scalar("Learning_Rate", self.optimizer.param_groups[0]["lr"], global_epoch)
+
+            lr = self.optimizer.param_groups[0]["lr"]
+            if val_loss is not None:
+                print(
+                    f"Epoch {global_epoch+1:3d}: Train CE={train_loss:.4f}, "
+                    f"Val CE={val_loss:.4f}, Val acc={val_acc:.4f}, LR={lr:.2e}{best_marker}{checkpoint_marker}"
+                )
+            else:
+                print(f"Epoch {global_epoch+1:3d}: Train CE={train_loss:.4f}, LR={lr:.2e}{checkpoint_marker}")
+
+            if (
+                self.early_stopping_patience > 0
+                and self.epochs_without_improvement >= self.early_stopping_patience
+            ):
+                print(
+                    f"\n⏹️  Early stopping: no val improvement for {self.early_stopping_patience} epochs "
+                    f"(stopped at epoch {global_epoch + 1})"
+                )
+                break
+
+        if self.writer is not None:
+            self.writer.close()
+        print("\n✅ Supervised training finished.")
+        if self.save_best_model and self.best_model_state is not None:
+            print(
+                f"⭐ Best val loss: {self.best_val_loss:.4f} at epoch {self.best_epoch + 1}"
+            )
+
+    def restore_best_model(self):
+        if self.best_model_state is None:
+            return False
+        self.model.load_state_dict(self.best_model_state)
+        print(f"✅ Restored best model (epoch {self.best_epoch + 1})")
+        return True
+
+    def save_checkpoint(self, path, epoch):
+        checkpoint = {
+            "epoch": epoch,
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "train_losses": self.train_losses,
+            "val_losses": self.val_losses,
+            "val_accuracies": self.val_accuracies,
+            "best_val_loss": self.best_val_loss,
+            "best_epoch": self.best_epoch,
+            "epochs_without_improvement": self.epochs_without_improvement,
+            "training_type": "supervised_population",
+        }
+        arch = build_encoder_architecture_dict(self.model)
+        if arch:
+            checkpoint["architecture"] = arch
+        checkpoint["window_scalar_mode"] = getattr(self, "window_scalar_mode", "recompute")
+        checkpoint["scalar_jitter_sigma"] = getattr(self, "scalar_jitter_sigma", 0.0)
+        if getattr(self, "_scalar_mean_np", None) is not None:
+            checkpoint["scalar_mean_train_raw"] = self._scalar_mean_np.tolist()
+        if getattr(self, "_scalar_std_np", None) is not None:
+            checkpoint["scalar_std_train_raw"] = self._scalar_std_np.tolist()
+        checkpoint["time_between_frames"] = getattr(self, "_time_between_frames", None)
+        if self.use_scheduler and self.scheduler is not None:
+            checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
+        if self.best_model_state is not None:
+            checkpoint["best_model_state"] = self.best_model_state
+        torch.save(checkpoint, path)
+
+    def save_model(self, path, extra=None):
+        save_dict = {
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "train_losses": self.train_losses,
+            "val_losses": self.val_losses,
+            "val_accuracies": self.val_accuracies,
+            "best_val_loss": self.best_val_loss,
+            "best_epoch": self.best_epoch,
+            "training_type": "supervised_population",
+            "window_scalar_mode": getattr(self, "window_scalar_mode", "recompute"),
+            "scalar_jitter_sigma": getattr(self, "scalar_jitter_sigma", 0.0),
+        }
+        if getattr(self, "_scalar_mean_np", None) is not None:
+            save_dict["scalar_mean_train_raw"] = self._scalar_mean_np.tolist()
+        if getattr(self, "_scalar_std_np", None) is not None:
+            save_dict["scalar_std_train_raw"] = self._scalar_std_np.tolist()
+        if getattr(self, "_time_between_frames", None) is not None:
+            save_dict["time_between_frames"] = self._time_between_frames
+        arch = build_encoder_architecture_dict(self.model)
+        if arch:
+            save_dict["architecture"] = arch
+        if self.best_model_state is not None:
+            save_dict["best_model_state"] = self.best_model_state
+        if extra:
+            save_dict.update(extra)
+        torch.save(save_dict, path)
+        print(f"✅ Model saved to: {path}")
+
+
+def multiclass_focal_loss(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    gamma: float = 2.0,
+    weight: torch.Tensor | None = None,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """
+    Focal loss for multi-class classification (Lin et al., 2017).
+    Down-weights well-classified examples via (1 - p_t)^gamma.
+
+    Parameters
+    ----------
+    logits : [B, C]
+    target : [B] int64 class indices
+    weight : optional [C] per-class weights (same role as CrossEntropyLoss weight)
+    """
+    target = target.long()
+    log_probs = F.log_softmax(logits, dim=1)
+    probs = log_probs.exp()
+    log_pt = log_probs.gather(1, target.unsqueeze(1)).squeeze(1)
+    pt = probs.gather(1, target.unsqueeze(1)).squeeze(1)
+    focal = -(1 - pt).pow(gamma) * log_pt
+    if weight is not None:
+        focal = focal * weight[target]
+    if reduction == "mean":
+        return focal.mean()
+    if reduction == "sum":
+        return focal.sum()
+    return focal
+
+
+def supervised_contrastive_loss(
+    z: torch.Tensor,
+    labels: torch.Tensor,
+    temperature: float = 0.07,
+) -> torch.Tensor:
+    """
+    Supervised contrastive loss (Khosla et al., 2020).
+    Pulls together same-class pairs in embedding space (after L2 normalize).
+
+    z : [N, D] — typically concat of two augmented views so N = 2 * batch.
+    labels : [N] int64 — repeated labels for the two views.
+    """
+    device = z.device
+    z = F.normalize(z, dim=1)
+    n = z.size(0)
+    if n < 2:
+        return z.sum() * 0.0
+
+    sim = torch.matmul(z, z.t()) / temperature
+    sim_max, _ = sim.max(dim=1, keepdim=True)
+    logits = sim - sim_max.detach()
+    exp_logits = torch.exp(logits)
+
+    labels = labels.view(-1, 1)
+    pos_mask = (labels == labels.t()).float()
+    pos_mask = pos_mask * (1.0 - torch.eye(n, device=device))
+
+    eye_mask = 1.0 - torch.eye(n, device=device)
+    denom = (exp_logits * eye_mask).sum(dim=1).clamp(min=1e-8)
+    pos_sum = (exp_logits * pos_mask).sum(dim=1)
+
+    valid = pos_mask.sum(dim=1) > 0
+    if not valid.any():
+        return z.sum() * 0.0
+
+    loss = -torch.log((pos_sum[valid] / denom[valid]).clamp(min=1e-8))
+    return loss.mean()
+
+
+class SupervisedFocalSupConTrainer:
+    """
+    Supervised training with focal classification loss + optional supervised contrastive
+    loss on CLS embeddings. Two views per step: clean + augmented (same as
+    SupervisedPopulationTrainer). SupCon is computed on [emb; emb_aug] with labels
+    duplicated so same-class windows from either view are positives.
+
+    Validation metric: focal loss (no SupCon) for ReduceLROnPlateau / best checkpoint.
+    """
+
+    def __init__(
+        self,
+        model,
+        train_dataloader,
+        val_dataloader=None,
+        lr=1e-4,
+        device="cuda",
+        augmentation_fn=None,
+        class_weights=None,
+        focal_gamma=2.0,
+        supcon_weight=0.5,
+        supcon_temperature=0.07,
+        use_scheduler=True,
+        scheduler_patience=5,
+        scheduler_factor=0.5,
+        scheduler_min_lr=0.0,
+        use_tensorboard=False,
+        tensorboard_log_dir=None,
+        save_best_model=True,
+        checkpoint_interval=0,
+        checkpoint_dir=None,
+        early_stopping_patience=0,
+        epoch_offset=0,
+    ):
+        self.model = model.to(device)
+        self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader
+        self.device = device
+        self.augmentation_fn = augmentation_fn
+        if self.augmentation_fn is None:
+            raise ValueError(
+                "augmentation_fn is required (use get_augmentation_fn with TRANSFORMER_TRAINING settings)"
+            )
+
+        w = class_weights
+        if w is not None:
+            w = w.to(device) if torch.is_tensor(w) else torch.tensor(w, dtype=torch.float32, device=device)
+        self.class_weights = w
+        self.focal_gamma = float(focal_gamma)
+        self.supcon_weight = float(supcon_weight)
+        self.supcon_temperature = float(supcon_temperature)
+
+        self.optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        self.use_scheduler = use_scheduler
+        if self.use_scheduler:
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer,
+                mode="min",
+                factor=scheduler_factor,
+                patience=scheduler_patience,
+                min_lr=scheduler_min_lr,
+            )
+            print(
+                f"   📉 ReduceLROnPlateau: multiply LR by {scheduler_factor} when validation focal loss "
+                f"does not improve for {scheduler_patience} epochs "
+                f"(min_lr={scheduler_min_lr})"
+            )
+
+        self.use_tensorboard = use_tensorboard
+        self.tensorboard_log_dir = tensorboard_log_dir
+        self.writer = None
+        if use_tensorboard and tensorboard_log_dir:
+            from torch.utils.tensorboard import SummaryWriter
+
+            os.makedirs(tensorboard_log_dir, exist_ok=True)
+            self.writer = SummaryWriter(log_dir=tensorboard_log_dir)
+
+        self.train_losses = []
+        self.val_losses = []
+        self.val_accuracies = []
+
+        self.save_best_model = save_best_model
+        self.best_val_loss = float("inf")
+        self.best_model_state = None
+        self.best_epoch = -1
+
+        self.checkpoint_interval = checkpoint_interval
+        self.checkpoint_dir = checkpoint_dir or tensorboard_log_dir or "."
+        if checkpoint_interval > 0:
+            os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+        self.early_stopping_patience = early_stopping_patience
+        self.epochs_without_improvement = 0
+        self.epoch_offset = epoch_offset
+
+    def _focal(self, logits, y):
+        return multiclass_focal_loss(
+            logits, y, gamma=self.focal_gamma, weight=self.class_weights
+        )
+
+    def _train_epoch(self, dataloader):
+        self.model.train()
+        epoch_loss = 0.0
+        epoch_focal = 0.0
+        epoch_supcon = 0.0
+        n_batches = 0
+        for batch in dataloader:
+            x = batch["features_t"].to(self.device)
+            y = batch["label"].to(self.device)
+            km = batch.get("key_padding_mask")
+            km = km.to(self.device) if km is not None else None
+
+            self.optimizer.zero_grad()
+            emb = self.model.encoder(x, src_key_padding_mask=km)
+            logits = self.model.head(emb)
+            nv = batch.get("n_valid_frames")
+            nv = nv.to(self.device) if nv is not None else None
+            x_aug = self.augmentation_fn(x, n_valid_frames=nv)
+            x_aug = apply_key_padding_mask_to_features(x_aug, km)
+            emb_aug = self.model.encoder(x_aug, src_key_padding_mask=km)
+            logits_aug = self.model.head(emb_aug)
+
+            lf = (self._focal(logits, y) + self._focal(logits_aug, y)) / 2.0
+            if self.supcon_weight > 0.0:
+                z_cat = torch.cat([emb, emb_aug], dim=0)
+                y_cat = torch.cat([y, y], dim=0)
+                ls = supervised_contrastive_loss(
+                    z_cat, y_cat, temperature=self.supcon_temperature
+                )
+                loss = lf + self.supcon_weight * ls
+            else:
+                ls = torch.tensor(0.0, device=self.device)
+                loss = lf
+
+            loss.backward()
+            self.optimizer.step()
+
+            epoch_loss += loss.item()
+            epoch_focal += lf.item()
+            epoch_supcon += ls.item() if torch.is_tensor(ls) else float(ls)
+            n_batches += 1
+        n = max(n_batches, 1)
+        return epoch_loss / n, epoch_focal / n, epoch_supcon / n
+
+    def _validate_epoch(self, dataloader):
+        if dataloader is None:
+            return None, None
+        self.model.eval()
+        epoch_loss = 0.0
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for batch in dataloader:
+                x = batch["features_t"].to(self.device)
+                y = batch["label"].to(self.device)
+                km = batch.get("key_padding_mask")
+                km = km.to(self.device) if km is not None else None
+                logits = self.model(x, src_key_padding_mask=km)
+                loss = self._focal(logits, y)
+                epoch_loss += loss.item()
+                pred = logits.argmax(dim=1)
+                correct += (pred == y).sum().item()
+                total += y.numel()
+        n_batches = len(dataloader)
+        return epoch_loss / max(n_batches, 1), correct / max(total, 1)
+
+    def train(self, epochs=10):
+        import copy
+
+        print(
+            f"\n🚀 Supervised training (focal γ={self.focal_gamma}, "
+            f"supcon_w={self.supcon_weight}, τ={self.supcon_temperature})..."
+        )
+        if self.early_stopping_patience > 0:
+            print(
+                f"   Early stopping: {self.early_stopping_patience} epochs without val improvement"
+            )
+        print()
+
+        for epoch in range(epochs):
+            global_epoch = self.epoch_offset + epoch
+            train_loss, tr_focal, tr_supcon = self._train_epoch(self.train_dataloader)
+            self.train_losses.append(train_loss)
+
+            val_loss, val_acc = self._validate_epoch(self.val_dataloader)
+            if val_loss is not None:
+                self.val_losses.append(val_loss)
+                self.val_accuracies.append(val_acc)
+            else:
+                self.val_losses.append(None)
+                self.val_accuracies.append(None)
+
+            best_marker = ""
+            if self.save_best_model and val_loss is not None:
+                if val_loss < self.best_val_loss:
+                    self.best_val_loss = val_loss
+                    self.best_model_state = copy.deepcopy(self.model.state_dict())
+                    self.best_epoch = global_epoch
+                    self.epochs_without_improvement = 0
+                    best_marker = " ⭐ NEW BEST"
+                else:
+                    self.epochs_without_improvement += 1
+
+            checkpoint_marker = ""
+            if (
+                self.checkpoint_interval > 0
+                and (global_epoch + 1) % self.checkpoint_interval == 0
+            ):
+                ck = os.path.join(self.checkpoint_dir, f"checkpoint_epoch_{global_epoch+1}.pt")
+                self.save_checkpoint(ck, global_epoch)
+                checkpoint_marker = " 💾"
+
+            if self.use_scheduler and val_loss is not None:
+                self.scheduler.step(val_loss)
+            elif self.use_scheduler:
+                self.scheduler.step(train_loss)
+
+            if self.writer is not None:
+                self.writer.add_scalar("Loss/train_total", train_loss, global_epoch)
+                self.writer.add_scalar("Loss/train_focal", tr_focal, global_epoch)
+                self.writer.add_scalar("Loss/train_supcon", tr_supcon, global_epoch)
+                if val_loss is not None:
+                    self.writer.add_scalar("Loss/val_focal", val_loss, global_epoch)
+                    self.writer.add_scalar("Accuracy/val", val_acc, global_epoch)
+                self.writer.add_scalar("Learning_Rate", self.optimizer.param_groups[0]["lr"], global_epoch)
+
+            lr = self.optimizer.param_groups[0]["lr"]
+            if val_loss is not None:
+                print(
+                    f"Epoch {global_epoch+1:3d}: Train={train_loss:.4f} (focal {tr_focal:.4f}, supcon {tr_supcon:.4f}), "
+                    f"Val focal={val_loss:.4f}, Val acc={val_acc:.4f}, LR={lr:.2e}{best_marker}{checkpoint_marker}"
+                )
+            else:
+                print(
+                    f"Epoch {global_epoch+1:3d}: Train={train_loss:.4f} (focal {tr_focal:.4f}, supcon {tr_supcon:.4f}), "
+                    f"LR={lr:.2e}{checkpoint_marker}"
+                )
+
+            if (
+                self.early_stopping_patience > 0
+                and self.epochs_without_improvement >= self.early_stopping_patience
+            ):
+                print(
+                    f"\n⏹️  Early stopping: no val improvement for {self.early_stopping_patience} epochs "
+                    f"(stopped at epoch {global_epoch + 1})"
+                )
+                break
+
+        if self.writer is not None:
+            self.writer.close()
+        print("\n✅ Supervised focal + SupCon training finished.")
+        if self.save_best_model and self.best_model_state is not None:
+            print(
+                f"⭐ Best val focal loss: {self.best_val_loss:.4f} at epoch {self.best_epoch + 1}"
+            )
+
+    def restore_best_model(self):
+        if self.best_model_state is None:
+            return False
+        self.model.load_state_dict(self.best_model_state)
+        print(f"✅ Restored best model (epoch {self.best_epoch + 1})")
+        return True
+
+    def save_checkpoint(self, path, epoch):
+        checkpoint = {
+            "epoch": epoch,
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "train_losses": self.train_losses,
+            "val_losses": self.val_losses,
+            "val_accuracies": self.val_accuracies,
+            "best_val_loss": self.best_val_loss,
+            "best_epoch": self.best_epoch,
+            "epochs_without_improvement": self.epochs_without_improvement,
+            "training_type": "supervised_population_focal_supcon",
+            "focal_gamma": self.focal_gamma,
+            "supcon_weight": self.supcon_weight,
+            "supcon_temperature": self.supcon_temperature,
+        }
+        arch = build_encoder_architecture_dict(self.model)
+        if arch:
+            checkpoint["architecture"] = arch
+        if self.use_scheduler and self.scheduler is not None:
+            checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
+        if self.best_model_state is not None:
+            checkpoint["best_model_state"] = self.best_model_state
+        torch.save(checkpoint, path)
+
+    def save_model(self, path, extra=None):
+        save_dict = {
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "train_losses": self.train_losses,
+            "val_losses": self.val_losses,
+            "val_accuracies": self.val_accuracies,
+            "best_val_loss": self.best_val_loss,
+            "best_epoch": self.best_epoch,
+            "training_type": "supervised_population_focal_supcon",
+            "focal_gamma": self.focal_gamma,
+            "supcon_weight": self.supcon_weight,
+            "supcon_temperature": self.supcon_temperature,
+        }
+        arch = build_encoder_architecture_dict(self.model)
+        if arch:
+            save_dict["architecture"] = arch
+        if self.best_model_state is not None:
+            save_dict["best_model_state"] = self.best_model_state
+        if extra:
+            save_dict.update(extra)
+        torch.save(save_dict, path)
+        print(f"✅ Model saved to: {path}")
+
+
+def compute_balanced_class_weights_numpy(label_indices, num_classes):
+    """sklearn 'balanced' style weights for integer labels in [0, num_classes)."""
+    y = np.asarray(label_indices, dtype=np.int64)
+    counts = np.bincount(y, minlength=num_classes).astype(np.float64)
+    counts = np.maximum(counts, 1.0)
+    weights = len(y) / (num_classes * counts)
+    return weights.astype(np.float32)
 
 
 # =============================================================================

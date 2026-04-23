@@ -511,6 +511,104 @@ def aug_shuffle_scale_noise(x, y, nseg, scale_range, angle_range, seed):
     return np.cumsum(new_dx), np.cumsum(new_dy)
 
 
+def aug_shuffle_scale_noise_with_segment_length(x, y, segment_length_frames, scale_range, angle_range, seed):
+    """
+    Same as ``aug_shuffle_scale_noise`` but splits ``[0, n)`` into contiguous chunks of
+    ``segment_length_frames`` (last chunk may be shorter). Number of segments is implicit.
+
+    Use this for **valid-prefix** trajectories so segments align with real frames only.
+    """
+    np.random.seed(seed)
+    n = len(x)
+    if n == 0:
+        return np.asarray(x, dtype=np.float64).copy(), np.asarray(y, dtype=np.float64).copy()
+
+    dx = np.diff(x, prepend=x[0])
+    dy = np.diff(y, prepend=y[0])
+
+    seg_len = max(1, int(segment_length_frames))
+    segs = []
+    start = 0
+    while start < n:
+        end = min(start + seg_len, n)
+        sdx = dx[start:end].copy()
+        sdy = dy[start:end].copy()
+
+        min_s, max_s = scale_range
+        if np.random.random() < 0.5:
+            scale = np.random.uniform(min_s, 0.9)
+        else:
+            scale = np.random.uniform(1.1, max_s)
+        sdx *= scale
+        sdy *= scale
+
+        segs.append((sdx, sdy))
+        start = end
+
+    nseg = len(segs)
+    idx = np.arange(nseg)
+    np.random.shuffle(idx)
+
+    new_dx = np.concatenate([segs[i][0] for i in idx])
+    new_dy = np.concatenate([segs[i][1] for i in idx])
+
+    min_ang, max_ang = angle_range
+    if max_ang > 0:
+        min_rad = np.deg2rad(min_ang)
+        max_rad = np.deg2rad(max_ang)
+        r = np.sqrt(new_dx**2 + new_dy**2)
+        theta = np.arctan2(new_dy, new_dx)
+        magnitudes = np.random.uniform(min_rad, max_rad, size=len(theta))
+        signs = np.random.choice([-1, 1], size=len(theta))
+        noise = magnitudes * signs
+        theta_noisy = theta + noise
+        new_dx = r * np.cos(theta_noisy)
+        new_dy = r * np.sin(theta_noisy)
+
+    return np.cumsum(new_dx), np.cumsum(new_dy)
+
+
+def apply_augmentation_valid_prefix(
+    x_coords,
+    y_coords,
+    n_valid,
+    segment_length_frames,
+    seed,
+    max_seq_len=None,
+):
+    """
+    Shuffle/scale/angle augmentation on the first ``n_valid`` frames only; pad tail to ``max_seq_len``.
+
+    Cumulative coordinates ``x_coords``, ``y_coords`` must match the full tensor length (e.g. 60),
+    including any flat tail from zero displacements. Augmentation runs on ``[:n_valid]`` only;
+    positions ``[n_valid:]`` are filled with the last augmented position so recovered dx/dy are zero.
+    """
+    x_coords = np.asarray(x_coords, dtype=np.float64)
+    y_coords = np.asarray(y_coords, dtype=np.float64)
+    T = len(x_coords)
+    if max_seq_len is None:
+        max_seq_len = T
+    max_seq_len = int(max_seq_len)
+    n_valid = int(max(0, min(n_valid, T, max_seq_len)))
+
+    if n_valid == 0:
+        return x_coords.astype(np.float32), y_coords.astype(np.float32)
+
+    xv = x_coords[:n_valid].copy()
+    yv = y_coords[:n_valid].copy()
+    scale_range = (0.5, 1.5)
+    angle_range = (1, 10)
+    xa, ya = aug_shuffle_scale_noise_with_segment_length(
+        xv, yv, segment_length_frames, scale_range, angle_range, seed
+    )
+
+    out_x = np.full(max_seq_len, xa[-1], dtype=np.float64)
+    out_y = np.full(max_seq_len, ya[-1], dtype=np.float64)
+    out_x[:n_valid] = xa
+    out_y[:n_valid] = ya
+    return out_x.astype(np.float32), out_y.astype(np.float32)
+
+
 def apply_augmentation_for_training(x, y, seed=None):
     """
     Apply the settled augmentation configuration for training.

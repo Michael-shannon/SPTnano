@@ -1725,6 +1725,513 @@ def napari_visualize_image_with_tracksdev2(
     napari.run()
 
 
+def particle_centered_movie(
+    tracks_df,
+    unique_id=None,
+    min_track_length=50,
+    random_select=False,
+    random_seed=42,
+    master_dir=config.MASTER,
+    condition=None,
+    cell=None,
+    location=None,
+    box_size=30,
+    pad_value=0,
+    x_col="x",
+    y_col="y",
+    frame_col="frame",
+    xy_units="pixels",  # "pixels" or "microns" (or "auto")
+    output_mode="napari",  # "napari" or "png_stack"
+    save_movie_flag=False,
+    feature="particle",
+    save_path=None,
+    png_dir=None,
+    png_prefix=None,
+    overlay_on_png=True,
+    overlay_radius_px=2,
+    overlay_color_rgb=(255, 0, 0),
+    invert_raw=False,
+    show_timer=False,
+    time_col="time_s",
+    timer_dt_s=None,
+    timer_fontsize=10,
+    timer_color_rgb=None,  # None => auto (white if not inverted, black if inverted)
+    timer_margin_px=2,
+    napari_track_width=3,
+    print_selection=True,
+    steps=None,
+):
+    """
+    Create a single-particle-centered movie: each frame is recentered so the selected
+    particle stays in the middle of the field of view.
+
+    This function locates the raw TIFF as ``{master_dir}/data/{condition}/{cell_without_tracked}.tif``.
+    It selects one particle by ``unique_id`` when provided; otherwise it auto-selects one particle
+    from the full ``tracks_df`` (optionally random). It then recenters/crops every frame to
+    ``box_size×box_size`` with optional padding, and either:
+      - opens napari and optionally saves a movie via ``save_movie(...)``, or
+      - writes a PNG stack to disk (one PNG per frame).
+
+    Parameters
+    ----------
+    tracks_df : pl.DataFrame or pd.DataFrame
+        Track dataframe containing at least: 'unique_id', 'frame', 'y', 'x', 'filename', 'condition',
+        and a location column ('Location' or 'location').
+    unique_id : int/str, optional
+        Which track to center on. If None, chooses the longest-lived track with length >= min_track_length.
+    min_track_length : int, default=50
+        Deprecated. Kept for backwards compatibility; it is not used for selection.
+    random_select : bool, default=False
+        If unique_id is None, choose a random track from the full dataframe.
+    random_seed : int, default=42
+        Seed used when random_select=True for reproducible selection.
+    master_dir, condition, cell, location :
+        Same semantics as ``napari_visualize_image_with_tracksdev2``.
+    box_size : int, default=30
+        Output crop size in pixels (box_size×box_size).
+    pad_value : int/float, default=0
+        Padding value used when crop extends beyond the raw image (typically 0 for black).
+    x_col, y_col, frame_col : str
+        Column names for particle position and time index. For raw TIFF alignment, the defaults are
+        ``x_col='x'``, ``y_col='y'`` (pixels) and ``frame_col='frame'`` (0-based frame indices).
+    xy_units : {"pixels","microns","auto"}, default="pixels"
+        Units of (x_col, y_col). If "microns", values are converted to pixels using
+        ``config.PIXELSIZE_MICRONS``.
+    output_mode : {"napari","png_stack"}, default="napari"
+        Output mode: interactive napari viewer (and optional movie save) or PNG stack folder.
+    save_movie_flag : bool, default=False
+        If output_mode="napari", whether to write a movie using napari-animation.
+    feature : str, default="particle"
+        Which feature to color tracks by in napari (must exist in the available features for the selected particle;
+        falls back to 'particle' if unavailable).
+    save_path : str, optional
+        Optional custom path for napari movie output (e.g. .mov). If None, uses default movies folder.
+    png_dir : str, optional
+        If output_mode="png_stack", directory to write PNG frames. If None, derives from master_dir/cell/unique_id.
+    png_prefix : str, optional
+        Filename prefix for PNG frames. Default derived from condition/cell/unique_id.
+    overlay_on_png : bool, default=True
+        If output_mode="png_stack", whether to burn the particle overlay into the exported PNGs.
+    overlay_radius_px : int, default=2
+        Radius of the overlay dot (in pixels) for PNG export.
+    overlay_color_rgb : tuple, default=(255,0,0)
+        RGB color for the overlay dot for PNG export.
+    invert_raw : bool, default=False
+        If True, invert raw intensities (useful when you want dark↔bright flipped).
+    show_timer : bool, default=False
+        If True, render a timestamp at the top-right of the centered FOV.
+    time_col : str, default="time_s"
+        Column containing per-row time in seconds (optional; used when present).
+    timer_dt_s : float, optional
+        If provided, timer is computed as ``t_index * timer_dt_s`` (seconds) where t_index is
+        the centered movie frame index (0..N-1). If None, uses ``time_col`` when available,
+        otherwise falls back to ``config.TIME_BETWEEN_FRAMES``.
+    timer_fontsize : int, default=10
+        Font size for the timer overlay.
+    timer_color_rgb : tuple, optional
+        RGB color for the timer text. If None, automatically uses white when not inverted and black when inverted.
+    timer_margin_px : int, default=2
+        Margin from the top-right corner (in pixels) for the timer text placement.
+    napari_track_width : float, default=3
+        Track line width in napari (if supported by the installed napari version).
+    print_selection : bool, default=True
+        If True, prints the selected `unique_id` (and inferred filename/condition) for debugging.
+    steps : int, optional
+        Passed through to ``save_movie`` for napari output. If None, defaults to number of frames.
+    """
+    if box_size is None or int(box_size) <= 0:
+        raise ValueError("box_size must be a positive integer.")
+    box_size = int(box_size)
+
+    # Accept both Polars and Pandas; do NOT mutate the caller's df
+    if isinstance(tracks_df, pd.DataFrame):
+        df_pl = pl.from_pandas(tracks_df)
+    elif isinstance(tracks_df, pl.DataFrame):
+        df_pl = tracks_df.clone()
+    else:
+        raise TypeError("tracks_df must be a polars.DataFrame or pandas.DataFrame.")
+
+    # Resolve master_dir robustly.
+    # Callers sometimes pass a project root (expects ".../data/<condition>/...") and sometimes pass the "data" dir itself.
+    # We normalize and ensure `master_data_dir` points to the folder that directly contains the condition subfolders.
+    master_dir_in = os.path.normpath(str(master_dir or config.MASTER))
+    base_name = os.path.basename(master_dir_in).lower()
+    if base_name == "data":
+        master_data_dir = master_dir_in
+    else:
+        master_data_dir = os.path.normpath(os.path.join(master_dir_in, "data"))
+
+    # ---- Selection / filtering rules (per user request) ----
+    # The ONLY filtering we do is by `unique_id` when provided.
+    # If `unique_id` is None, we select a `unique_id` from the full dataframe (no location/condition/cell/min_length filtering).
+    if "unique_id" not in df_pl.columns:
+        raise ValueError("tracks_df must contain a 'unique_id' column.")
+
+    if unique_id is None:
+        # Choose a `unique_id` from the entire dataset.
+        uid_counts = (
+            df_pl.select(pl.col("unique_id"))
+            .drop_nulls()
+            .group_by("unique_id")
+            .agg(pl.len().alias("n_points"))
+            .sort("n_points", descending=True)
+        )
+        if uid_counts.height == 0:
+            raise ValueError("tracks_df contains no non-null unique_id values.")
+        if random_select:
+            eligible = uid_counts.select("unique_id").to_series().to_list()
+            rng = np.random.default_rng(int(random_seed))
+            unique_id = rng.choice(eligible)
+        else:
+            # Deterministic default: most-sampled track (not a filter, just a pick rule)
+            unique_id = uid_counts.select(pl.col("unique_id").first()).item()
+
+    df_particle = df_pl.filter(pl.col("unique_id") == unique_id).sort(frame_col)
+    if df_particle.height == 0:
+        raise ValueError(f"unique_id '{unique_id}' not found in tracks_df.")
+
+    # Infer condition/cell (and location if present) from the selected particle when available.
+    # If these columns don't exist, the caller must supply `condition` and `cell`.
+    if condition is None:
+        if "condition" in df_particle.columns:
+            condition = df_particle.select(pl.col("condition").first()).item()
+        else:
+            raise ValueError(
+                "Could not infer `condition` (no 'condition' column). Provide `condition=` explicitly."
+            )
+    if cell is None:
+        if "filename" in df_particle.columns:
+            cell = df_particle.select(pl.col("filename").first()).item()
+        else:
+            raise ValueError(
+                "Could not infer `cell` (no 'filename' column). Provide `cell=` explicitly."
+            )
+    # Optional: location is only used for printing/debug; do not require it.
+    try:
+        location_col = _get_location_column(df_particle)
+        if location is None:
+            location = df_particle.select(pl.col(location_col).first()).item()
+    except Exception:
+        location_col = None
+
+    if print_selection:
+        print(f"Selected unique_id: {unique_id}")
+        print(f"Inferred location={location} condition={condition} cell(filename)={cell}")
+
+    # Resolve raw image path (same approach as napari_visualize_image_with_tracksdev2)
+    image_filename = str(cell).replace("_tracked", "") + ".tif"
+    image_path = os.path.join(master_data_dir, str(condition), image_filename)
+    image = load_image(image_path)
+    if image is None:
+        raise ValueError(f"Could not load image from: {image_path}")
+
+    # Ensure image is (T, Y, X)
+    if image.ndim == 2:
+        image = image[np.newaxis, :, :]
+    if image.ndim != 3:
+        raise ValueError(f"Expected image with 2 or 3 dims; got shape {getattr(image, 'shape', None)}")
+
+    # Validate required columns
+    for required in ["unique_id", frame_col, x_col, y_col]:
+        if required not in df_particle.columns:
+            raise ValueError(
+                f"Required column '{required}' not found. Available columns: {list(df_particle.columns)}"
+            )
+
+    # Build per-frame particle positions (in raw image coordinates)
+    frames = df_particle.select(pl.col(frame_col).cast(int)).to_series().to_list()
+    ys = df_particle.select(pl.col(y_col).cast(float)).to_series().to_list()
+    xs = df_particle.select(pl.col(x_col).cast(float)).to_series().to_list()
+
+    # Convert x/y to pixels if needed
+    xy_units_norm = str(xy_units).lower().strip()
+    if xy_units_norm not in {"auto", "pixels", "microns"}:
+        raise ValueError("xy_units must be one of: 'auto', 'pixels', 'microns'.")
+
+    y_vals = np.asarray(ys, dtype=float)
+    x_vals = np.asarray(xs, dtype=float)
+
+    if xy_units_norm == "auto":
+        # Heuristic: if typical coords exceed image size, they are probably pixels already (or invalid);
+        # if coords are much smaller than image dims, they might be microns. Use PIXELSIZE_MICRONS to test.
+        H = float(image.shape[1])
+        W = float(image.shape[2])
+        med_y = float(np.nanmedian(y_vals)) if y_vals.size else 0.0
+        med_x = float(np.nanmedian(x_vals)) if x_vals.size else 0.0
+
+        # Candidate interpretation 1: already pixels
+        in_bounds_as_px = (0 <= med_y <= H * 1.2) and (0 <= med_x <= W * 1.2)
+
+        # Candidate interpretation 2: microns → pixels
+        px_per_um = 1.0 / float(getattr(config, "PIXELSIZE_MICRONS", 0.065))
+        med_y_as_px = med_y * px_per_um
+        med_x_as_px = med_x * px_per_um
+        in_bounds_as_um = (0 <= med_y_as_px <= H * 1.2) and (0 <= med_x_as_px <= W * 1.2)
+
+        if in_bounds_as_um and not in_bounds_as_px:
+            xy_units_norm = "microns"
+        else:
+            xy_units_norm = "pixels"
+
+    if xy_units_norm == "microns":
+        px_per_um = 1.0 / float(getattr(config, "PIXELSIZE_MICRONS", 0.065))
+        y_vals = y_vals * px_per_um
+        x_vals = x_vals * px_per_um
+
+    frame_to_pos = {int(f): (float(y), float(x)) for f, y, x in zip(frames, y_vals, x_vals)}
+
+    t_min = int(min(frame_to_pos.keys()))
+    t_max = int(max(frame_to_pos.keys()))
+    t_min = max(t_min, 0)
+    t_max = min(t_max, int(image.shape[0]) - 1)
+
+    half = box_size // 2
+    pad = half + 2  # extra safety padding
+
+    # Pad raw image so crops near borders don't error
+    image_padded = np.pad(
+        image,
+        pad_width=((0, 0), (pad, pad), (pad, pad)),
+        mode="constant",
+        constant_values=pad_value,
+    )
+
+    # Create centered crop stack
+    centered_stack = []
+    kept_frames = []
+    tracks_centered_rows = []  # napari tracks rows [track_id, t, y, x] in centered coords
+    for t in range(t_min, t_max + 1):
+        if t not in frame_to_pos:
+            continue
+        y, x = frame_to_pos[t]
+        # round to nearest pixel
+        y_round = int(round(y))
+        x_round = int(round(x))
+        yc = y_round + pad
+        xc = x_round + pad
+
+        y0 = yc - half
+        x0 = xc - half
+        crop = image_padded[t, y0 : y0 + box_size, x0 : x0 + box_size]
+        # If box_size is even/odd mismatch at boundaries (shouldn't with padding), enforce shape
+        if crop.shape != (box_size, box_size):
+            fixed = np.full((box_size, box_size), pad_value, dtype=image_padded.dtype)
+            fixed[: crop.shape[0], : crop.shape[1]] = crop
+            crop = fixed
+
+        centered_stack.append(crop)
+        kept_frames.append(t)
+
+        # Track coordinates in centered movie coordinates.
+        # Keep subpixel offset so you can still see motion as jitter within the cropped FOV.
+        y_crop = (y - float(y_round)) + float(half)
+        x_crop = (x - float(x_round)) + float(half)
+        tracks_centered_rows.append([0, len(kept_frames) - 1, y_crop, x_crop])
+
+    if len(centered_stack) == 0:
+        raise ValueError("No frames were generated (particle frames missing or out of bounds).")
+
+    centered_stack = np.stack(centered_stack, axis=0)
+    if invert_raw:
+        vmax = centered_stack.max()
+        centered_stack = vmax - centered_stack
+
+    # Auto timer color: white on normal, black on inverted
+    if timer_color_rgb is None:
+        timer_color_rgb = (0, 0, 0) if invert_raw else (255, 255, 255)
+
+    # Output: PNG stack
+    if str(output_mode).lower() == "png_stack":
+        if png_prefix is None:
+            png_prefix = f"{condition}_{cell}_uid{unique_id}"
+        if png_dir is None:
+            png_dir = os.path.join(master_dir, "movies", "png_stacks", png_prefix)
+        os.makedirs(png_dir, exist_ok=True)
+
+        # Normalize to 8-bit for PNG if needed
+        stack_to_write = centered_stack
+        if stack_to_write.dtype != np.uint8:
+            vmin = float(np.nanmin(stack_to_write))
+            vmax = float(np.nanmax(stack_to_write))
+            if vmax <= vmin:
+                stack_u8 = np.zeros_like(stack_to_write, dtype=np.uint8)
+            else:
+                stack_u8 = (
+                    ((stack_to_write - vmin) / (vmax - vmin) * 255.0)
+                    .clip(0, 255)
+                    .astype(np.uint8)
+                )
+            stack_to_write = stack_u8
+
+        # Optional overlay burn-in (+ optional timer burn-in)
+        if overlay_on_png or show_timer:
+            from PIL import Image, ImageDraw
+
+            r = int(max(1, overlay_radius_px))
+            color = tuple(int(c) for c in overlay_color_rgb)
+            timer_color = tuple(int(c) for c in timer_color_rgb)
+            margin = int(max(0, timer_margin_px))
+
+            # Determine timer seconds per centered frame
+            timer_dt = None
+            if timer_dt_s is not None:
+                timer_dt = float(timer_dt_s)
+            elif time_col not in df_particle.columns:
+                timer_dt = float(getattr(config, "TIME_BETWEEN_FRAMES", 0.01))
+
+            time_vals = None
+            if time_col in df_particle.columns:
+                df_particle_pd_time = df_particle.to_pandas()
+                df_particle_pd_time = (
+                    df_particle_pd_time[df_particle_pd_time[frame_col].isin(kept_frames)]
+                    .sort_values(frame_col)
+                )
+                if time_col in df_particle_pd_time.columns and len(df_particle_pd_time) == len(kept_frames):
+                    time_vals = df_particle_pd_time[time_col].to_numpy(dtype=float)
+
+            for i in range(len(kept_frames)):
+                img_u8 = stack_to_write[i]
+                # convert to RGB for colored overlay
+                im = Image.fromarray(img_u8).convert("RGB")
+                draw = ImageDraw.Draw(im)
+                if overlay_on_png:
+                    y_c = float(tracks_centered_rows[i][2])
+                    x_c = float(tracks_centered_rows[i][3])
+                    bbox = [x_c - r, y_c - r, x_c + r, y_c + r]
+                    draw.ellipse(bbox, outline=color, fill=color)
+
+                if show_timer:
+                    if time_vals is not None:
+                        t_s = float(time_vals[i])
+                    else:
+                        t_s = float(i) * float(timer_dt if timer_dt is not None else 0.01)
+                    timer_txt = f"{t_s:.2f} s"
+
+                    try:
+                        bbox_txt = draw.textbbox((0, 0), timer_txt)
+                        tw = bbox_txt[2] - bbox_txt[0]
+                    except Exception:
+                        tw = draw.textsize(timer_txt)[0]
+                    x_txt = int(box_size - margin - tw)
+                    y_txt = int(margin)
+                    draw.text((x_txt, y_txt), timer_txt, fill=timer_color)
+
+                out_path = os.path.join(png_dir, f"{png_prefix}_frame{int(kept_frames[i]):04d}.png")
+                im.save(out_path)
+        else:
+            for i, t in enumerate(kept_frames):
+                out_path = os.path.join(png_dir, f"{png_prefix}_frame{int(t):04d}.png")
+                imageio.imwrite(out_path, stack_to_write[i])
+
+        print(f"✅ Wrote {len(kept_frames)} PNG frames to: {png_dir}")
+        return png_dir
+
+    # Output: Napari viewer (+ optional napari movie save)
+    if str(output_mode).lower() != "napari":
+        raise ValueError("output_mode must be either 'napari' or 'png_stack'.")
+
+    # Napari tracks format: (N, 4) columns [track_id, t, y, x]
+    tracks_arr = np.asarray(tracks_centered_rows, dtype=float)
+    tracks_new_df = pd.DataFrame(tracks_arr, columns=["particle", "frame", "y", "x"])
+    tracks_new_df["particle"] = tracks_new_df["particle"].astype(int)
+    tracks_new_df["frame"] = tracks_new_df["frame"].astype(int)
+
+    # Build features dict the same way as napari_visualize_image_with_tracksdev2
+    # Align features to kept frames (original df_particle is sorted by 'frame')
+    df_particle_pd = df_particle.to_pandas()
+    df_particle_pd = df_particle_pd[df_particle_pd[frame_col].isin(kept_frames)].sort_values(frame_col)
+    features_dict = {"particle": tracks_new_df["particle"].values}
+    for feat in config.FEATURES2:
+        if feat in df_particle_pd.columns:
+            features_dict[feat] = df_particle_pd[feat].to_numpy()
+    # Always include unique_id as a feature for inspection
+    features_dict["unique_id"] = np.asarray([unique_id] * len(tracks_new_df), dtype=object)
+
+    viewer = napari.Viewer()
+    viewer.add_image(centered_stack, name=f"Centered raw {cell} uid={unique_id}")
+    color_by = feature if feature in features_dict else "particle"
+    tracks_layer = viewer.add_tracks(
+        tracks_new_df[["particle", "frame", "y", "x"]].to_numpy(),
+        features=features_dict,
+        name=f"Centered track uid={unique_id}",
+        color_by=color_by,
+    )
+    # Track thickness (napari API varies slightly by version; try common attributes)
+    try:
+        if hasattr(tracks_layer, "width"):
+            tracks_layer.width = float(napari_track_width)
+        elif hasattr(tracks_layer, "tail_width"):
+            tracks_layer.tail_width = float(napari_track_width)
+    except Exception:
+        pass
+
+    if show_timer:
+        # Top-right anchored timer in data coordinates (box_size×box_size view).
+        timer_dt = None
+        if timer_dt_s is not None:
+            timer_dt = float(timer_dt_s)
+        elif time_col not in df_particle.columns:
+            timer_dt = float(getattr(config, "TIME_BETWEEN_FRAMES", 0.01))
+
+        df_particle_pd_time = df_particle.to_pandas()
+        if time_col in df_particle_pd_time.columns:
+            df_particle_pd_time = (
+                df_particle_pd_time[df_particle_pd_time[frame_col].isin(kept_frames)]
+                .sort_values(frame_col)
+            )
+            if len(df_particle_pd_time) == len(kept_frames):
+                time_vals = df_particle_pd_time[time_col].to_numpy(dtype=float)
+            else:
+                time_vals = None
+        else:
+            time_vals = None
+
+        if time_vals is None:
+            time_vals = np.asarray(
+                [i * (timer_dt if timer_dt is not None else 0.01) for i in range(len(kept_frames))],
+                dtype=float,
+            )
+
+        margin = int(max(0, timer_margin_px))
+        y_fixed = float(margin)
+        x_fixed = float(max(0, box_size - margin - 1))
+        points = np.asarray([[i, y_fixed, x_fixed] for i in range(len(kept_frames))], dtype=float)
+        timer_labels = np.asarray([f"{t:.2f} s" for t in time_vals], dtype=object)
+        timer_features = {"time_label": timer_labels}
+        viewer.add_points(
+            points,
+            name="timer",
+            size=1,
+            face_color=[1, 1, 1, 0],
+            edge_color=[1, 1, 1, 0],
+            features=timer_features,
+            text={
+                "string": "{time_label}",
+                "color": np.asarray(timer_color_rgb, dtype=float) / 255.0,
+                "size": float(timer_fontsize),
+                "anchor": "upper_right",
+            },
+        )
+
+    if save_movie_flag:
+        if steps is None:
+            steps = len(kept_frames)
+            print(f"Number of steps for the movie automatically set to: {steps}")
+        if save_path is None:
+            movie_dir = os.path.join(master_dir, "movies")
+            movies_dir = os.path.join(movie_dir, "movies")
+            os.makedirs(movies_dir, exist_ok=True)
+            save_path = os.path.join(movies_dir, f"{condition}_{cell}_uid{unique_id}.mov")
+        else:
+            out_dir = os.path.dirname(save_path)
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+        save_movie(viewer, tracks_new_df, feature=color_by, save_path=save_path, steps=steps)
+
+    napari.run()
+    return None
+
+
 def bootstrap_ci_mean(data, num_samples=1000, alpha=0.05):
     n = len(data)
     samples = np.random.choice(data, size=(num_samples, n), replace=True)
@@ -3077,6 +3584,9 @@ def plot_stacked_bar_svg(
         Font size for the plot text. Default is 16.
     colormap : str, optional
         Colormap for the plot. Default is 'Dark2'. (If 'colorblind', uses seaborn's colorblind palette.)
+        You may also pass an explicit list/tuple of colors (e.g. hex strings) to use for the
+        stacked categories, in the same order as ``stack_order`` (if provided) or the discovered
+        categories.
     figsize : tuple, optional
         Size of the plot (width, height) in inches. Default is (10, 8).
     background : str, optional
@@ -3148,7 +3658,15 @@ def plot_stacked_bar_svg(
 
     # Determine unique stack categories and assign colors
     stack_categories = df[stack_category].unique() if stack_order is None else stack_order
-    if colormap == "colorblind":
+    if isinstance(colormap, (list, tuple, np.ndarray)):
+        colors = list(colormap)
+        if len(colors) < len(stack_categories):
+            raise ValueError(
+                f"colormap list has {len(colors)} colors but needs at least {len(stack_categories)} "
+                f"for stack_category={stack_category!r}."
+            )
+        colors = colors[: len(stack_categories)]
+    elif colormap == "colorblind":
         colors = sns.color_palette("colorblind", len(stack_categories))
     elif colormap == "Dark2":
         cmap = cm.get_cmap("Dark2", len(stack_categories))
@@ -5675,6 +6193,135 @@ def plot_single_track_by_cluster(
             "cluster_changes": len(segment_info),
             "clusters_used": unique_used_clusters,
         }
+
+
+def plot_tracks_grid_by_unique_id(
+    tracks_df,
+    unique_ids=None,
+    n_tracks=12,
+    n_cols=4,
+    random_select=False,
+    random_seed=42,
+    x_col="x",
+    y_col="y",
+    frame_col="frame",
+    color="tab:blue",
+    line_thickness=0.8,
+    alpha=0.9,
+    figsize=(10, 8),
+    show_axes=False,
+    equal_aspect=True,
+    pad_fraction=0.05,
+):
+    """
+    Plot a grid of selected tracks (one per subplot) with the `unique_id` annotated above each panel.
+    All panels share the same x/y limits so tracks are shown on the same spatial scale.
+
+    Parameters
+    ----------
+    tracks_df : pd.DataFrame or pl.DataFrame
+        Track dataframe containing at least `unique_id`, x_col, y_col.
+    unique_ids : list, optional
+        List of unique_id values to plot. If None, selects from the dataframe.
+    n_tracks : int, default=12
+        Number of tracks to plot when unique_ids is None (or when provided list is longer).
+    n_cols : int, default=4
+        Number of subplot columns.
+    random_select : bool, default=False
+        If True and unique_ids is None, choose random tracks (seeded). If False, chooses the longest tracks.
+    random_seed : int, default=42
+        Seed for random track selection.
+    x_col, y_col, frame_col : str
+        Column names for x/y positions and frame ordering.
+    color : str
+        Matplotlib color for track lines.
+    line_thickness : float
+        Line width for each track polyline.
+    alpha : float
+        Line alpha.
+    figsize : tuple
+        Figure size.
+    show_axes : bool, default=False
+        If False, hides axes/ticks for a cleaner "gallery" look.
+    equal_aspect : bool, default=True
+        If True, enforces equal aspect ratio in each subplot.
+    pad_fraction : float, default=0.05
+        Fractional padding added around global x/y limits.
+
+    Returns
+    -------
+    (fig, axes, used_unique_ids)
+        axes is a 2D array (rows×cols).
+    """
+    if isinstance(tracks_df, pl.DataFrame):
+        df = tracks_df.to_pandas()
+    else:
+        df = tracks_df.copy()
+
+    for col in ["unique_id", x_col, y_col]:
+        if col not in df.columns:
+            raise ValueError(f"Required column '{col}' not found. Available columns: {list(df.columns)}")
+
+    # Choose IDs
+    all_ids = pd.Series(df["unique_id"].unique()).dropna().tolist()
+    if unique_ids is None:
+        if len(all_ids) == 0:
+            raise ValueError("No unique_id values found.")
+        if random_select:
+            rng = np.random.default_rng(int(random_seed))
+            used_unique_ids = rng.choice(all_ids, size=min(int(n_tracks), len(all_ids)), replace=False).tolist()
+        else:
+            # Pick longest tracks
+            counts = df.groupby("unique_id").size().sort_values(ascending=False)
+            used_unique_ids = counts.index.tolist()[: int(n_tracks)]
+    else:
+        used_unique_ids = list(unique_ids)[: int(n_tracks)]
+
+    n = len(used_unique_ids)
+    n_cols = int(max(1, n_cols))
+    n_rows = int(math.ceil(n / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
+
+    # Compute global limits across chosen tracks
+    sub = df[df["unique_id"].isin(used_unique_ids)]
+    xmin, xmax = float(sub[x_col].min()), float(sub[x_col].max())
+    ymin, ymax = float(sub[y_col].min()), float(sub[y_col].max())
+    dx = max(1e-9, xmax - xmin)
+    dy = max(1e-9, ymax - ymin)
+    xmin -= dx * float(pad_fraction)
+    xmax += dx * float(pad_fraction)
+    ymin -= dy * float(pad_fraction)
+    ymax += dy * float(pad_fraction)
+
+    # Plot
+    for i, uid in enumerate(used_unique_ids):
+        r = i // n_cols
+        c = i % n_cols
+        ax = axes[r, c]
+        tdf = df[df["unique_id"] == uid]
+        if frame_col in tdf.columns:
+            tdf = tdf.sort_values(frame_col)
+
+        ax.plot(tdf[x_col].to_numpy(), tdf[y_col].to_numpy(), color=color, lw=float(line_thickness), alpha=float(alpha))
+        ax.set_title(f"unique_id: {uid}", fontsize=10)
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+        if equal_aspect:
+            ax.set_aspect("equal", adjustable="box")
+        if not show_axes:
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+
+    # Hide unused panels
+    for j in range(n, n_rows * n_cols):
+        r = j // n_cols
+        c = j % n_cols
+        axes[r, c].axis("off")
+
+    plt.tight_layout()
+    return fig, axes, used_unique_ids
 
 
 def plot_tracks_grid_by_cluster(
@@ -9237,6 +9884,129 @@ def gallery_of_tracks(
     }
 
 
+def get_viz_df(df, cluster_column, uncertainty_threshold=None):
+    """
+    Filter a Polars ``DataFrame`` for visualization (non-null cluster column and
+    optional signature uncertainty cap).
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Table such as ``test_windowed_df`` or ``test_instant_df``; must contain
+        ``cluster_column``.
+    cluster_column : str
+        e.g. ``generic_cluster``, ``signature_cluster``.
+    uncertainty_threshold : float or None
+        If set and column ``signature_uncertainty`` exists, keep rows with
+        ``signature_uncertainty <= uncertainty_threshold``.
+
+    Returns
+    -------
+    pl.DataFrame
+        Filtered frame (same schema subset).
+    """
+    if not isinstance(df, pl.DataFrame):
+        raise TypeError("get_viz_df expects a polars.DataFrame")
+    if cluster_column not in df.columns:
+        raise ValueError(f"Column {cluster_column!r} not found in dataframe")
+
+    _filter = pl.col(cluster_column).is_not_null()
+
+    if uncertainty_threshold is not None and "signature_uncertainty" in df.columns:
+        _filter = _filter & (pl.col("signature_uncertainty") <= uncertainty_threshold)
+        print(f"   Uncertainty filter: signature_uncertainty <= {uncertainty_threshold}")
+
+    result = df.filter(_filter)
+    denom = max(df.height, 1)
+    pct = result.height / denom * 100.0
+    print(
+        f"   Viz data: {result.height:,} / {df.height:,} rows ({pct:.1f}%)"
+    )
+    return result
+
+
+def subsample_instant_for_gallery_by_window_uid(
+    instant_df,
+    color_by: str,
+    num_tracks_per_category: int,
+    *,
+    order=None,
+    random_state: int = 42,
+):
+    """
+    Subsample instant-level rows in **Polars** by picking random ``window_uid`` values
+    per ``color_by`` category (``num_tracks_per_category`` uids per category).
+
+    Use this **before** :func:`gallery_of_tracks_v4` on large instant tables to avoid
+    ``to_pandas()`` OOM. Returns a Polars ``DataFrame`` containing only rows whose
+    ``window_uid`` was selected.
+
+    Parameters
+    ----------
+    instant_df : pl.DataFrame
+        Must include ``window_uid``, ``color_by``, and columns needed for plotting.
+    color_by : str
+        Column name (e.g. ``generic_cluster_name``).
+    num_tracks_per_category : int
+        How many distinct ``window_uid`` values to draw per category.
+    order : sequence, optional
+        Category order; categories not listed are appended sorted after.
+    random_state : int
+        RNG seed for reproducible sampling.
+
+    Returns
+    -------
+    pl.DataFrame
+        Filtered copy (semi-join on selected ``window_uid`` values).
+    """
+    import polars as pl
+
+    if not isinstance(instant_df, pl.DataFrame):
+        raise TypeError("instant_df must be a polars.DataFrame")
+    if "window_uid" not in instant_df.columns:
+        raise ValueError("instant_df must contain column 'window_uid'")
+    if color_by not in instant_df.columns:
+        raise ValueError(f"Column {color_by!r} not found in instant_df")
+
+    raw = instant_df[color_by].drop_nulls().unique().to_list()
+    if order is not None:
+        categories = [c for c in order if c in raw]
+        categories += [c for c in sorted(raw, key=lambda x: (isinstance(x, str), str(x))) if c not in categories]
+    else:
+        categories = sorted(raw, key=lambda x: (isinstance(x, str), str(x)))
+
+    rng = np.random.default_rng(int(random_state))
+    selected_uids: list = []
+
+    for cat in categories:
+        cat_uids = (
+            instant_df.filter(pl.col(color_by) == cat)
+            .select("window_uid")
+            .unique()
+            .to_series()
+            .drop_nulls()
+            .to_list()
+        )
+        n = min(int(num_tracks_per_category), len(cat_uids))
+        if n == 0:
+            continue
+        idx = rng.choice(len(cat_uids), size=n, replace=False)
+        selected_uids.extend(cat_uids[i] for i in idx)
+
+    if not selected_uids:
+        raise ValueError(
+            "No window_uid values selected (empty categories or num_tracks_per_category=0)."
+        )
+
+    uid_df = pl.DataFrame({"window_uid": selected_uids})
+    out = instant_df.join(uid_df, on="window_uid", how="semi")
+    print(
+        f"subsample_instant_for_gallery_by_window_uid: {instant_df.height:,} → {out.height:,} rows, "
+        f"{len(selected_uids)} window_uids across {len(categories)} categories"
+    )
+    return out
+
+
 def gallery_of_tracks_v4(
     instant_df,
     color_by="simple_threshold",
@@ -9263,6 +10033,11 @@ def gallery_of_tracks_v4(
     scale_bar_length_um=None,
     scale_bar_color='white',
     scale_bar_linewidth=3,
+    segment_by="unique_id",
+    min_segment_length=None,
+    random_state=None,
+    max_rows_polars_to_pandas=500_000,
+    use_full_window_for_window_uid=True,
 ):
     """
     Create a gallery of tracks distributed in a grid layout with consistent scaling.
@@ -9295,6 +10070,25 @@ def gallery_of_tracks_v4(
     scale_bar_linewidth : float, default 3
         Line width of the scale bar
     
+    segment_by : str, default ``"unique_id"``
+        ``"unique_id"`` — sample long tracks by molecule id and optionally crop to
+        ``track_length_frames`` (original behavior).
+        ``"window_uid"`` — sample one segment per distinct ``window_uid`` per category
+        (variable length; typically one analysis window). Requires ``window_uid`` column.
+    min_segment_length : int or None
+        Minimum points required to plot a segment. If ``None``, uses 10 for
+        ``segment_by="unique_id"`` and 2 for ``segment_by="window_uid"``.
+    random_state : int or None
+        Seed for Python ``random`` sampling (reproducible track picks).
+    max_rows_polars_to_pandas : int or None
+        If the input is Polars and ``height`` exceeds this value, raise instead of
+        calling ``to_pandas()`` (avoids OOM). Set ``None`` to disable the guard.
+        Call :func:`subsample_instant_for_gallery_by_window_uid` first to shrink rows.
+    use_full_window_for_window_uid : bool, default True
+        If ``segment_by="window_uid"`` and True, plot the full window (ignore
+        ``track_length_frames`` for cropping). If False, crop long windows like
+        ``unique_id`` mode.
+
     Returns
     -------
     dict
@@ -9306,16 +10100,40 @@ def gallery_of_tracks_v4(
     import random
     from matplotlib import cm
 
-    # Auto-detect dataframe type and convert to pandas for compatibility
-    is_polars = hasattr(instant_df, 'schema')
+    if random_state is not None:
+        random.seed(int(random_state))
+
+    segment_by = (segment_by or "unique_id").strip().lower()
+    if segment_by not in ("unique_id", "window_uid"):
+        raise ValueError('segment_by must be "unique_id" or "window_uid"')
+
+    min_seg = (
+        min_segment_length
+        if min_segment_length is not None
+        else (2 if segment_by == "window_uid" else 10)
+    )
+
+    # Auto-detect dataframe type; avoid full-materialization OOM on huge Polars frames
+    is_polars = hasattr(instant_df, "schema")
     if is_polars:
         import polars as pl
+
+        n_polars = instant_df.height
+        if max_rows_polars_to_pandas is not None and n_polars > int(max_rows_polars_to_pandas):
+            raise MemoryError(
+                f"instant_df has {n_polars:,} rows, above max_rows_polars_to_pandas="
+                f"{max_rows_polars_to_pandas:,}. Subsample first, e.g. "
+                f"spt.subsample_instant_for_gallery_by_window_uid(...), or pass "
+                f"max_rows_polars_to_pandas=None (not recommended for very large tables)."
+            )
         df = instant_df.to_pandas()
     else:
         df = instant_df.copy()
 
     # Ensure required columns exist
-    required_cols = ['unique_id', 'x_um', 'y_um', 'frame']
+    required_cols = ["unique_id", "x_um", "y_um", "frame"]
+    if segment_by == "window_uid":
+        required_cols = required_cols + ["window_uid"]
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
         raise ValueError(f"Missing required columns: {missing_cols}")
@@ -9325,7 +10143,7 @@ def gallery_of_tracks_v4(
 
     # Get categories for coloring
     categories = order if order else sorted(df[color_by].unique())
-    print(f"Gallery categories in order: {categories}")
+    print(f"Gallery categories in order: {categories} (segment_by={segment_by})")
 
     # Set up color mapping
     if custom_colors is not None:
@@ -9350,23 +10168,55 @@ def gallery_of_tracks_v4(
 
     for category in categories:
         cat_df = df[df[color_by] == category]
-        unique_ids = cat_df['unique_id'].unique()
 
-        selected_ids = random.sample(list(unique_ids), min(num_tracks, len(unique_ids)))
+        if segment_by == "unique_id":
+            unique_ids = cat_df["unique_id"].unique()
+            selected_ids = random.sample(
+                list(unique_ids), min(num_tracks, len(unique_ids))
+            )
 
-        for unique_id in selected_ids:
-            track_data = cat_df[cat_df['unique_id'] == unique_id].sort_values('frame')
+            for unique_id in selected_ids:
+                track_data = cat_df[cat_df["unique_id"] == unique_id].sort_values(
+                    "frame"
+                )
 
-            if len(track_data) >= track_length_frames:
-                max_start = len(track_data) - track_length_frames
-                start_idx = random.randint(0, max_start) if max_start > 0 else 0
-                track_segment = track_data.iloc[start_idx:start_idx + track_length_frames]
-            else:
-                track_segment = track_data
+                if len(track_data) >= track_length_frames:
+                    max_start = len(track_data) - track_length_frames
+                    start_idx = random.randint(0, max_start) if max_start > 0 else 0
+                    track_segment = track_data.iloc[
+                        start_idx : start_idx + track_length_frames
+                    ]
+                else:
+                    track_segment = track_data
 
-            if len(track_segment) >= 10:
-                all_track_segments.append(track_segment)
-                track_info.append((category, unique_id, len(track_segment)))
+                if len(track_segment) >= min_seg:
+                    all_track_segments.append(track_segment)
+                    track_info.append((category, unique_id, len(track_segment)))
+
+        else:
+            # One segment per window_uid (variable length)
+            wuids = cat_df["window_uid"].dropna().unique()
+            selected_wuids = random.sample(
+                list(wuids), min(num_tracks, len(wuids))
+            )
+
+            for wuid in selected_wuids:
+                track_segment = cat_df[cat_df["window_uid"] == wuid].sort_values(
+                    "frame"
+                )
+                if use_full_window_for_window_uid:
+                    pass
+                elif len(track_segment) >= track_length_frames:
+                    max_start = len(track_segment) - track_length_frames
+                    start_idx = random.randint(0, max_start) if max_start > 0 else 0
+                    track_segment = track_segment.iloc[
+                        start_idx : start_idx + track_length_frames
+                    ]
+
+                if len(track_segment) >= min_seg:
+                    uid0 = track_segment["unique_id"].iloc[0]
+                    all_track_segments.append(track_segment)
+                    track_info.append((category, uid0, len(track_segment)))
 
     if not all_track_segments:
         raise ValueError("No valid track segments found")
@@ -9711,7 +10561,7 @@ def gallery_of_tracks_v5(
     random_seed=42,
     # NEW: Use exact track order from plot_representative_sequences
     superwindow_ids=None,  # List of superwindow_ids in EXACT plotting order from plot_representative_sequences
-    superwindow_id_col='superwindow_id',  # Column name for superwindow_id in the dataframe
+    superwindow_id_col='superwindow_id',  # Column used ONLY to match rows to superwindow_ids (IDs from sequences)
 ):
     """
     Create a gallery of tracks with WITHIN-TRACK coloring by a segment attribute.
@@ -9837,7 +10687,10 @@ def gallery_of_tracks_v5(
         the exact order from plot_representative_sequences. Pass the `plotted_sw_ids`
         output from plot_representative_sequences.
     superwindow_id_col : str, default='superwindow_id'
-        Column name for superwindow_id in the dataframe.
+        Column whose values match ``superwindow_ids`` (from ``plot_representative_sequences``).
+        This is only the **join / lookup key** for which frames to draw; use ``cluster_col`` for
+        cluster identity (e.g. ``superwindow_cluster_name``). Annotations can reference
+        ``{superwindow_cluster_name}`` when that column exists on ``instant_df``.
         
     Returns
     -------
@@ -9853,12 +10706,45 @@ def gallery_of_tracks_v5(
     from matplotlib import cm
 
     # Auto-detect dataframe type and convert to pandas for compatibility
-    is_polars = hasattr(instant_df, 'schema')
-    if is_polars:
+    try:
         import polars as pl
-        df = instant_df.to_pandas()
+    except ImportError:
+        pl = None
+
+    is_polars = pl is not None and isinstance(instant_df, pl.DataFrame)
+
+    # --- Memory: never materialize full instant_df as pandas when only a few
+    # superwindows are plotted. Filtering by superwindow_id in Polars first
+    # reduces rows from millions to thousands (fixes OOM on gallery_of_tracks_v5).
+    sw_id_list = None
+    if superwindow_ids is not None and len(superwindow_ids) > 0:
+        sw_id_list = list(dict.fromkeys(superwindow_ids))  # preserve order not needed for is_in
+
+    if is_polars:
+        df_pl = instant_df
+        if sw_id_list is not None and superwindow_id_col in df_pl.columns:
+            n_before = df_pl.height
+            df_pl = df_pl.filter(pl.col(superwindow_id_col).is_in(sw_id_list))
+            print(
+                f"gallery_of_tracks_v5: filtered Polars instant_df "
+                f"{n_before:,} -> {df_pl.height:,} rows ({superwindow_id_col} in {len(sw_id_list)} ids)"
+            )
+        elif sw_id_list is not None and superwindow_id_col not in df_pl.columns:
+            raise ValueError(
+                f"superwindow_ids provided but '{superwindow_id_col}' not in instant_df. "
+                "Join superwindow_id onto instant rows before the gallery, or pass the correct column."
+            )
+        df = df_pl.to_pandas()
     else:
-        df = instant_df.copy()
+        if sw_id_list is not None and superwindow_id_col in instant_df.columns:
+            n_before = len(instant_df)
+            df = instant_df.loc[instant_df[superwindow_id_col].isin(sw_id_list)].copy()
+            print(
+                f"gallery_of_tracks_v5: filtered pandas instant_df "
+                f"{n_before:,} -> {len(df):,} rows ({superwindow_id_col} in {len(sw_id_list)} ids)"
+            )
+        else:
+            df = instant_df.copy()
 
     # Ensure required columns exist
     required_cols = ['unique_id', 'x_um', 'y_um', 'frame']
@@ -9961,15 +10847,41 @@ def gallery_of_tracks_v5(
         grid_cols = n_clusters * n_per_cluster
         
         print(f"Grid layout: {grid_rows} rows × {grid_cols} columns")
+
+        _grid_slots = int(grid_rows * grid_cols)
         
         # Check if using exact superwindow_ids from plot_representative_sequences
         use_exact_order = superwindow_ids is not None and len(superwindow_ids) > 0
         
         if use_exact_order:
-            print(f"✅ Using EXACT order from plot_representative_sequences ({len(superwindow_ids)} superwindow_ids)")
-            # superwindow_ids is already in the correct order: 
-            # [group0_cluster0_ex0, group0_cluster0_ex1, ..., group0_cluster1_ex0, ...]
+            # Must be row-major: same order as plot_representative_sequences (one ID per subplot, None = empty)
+            _sw = list(superwindow_ids)
+            if len(_sw) != _grid_slots:
+                if len(_sw) < _grid_slots:
+                    print(
+                        f"⚠️ len(superwindow_ids)={len(_sw)} < grid slots {_grid_slots}; "
+                        f"padding with None. Re-run plot_representative_sequences() so the list "
+                        f"matches the gallery grid (one entry per cell including Nones)."
+                    )
+                    _sw.extend([None] * (_grid_slots - len(_sw)))
+                else:
+                    raise ValueError(
+                        f"len(superwindow_ids)={len(_sw)} exceeds grid slots {_grid_slots}. "
+                        f"Trim superwindow_ids or match group_by / cluster_order / n_per_cluster to the sequence plot."
+                    )
+                superwindow_ids = _sw
+            print(f"✅ Using EXACT order from plot_representative_sequences ({len(superwindow_ids)} slots = grid)")
+            # Order: [group0_cluster0_ex0 ... exK, group0_cluster1_..., ..., group1_...]
             sw_idx = 0  # Index into superwindow_ids list
+
+        # O(1) lookup per superwindow after filter (avoids repeated full-frame boolean masks)
+        if use_exact_order and superwindow_id_col in df.columns:
+            _tracks_by_sw = {
+                k: g.sort_values("frame")
+                for k, g in df.groupby(superwindow_id_col, sort=False)
+            }
+        else:
+            _tracks_by_sw = None
         
         # Collect tracks in structured order (matching plot_representative_sequences)
         for group_idx, group_val in enumerate(groups):
@@ -9986,9 +10898,21 @@ def gallery_of_tracks_v5(
                         if sw_idx < len(superwindow_ids):
                             target_sw_id = superwindow_ids[sw_idx]
                             sw_idx += 1
+
+                            # Grid-aligned placeholder from plot_representative_sequences (no example in that slot)
+                            if target_sw_id is None:
+                                all_track_segments.append(None)
+                                track_info.append((cluster_id, None, 0))
+                                grid_position_map[(group_idx, col_idx)] = len(all_track_segments) - 1
+                                col_idx += 1
+                                continue
                             
                             # Find track data for this superwindow_id
-                            if superwindow_id_col in df.columns:
+                            if _tracks_by_sw is not None:
+                                track_data = _tracks_by_sw.get(target_sw_id)
+                                if track_data is None:
+                                    track_data = df.iloc[0:0]
+                            elif superwindow_id_col in df.columns:
                                 track_data = df[df[superwindow_id_col] == target_sw_id].sort_values('frame')
                             else:
                                 # Fall back to unique_id if superwindow_id_col not found
@@ -9996,7 +10920,7 @@ def gallery_of_tracks_v5(
                             
                             if len(track_data) == 0:
                                 all_track_segments.append(None)
-                                track_info.append((None, None, 0))
+                                track_info.append((cluster_id, target_sw_id, 0))
                                 grid_position_map[(group_idx, col_idx)] = len(all_track_segments) - 1
                                 col_idx += 1
                                 continue
@@ -10016,11 +10940,11 @@ def gallery_of_tracks_v5(
                                 track_info.append((actual_cluster, target_sw_id, len(track_segment)))
                             else:
                                 all_track_segments.append(None)
-                                track_info.append((None, None, 0))
+                                track_info.append((actual_cluster, target_sw_id, 0))
                         else:
-                            # No more superwindow_ids, fill with empty
+                            # No more superwindow_ids, fill with empty (keep cluster for border alignment)
                             all_track_segments.append(None)
-                            track_info.append((None, None, 0))
+                            track_info.append((cluster_id, None, 0))
                         
                         grid_position_map[(group_idx, col_idx)] = len(all_track_segments) - 1
                         col_idx += 1
@@ -10030,10 +10954,10 @@ def gallery_of_tracks_v5(
                         if ex_idx == 0:
                             # Only do this once per cluster
                             if len(cluster_data) == 0:
-                                # Fill all slots for this cluster with empty
+                                # Fill all slots for this cluster with empty (keep cluster for borders)
                                 for _ in range(n_per_cluster):
                                     all_track_segments.append(None)
-                                    track_info.append((None, None, 0))
+                                    track_info.append((cluster_id, None, 0))
                                     grid_position_map[(group_idx, col_idx)] = len(all_track_segments) - 1
                                     col_idx += 1
                                 break  # Skip remaining ex_idx iterations
@@ -10066,11 +10990,11 @@ def gallery_of_tracks_v5(
                                 track_info.append((cluster_id, unique_id, len(track_segment)))
                             else:
                                 all_track_segments.append(None)
-                                track_info.append((None, None, 0))
+                                track_info.append((cluster_id, unique_id, 0))
                         else:
                             # Not enough tracks for this slot
                             all_track_segments.append(None)
-                            track_info.append((None, None, 0))
+                            track_info.append((cluster_id, None, 0))
                         
                         grid_position_map[(group_idx, col_idx)] = len(all_track_segments) - 1
                         col_idx += 1
@@ -10203,6 +11127,24 @@ def gallery_of_tracks_v5(
         if not show_annotations:
             return None
 
+        # Empty subplot: no segment rows — still format annotation from meta (grid alignment)
+        if segment is None:
+            if callable(annotation):
+                try:
+                    return str(annotation(segment, meta))
+                except Exception as e:
+                    return f"(annotation error: {e})"
+            if isinstance(annotation, str):
+                if annotation == "default":
+                    return ""
+                try:
+                    return annotation.format(**meta)
+                except KeyError as e:
+                    return f"(missing {e.args[0]} in annotation)"
+                except Exception as e:
+                    return f"(annotation error: {e})"
+            return None
+
         if callable(annotation):
             try:
                 return str(annotation(segment, meta))
@@ -10245,10 +11187,53 @@ def gallery_of_tracks_v5(
 
         ax = axes_flat[idx]
         
-        # Handle empty/None segments (structured layout may have empty slots)
+        # Handle empty/None segments: keep axes as visible boxes (aligned grid, cluster border)
         if segment is None or segment_length == 0:
-            ax.axis('off')
+            ax.set_xticks([])
+            ax.set_yticks([])
             ax.set_facecolor(axis_background)
+            if show_subplot_border and subplot_border_color_by == "cluster" and order_val is not None:
+                border_color = border_color_map.get(order_val, subplot_border_color or text_color)
+                for spine in ax.spines.values():
+                    spine.set_visible(True)
+                    spine.set_color(border_color)
+                    spine.set_linewidth(subplot_border_linewidth)
+            elif show_subplot_border:
+                for spine in ax.spines.values():
+                    spine.set_visible(True)
+                    spine.set_color(subplot_border_color or text_color)
+                    spine.set_linewidth(subplot_border_linewidth)
+            else:
+                for spine in ax.spines.values():
+                    spine.set_visible(False)
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.set_aspect("equal")
+            meta_empty = {
+                "order_val": order_val,
+                "unique_id": unique_id,
+                "segment_length": 0,
+                "start_frame": None,
+                "end_frame": None,
+                "window_uid": None,
+                "window_uids": None,
+                "superwindow_id": unique_id,
+            }
+            if use_structured_layout and cluster_col is not None:
+                meta_empty[cluster_col] = order_val
+            ann_text = _make_annotation_text(None, meta_empty)
+            if show_annotations and ann_text:
+                ax.text(
+                    0.5,
+                    -0.12,
+                    ann_text,
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="top",
+                    fontsize=text_size,
+                    color=text_color,
+                    style="italic",
+                )
             continue
 
         x_coords = segment['x_um'].values
@@ -10334,6 +11319,11 @@ def gallery_of_tracks_v5(
         if 'superwindow_id' in segment.columns:
             superwindow_id = segment['superwindow_id'].iloc[0]
 
+        # Named cluster (e.g. after merging HDBSCAN ids); same as cluster_col when propagated to instant_df
+        superwindow_cluster_name = None
+        if 'superwindow_cluster_name' in segment.columns:
+            superwindow_cluster_name = segment['superwindow_cluster_name'].iloc[0]
+
         meta = {
             'order_val': order_val,
             'unique_id': unique_id,
@@ -10342,7 +11332,8 @@ def gallery_of_tracks_v5(
             'end_frame': end_frame,
             'window_uid': window_uid,
             'window_uids': window_uids,
-            'superwindow_id': superwindow_id
+            'superwindow_id': superwindow_id,
+            'superwindow_cluster_name': superwindow_cluster_name,
         }
 
         ann_text = _make_annotation_text(segment, meta)
@@ -10447,10 +11438,10 @@ def gallery_of_tracks_v5(
             fontweight='bold'
         )
 
-    # Count tracks per order_by value (or cluster for structured layout)
+    # Count tracks with data only (empty grid slots do not inflate cluster totals)
     category_counts = {}
-    for order_val, _, _ in track_info:
-        if order_val is not None:
+    for seg, (order_val, _, _) in zip(all_track_segments, track_info):
+        if seg is not None and order_val is not None:
             category_counts[order_val] = category_counts.get(order_val, 0) + 1
 
     # Title
@@ -10543,6 +11534,11 @@ def gallery_of_tracks_v5(
             save_path = f"gallery_of_tracks_v5_{group_by}_{cluster_col}_{segment_color_by}.{export_format}"
         else:
             save_path = f"gallery_of_tracks_v5_{order_by}_{segment_color_by}.{export_format}"
+    else:
+        save_path = os.path.abspath(os.path.expanduser(str(save_path)))
+        _save_dir = os.path.dirname(save_path)
+        if _save_dir:
+            os.makedirs(_save_dir, exist_ok=True)
 
     plt.savefig(
         save_path,
@@ -10552,6 +11548,7 @@ def gallery_of_tracks_v5(
         transparent=transparent_background,
         facecolor=figure_background
     )
+    print(f"✅ gallery_of_tracks_v5 saved: {save_path}")
 
     if show_plot:
         plt.show()
@@ -10697,9 +11694,15 @@ def plot_stacked_bar_percentage(
     
     if is_polars_input:
         # Use polars for efficient computation
+        # Drop rows missing keys so group_by does not create null-key buckets
+        df_work = df.filter(
+            pl.col(x_category).is_not_null()
+            & pl.col(stack_category).is_not_null()
+            & pl.col(unique_id_col).is_not_null()
+        )
         # Get unique tracks per category combination
         counts = (
-            df
+            df_work
             .group_by([x_category, stack_category, unique_id_col])
             .agg(pl.len().alias('n_windows'))
             .group_by([x_category, stack_category])
@@ -10728,9 +11731,10 @@ def plot_stacked_bar_percentage(
         )
     else:
         # Use pandas
+        df_work = df.dropna(subset=[x_category, stack_category, unique_id_col])
         # Get unique tracks per category combination
         counts = (
-            df.groupby([x_category, stack_category])[unique_id_col]
+            df_work.groupby([x_category, stack_category])[unique_id_col]
             .nunique()
             .reset_index()
             .rename(columns={unique_id_col: 'n_tracks'})
@@ -10748,7 +11752,10 @@ def plot_stacked_bar_percentage(
         summary_df = counts.merge(totals, on=x_category)
         summary_df['percentage'] = (summary_df['n_tracks'] / summary_df['total_tracks'] * 100)
         summary_df = summary_df.sort_values([x_category, stack_category])
-    
+
+    summary_df = summary_df.dropna(subset=[x_category, stack_category])
+    summary_df = summary_df.drop_duplicates(subset=[x_category, stack_category])
+
     # Determine orders
     if x_order is None:
         x_order = sorted(summary_df[x_category].unique())
@@ -10792,13 +11799,19 @@ def plot_stacked_bar_percentage(
     
     # Create stacked bars
     for i, stack_val in enumerate(stack_order):
-        stack_data = summary_df[summary_df[stack_category] == stack_val]
-        
+        stack_data = summary_df[summary_df[stack_category].eq(stack_val)]
+
         # Get percentages for each x category
         percentages = []
         for x_val in x_order:
-            match = stack_data[stack_data[x_category] == x_val]
-            pct = match['percentage'].values[0] if len(match) > 0 else 0
+            match = stack_data[stack_data[x_category].eq(x_val)]
+            if len(match) == 0:
+                pct = 0.0
+            elif len(match) == 1:
+                pct = float(match['percentage'].iloc[0])
+            else:
+                pct = float(match['percentage'].sum())
+
             percentages.append(pct)
         
         # Plot bar segment
@@ -10878,6 +11891,10 @@ def plot_stacked_bar_percentage(
             # Use as full path, adjust extension
             base, _ = os.path.splitext(save_path)
             full_path = f"{base}.{ext}"
+
+        parent = os.path.dirname(os.path.abspath(full_path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         
         if ext == 'svg':
             import io
@@ -15172,6 +16189,230 @@ def plot_similarity_space_umap(
     return fig, ax if axes is None else axes
 
 
+def plot_similarity_space_2d(
+    sequence_df,
+    space="pca",
+    embedding_col=None,
+    color_by="mol",
+    split_by=None,
+    palette="colorblind",
+    missing_label="(missing)",
+    figsize=(10, 8),
+    s=50,
+    alpha=0.7,
+    edgecolors="k",
+    linewidths=0.5,
+    save_path=None,
+    export_format="svg",
+    dpi=300,
+    transparent_background=True,
+):
+    """
+    Universal 2D scatter for PCA / UMAP / PHATE (or any two-column embedding list column).
+
+    **Always uses discrete colors** for ``color_by`` (never a continuous colormap), so
+    integer columns like ``superwindow_cluster`` plot as categories, not a gradient.
+
+    Parameters
+    ----------
+    sequence_df : pd.DataFrame or pl.DataFrame
+        Rows match superwindows; must contain the embedding column.
+    space : {'pca', 'umap', 'phate'}, default='pca'
+        Chooses default axis labels and default ``embedding_col`` if not set.
+    embedding_col : str, optional
+        Column of length-2 (or more) coordinate vectors per row. Default:
+        ``pca_embedding`` or ``umap_embedding`` from ``space``.
+    color_by : str, default='mol'
+        Column used for **categorical** face colors.
+    split_by : str, optional
+        If set, one subplot per value (small multiples).
+    palette : str, list, or dict, default='colorblind'
+        ``'colorblind'`` uses a fixed 10-color accessible palette; or a list of hex
+        colors; or ``dict`` value -> color.
+    missing_label : str
+        Label for null ``color_by`` values (filled for legend only).
+
+    Returns
+    -------
+    fig, ax or ndarray of axes
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+
+    try:
+        import polars as pl
+    except ImportError:
+        pl = None
+
+    if pl is not None and isinstance(sequence_df, pl.DataFrame):
+        pdf = sequence_df.to_pandas()
+    else:
+        pdf = sequence_df
+
+    space = str(space).lower()
+    if space not in ("pca", "umap", "phate"):
+        raise ValueError("space must be 'pca', 'umap', or 'phate'")
+    if embedding_col is None:
+        if space == "pca":
+            embedding_col = "pca_embedding"
+        elif space == "umap":
+            embedding_col = "umap_embedding"
+        else:
+            embedding_col = "phate_embedding"
+    if embedding_col not in pdf.columns:
+        raise KeyError(f"Missing embedding column {embedding_col!r}")
+    if color_by not in pdf.columns:
+        raise KeyError(f"Missing color_by column {color_by!r}")
+
+    coords = np.vstack(pdf[embedding_col].values)
+    if coords.ndim != 2 or coords.shape[1] < 2:
+        raise ValueError(
+            f"{embedding_col} rows must be at least length-2 vectors, got shape issues from {coords.shape}"
+        )
+
+    if space == "pca":
+        xl, yl, space_title = "PC1", "PC2", "PCA"
+    elif space == "umap":
+        xl, yl, space_title = "UMAP 1", "UMAP 2", "UMAP"
+    else:
+        xl, yl, space_title = "PHATE 1", "PHATE 2", "PHATE"
+
+    colorblind10 = [
+        "#0173B2",
+        "#DE8F05",
+        "#029E73",
+        "#CC78BC",
+        "#CA9161",
+        "#FBAFE4",
+        "#949494",
+        "#ECE133",
+        "#56B4E9",
+        "#D55E00",
+    ]
+
+    cs_for_map = pdf[color_by].fillna(missing_label)
+    uvs = sorted(pd.unique(cs_for_map), key=lambda x: (str(type(x)), str(x)))
+
+    if isinstance(palette, dict):
+        color_map = dict(palette)
+    elif isinstance(palette, (list, tuple)):
+        color_map = {val: palette[i % len(palette)] for i, val in enumerate(uvs)}
+    elif palette == "colorblind":
+        color_map = {val: colorblind10[i % len(colorblind10)] for i, val in enumerate(uvs)}
+    else:
+        try:
+            cmap = plt.colormaps[palette]
+        except (AttributeError, KeyError, TypeError):
+            cmap = plt.cm.get_cmap(palette)
+        color_map = {
+            val: cmap(i / max(len(uvs) - 1, 1)) for i, val in enumerate(uvs)
+        }
+
+    for v in uvs:
+        if v not in color_map:
+            color_map[v] = colorblind10[len(color_map) % len(colorblind10)]
+
+    unique_vals = uvs
+    facecolors = [color_map[v] for v in cs_for_map]
+
+    def _one_panel(ax, x, y, fc, title=None, legend_vals=None):
+        from matplotlib.patches import Patch
+
+        leg = unique_vals if legend_vals is None else legend_vals
+        ax.scatter(
+            x,
+            y,
+            c=fc,
+            s=s,
+            alpha=alpha,
+            edgecolors=edgecolors,
+            linewidths=linewidths,
+        )
+        ax.set_xlabel(xl, fontsize=12, fontweight="bold")
+        ax.set_ylabel(yl, fontsize=12, fontweight="bold")
+        if title is not None:
+            ax.set_title(title, fontweight="bold")
+        ax.grid(True, alpha=0.3)
+        legend_elements = [
+            Patch(facecolor=color_map[val], edgecolor=edgecolors, label=str(val))
+            for val in leg
+            if val in color_map
+        ]
+        if legend_elements:
+            ax.legend(handles=legend_elements, title=color_by, loc="best")
+
+    if split_by is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        _one_panel(ax, coords[:, 0], coords[:, 1], facecolors)
+        ax.set_title(
+            f"{space_title} of DTW similarity space\n(colored by {color_by})",
+            fontsize=14,
+            fontweight="bold",
+        )
+        axes = None
+    else:
+        if split_by not in pdf.columns:
+            raise KeyError(f"Missing split_by column {split_by!r}")
+        split_vals = list(pd.unique(pdf[split_by].dropna()))
+        n_plots = len(split_vals)
+        ncols = min(3, n_plots)
+        nrows = int(np.ceil(n_plots / ncols))
+        fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+        axes = axes.flatten()
+        for i, split_val in enumerate(split_vals):
+            ax = axes[i]
+            mask = (pdf[split_by] == split_val).to_numpy()
+            fc_sub = (np.array(facecolors, dtype=object)[mask]).tolist()
+            leg_vals = sorted(
+                pd.unique(cs_for_map[mask]),
+                key=lambda x: (str(type(x)), str(x)),
+            )
+            _one_panel(
+                ax,
+                coords[mask, 0],
+                coords[mask, 1],
+                fc_sub,
+                title=str(split_val),
+                legend_vals=leg_vals,
+            )
+        for j in range(len(split_vals), len(axes)):
+            axes[j].axis("off")
+        fig.suptitle(
+            f"{space_title} (colored by {color_by})",
+            fontsize=14,
+            fontweight="bold",
+            y=1.0,
+        )
+        axes = axes.reshape(nrows, ncols)
+
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        if split_by is None:
+            ax.patch.set_alpha(0)
+        else:
+            for a in fig.axes:
+                a.patch.set_alpha(0)
+
+    plt.tight_layout()
+
+    if save_path:
+        suffix = f"_{split_by}" if split_by else ""
+        filename = f"{space}_similarity_space_2d{suffix}.{export_format}"
+        full_path = os.path.join(save_path, filename)
+        plt.savefig(
+            full_path,
+            dpi=dpi,
+            bbox_inches="tight",
+            transparent=transparent_background,
+        )
+        print(f"✅ Saved to: {full_path}")
+
+    if split_by is None:
+        return fig, ax
+    return fig, axes
+
+
 def plot_similarity_space_phate(
     sequence_df,
     phate_embedding_col='phate_embedding',
@@ -15385,6 +16626,7 @@ def plot_representative_sequences(
     group_by='mol',
     n_superwindows_per_cluster=3,
     state_order=None,
+    cluster_order=None,
     state_colors='colorblind',
     figsize=(18, 12),
     save_path=None,
@@ -15394,7 +16636,8 @@ def plot_representative_sequences(
     show_superwindow_id=False,
     superwindow_id_col='superwindow_id',
     id_fontsize=6,
-    id_color='gray'
+    id_color='gray',
+    random_seed=42,
 ):
     """
     Plot representative sequences from each cluster to verify similarity.
@@ -15412,7 +16655,12 @@ def plot_representative_sequences(
     n_superwindows_per_cluster : int, default=3
         Number of example sequences to show per cluster
     state_order : list, optional
-        Custom state order
+        Custom state order (y-axis / palette order for sequence states).
+    cluster_order : list, optional
+        Order of **cluster columns** (left-to-right). Labels must match values in
+        ``cluster_col`` (e.g. string names when ``cluster_col='superwindow_cluster_name'``).
+        Any cluster present in the data but not in this list is appended at the end
+        (sorted by ``str``).
     state_colors : str, dict, or list, default='colorblind'
         State colors
     figsize : tuple, default=(18, 12)
@@ -15433,18 +16681,31 @@ def plot_representative_sequences(
         Font size for superwindow_id annotation
     id_color : str, default='gray'
         Color for superwindow_id annotation
-        
+    random_seed : int, optional, default=42
+        Passed to ``DataFrame.sample(random_state=...)`` when picking which superwindows
+        to show per (group, cluster). Use a fixed integer for reproducible panels; change
+        to draw a different random subset when ``n_available > n_superwindows_per_cluster``.
+
     Returns
     -------
     tuple
         (fig, axes, plotted_superwindow_ids, state_colors_dict)
         - fig: matplotlib figure
         - axes: matplotlib axes array
-        - plotted_superwindow_ids: list of superwindow_ids that were plotted
+        - plotted_superwindow_ids: list with length ``len(groups)×len(cluster_ids)×n_superwindows_per_cluster``,
+          row-major (group → cluster → example slot). Real IDs where a track was drawn, ``None`` where that
+          grid cell had no example — pass this list to ``gallery_of_tracks_v5(..., superwindow_ids=...)`` unchanged.
         - state_colors_dict: dict mapping state -> color
     """
     import matplotlib.pyplot as plt
     import numpy as np
+
+    try:
+        import polars as pl
+    except ImportError:
+        pl = None
+    if pl is not None and isinstance(clustered_df, pl.DataFrame):
+        clustered_df = clustered_df.to_pandas()
     
     # Track superwindow_ids that are plotted
     plotted_superwindow_ids = []
@@ -15479,7 +16740,15 @@ def plot_representative_sequences(
     
     # Get groups and clusters
     groups = sorted(clustered_df[group_by].unique())
-    n_clusters = clustered_df[cluster_col].nunique()
+    raw_ids = clustered_df[cluster_col].dropna().unique()
+    raw_set = set(raw_ids)
+    if cluster_order is not None:
+        cluster_ids = [c for c in cluster_order if c in raw_set]
+        remainder = sorted(raw_set - set(cluster_ids), key=str)
+        cluster_ids = list(cluster_ids) + remainder
+    else:
+        cluster_ids = sorted(raw_set)
+    n_clusters = len(cluster_ids)
     
     # Create subplot grid: rows = groups, cols = clusters * n_examples
     n_cols = n_clusters * n_superwindows_per_cluster
@@ -15490,7 +16759,7 @@ def plot_representative_sequences(
         group_data = clustered_df[clustered_df[group_by] == group_val]
         
         col_idx = 0
-        for cluster_id in range(n_clusters):
+        for cluster_id in cluster_ids:
             cluster_data = group_data[group_data[cluster_col] == cluster_id]
             
             # Sample n examples from this cluster
@@ -15498,68 +16767,65 @@ def plot_representative_sequences(
             n_to_show = min(n_superwindows_per_cluster, n_available)
             
             if n_to_show > 0:
-                examples = cluster_data.sample(n=n_to_show, random_state=42)
+                examples = cluster_data.sample(
+                    n=n_to_show, random_state=random_seed
+                )
             else:
                 examples = cluster_data
-            
-            for ex_idx, (_, row) in enumerate(examples.iterrows()):
+
+            # One slot per column: append exactly n_superwindows_per_cluster IDs (None = empty)
+            # so gallery_of_tracks_v5(superwindow_ids=...) stays grid-aligned.
+            for ex_slot in range(n_superwindows_per_cluster):
                 ax = axes[group_idx, col_idx]
-                sequence = row[sequence_col]
-                
-                # Track this superwindow_id
-                sw_id = None
-                if superwindow_id_col in row.index:
-                    sw_id = row[superwindow_id_col]
+                if ex_slot < n_to_show:
+                    row = examples.iloc[ex_slot]
+                    sequence = row[sequence_col]
+
+                    sw_id = None
+                    if superwindow_id_col in row.index:
+                        sw_id = row[superwindow_id_col]
                     plotted_superwindow_ids.append(sw_id)
-                
-                # Convert to list if needed
-                if not isinstance(sequence, list):
-                    sequence = list(sequence)
-                
-                # Plot sequence
-                for t, state in enumerate(sequence):
-                    if state in states:
-                        y_pos = states.index(state)
-                        ax.scatter(t, y_pos, s=200, c=[state_colors[state]], 
-                                 edgecolors='k', linewidths=1.5, zorder=5)
-                        
-                        if t < len(sequence) - 1:
-                            next_state = sequence[t + 1]
-                            if next_state in states:
-                                y_next = states.index(next_state)
-                                ax.plot([t, t+1], [y_pos, y_next], 'k-', 
-                                       linewidth=1.5, alpha=0.5, zorder=3)
-                
-                # Formatting
-                ax.set_yticks(range(n_states))
-                ax.set_yticklabels(states if col_idx == 0 else [], fontsize=8)
-                ax.set_xlim(-0.5, len(sequence) - 0.5)
-                ax.set_ylim(-0.5, n_states - 0.5)
-                ax.grid(True, alpha=0.2, axis='x')
-                
-                # Add superwindow_id annotation
-                if show_superwindow_id and sw_id is not None:
-                    ax.text(0.5, -0.15, sw_id, transform=ax.transAxes,
-                           fontsize=id_fontsize, color=id_color,
-                           ha='center', va='top', style='italic')
-                
-                # Title only on first row
-                if group_idx == 0:
-                    if ex_idx == 0:
-                        ax.set_title(f'Cluster {cluster_id}\n(n={n_available})', 
-                                   fontsize=9, fontweight='bold')
-                    else:
-                        ax.set_title(f'Example {ex_idx+1}', fontsize=8)
-                
-                # Y-label on first column
-                if col_idx == 0:
-                    ax.set_ylabel(f'{group_val}', fontsize=10, fontweight='bold')
-                
-                col_idx += 1
-            
-            # Fill remaining columns for this cluster if not enough examples
-            for _ in range(n_to_show, n_superwindows_per_cluster):
-                axes[group_idx, col_idx].axis('off')
+
+                    if not isinstance(sequence, list):
+                        sequence = list(sequence)
+
+                    for t, state in enumerate(sequence):
+                        if state in states:
+                            y_pos = states.index(state)
+                            ax.scatter(t, y_pos, s=200, c=[state_colors[state]],
+                                       edgecolors='k', linewidths=1.5, zorder=5)
+
+                            if t < len(sequence) - 1:
+                                next_state = sequence[t + 1]
+                                if next_state in states:
+                                    y_next = states.index(next_state)
+                                    ax.plot([t, t + 1], [y_pos, y_next], 'k-',
+                                            linewidth=1.5, alpha=0.5, zorder=3)
+
+                    ax.set_yticks(range(n_states))
+                    ax.set_yticklabels(states if col_idx == 0 else [], fontsize=8)
+                    ax.set_xlim(-0.5, len(sequence) - 0.5)
+                    ax.set_ylim(-0.5, n_states - 0.5)
+                    ax.grid(True, alpha=0.2, axis='x')
+
+                    if show_superwindow_id and sw_id is not None:
+                        ax.text(0.5, -0.15, sw_id, transform=ax.transAxes,
+                                fontsize=id_fontsize, color=id_color,
+                                ha='center', va='top', style='italic')
+
+                    if group_idx == 0:
+                        if ex_slot == 0:
+                            ax.set_title(f'Cluster {cluster_id}\n(n={n_available})',
+                                         fontsize=9, fontweight='bold')
+                        else:
+                            ax.set_title(f'Example {ex_slot + 1}', fontsize=8)
+
+                    if col_idx == 0:
+                        ax.set_ylabel(f'{group_val}', fontsize=10, fontweight='bold')
+                else:
+                    ax.axis('off')
+                    plotted_superwindow_ids.append(None)
+
                 col_idx += 1
     
     plt.suptitle(f'Representative Sequences per Cluster\n({n_superwindows_per_cluster} examples each)', 
@@ -15594,11 +16860,18 @@ def plot_transition_probabilities_stacked(
     save_path=None,
     export_format='svg',
     dpi=300,
-    transparent_background=True
+    transparent_background=True,
+    show_bootstrap_ci=True,
+    error_kw=None,
 ):
     """
     Stacked bar chart showing transition probabilities for each molecule.
     
+    If each ``transition_result`` includes ``transition_probabilities_ci_low`` and
+    ``transition_probabilities_ci_high`` (e.g. from
+    ``bootstrap_transition_probabilities_by_group``), error bars are drawn on each
+    stacked segment (percentile CI from bootstrap).
+
     Parameters
     ----------
     transition_results_dict : dict
@@ -15619,13 +16892,21 @@ def plot_transition_probabilities_stacked(
         DPI
     transparent_background : bool, default=True
         Transparent background
-        
+    show_bootstrap_ci : bool, default=True
+        If True and CI matrices are present on each result, draw segment error bars.
+    error_kw : dict, optional
+        Extra kwargs passed to ``matplotlib.axes.Axes.bar`` for error bars (e.g. capsize).
+
     Returns
     -------
     fig, axes
     """
     import matplotlib.pyplot as plt
     import numpy as np
+
+    err_kw = {} if error_kw is None else dict(error_kw)
+    if "capsize" not in err_kw:
+        err_kw["capsize"] = 1.5
     
     # Get all unique states
     all_states = set()
@@ -15661,6 +16942,13 @@ def plot_transition_probabilities_stacked(
     for mol_idx, (mol, result) in enumerate(transition_results_dict.items()):
         ax = axes[mol_idx]
         prob_matrix = result['transition_probabilities']
+        ci_lo = result.get('transition_probabilities_ci_low')
+        ci_hi = result.get('transition_probabilities_ci_high')
+        use_ci = (
+            show_bootstrap_ci
+            and ci_lo is not None
+            and ci_hi is not None
+        )
         
         bar_width = 0.8
         x_pos = np.arange(n_states)
@@ -15670,9 +16958,37 @@ def plot_transition_probabilities_stacked(
             values = [prob_matrix.loc[from_state, to_state] 
                      if from_state in prob_matrix.index and to_state in prob_matrix.columns 
                      else 0 for from_state in states]
-            ax.bar(x_pos, values, bar_width, bottom=bottom, 
-                  label=to_state, color=state_colors[to_state], 
-                  edgecolor='white', linewidth=1)
+            yerr = None
+            if use_ci:
+                lo_row = [
+                    ci_lo.loc[from_state, to_state]
+                    if from_state in ci_lo.index and to_state in ci_lo.columns
+                    else 0.0
+                    for from_state in states
+                ]
+                hi_row = [
+                    ci_hi.loc[from_state, to_state]
+                    if from_state in ci_hi.index and to_state in ci_hi.columns
+                    else 0.0
+                    for from_state in states
+                ]
+                err_lo = [max(v - lo, 0.0) for v, lo in zip(values, lo_row)]
+                err_hi = [max(hi - v, 0.0) for v, hi in zip(values, hi_row)]
+                yerr = [err_lo, err_hi]
+            bar_kwargs = dict(
+                width=bar_width,
+                bottom=bottom,
+                label=to_state,
+                color=state_colors[to_state],
+                edgecolor='white',
+                linewidth=1,
+                ecolor="0.15",
+                alpha=0.92,
+            )
+            if yerr is not None:
+                bar_kwargs["yerr"] = yerr
+                bar_kwargs.update(err_kw)
+            ax.bar(x_pos, values, **bar_kwargs)
             bottom += values
         
         ax.set_xticks(x_pos)
@@ -15689,8 +17005,18 @@ def plot_transition_probabilities_stacked(
     fig.legend(handles, labels, title='To State', 
               bbox_to_anchor=(1.05, 0.5), loc='center left', fontsize=9)
     
-    fig.suptitle('State Transition Probabilities (Stacked)', 
-                fontsize=14, fontweight='bold', y=1.02)
+    supt = 'State Transition Probabilities (Stacked)'
+    if any(
+        r.get('transition_probabilities_ci_low') is not None
+        for r in transition_results_dict.values()
+    ):
+        supt += ' — bootstrap CI on segments'
+    fig.suptitle(
+        supt,
+        fontsize=14,
+        fontweight='bold',
+        y=1.02,
+    )
     
     if transparent_background:
         fig.patch.set_alpha(0)
@@ -18051,6 +19377,597 @@ def plot_single_track_augmentation_analysis(
     return fig
 
 
+def identify_state_specific_embedding_dimensions_and_plot(
+    analysis_embeddings,
+    analysis_metadata,
+    *,
+    population_order=None,
+    selection_method="distance_from_zero",
+    n_dims_per_state=3,
+    use_median=False,
+    ci_level=0.95,
+    ci_mode="small_multiples",  # "small_multiples" or "overlay"
+    use_standard_scaler=False,
+    use_minmax_scaler=False,
+    # --- Separation-metrics sub-toggles (only used if selection_method == "separation_metrics")
+    use_cohens_d=True,
+    use_auc_roc=True,
+    use_range_separation=True,
+    use_mann_whitney=True,
+    # --- Plot controls
+    plot_toggles=None,
+    output_dir=None,
+    color_palette=None,
+    y_lim=None,
+    swarm_sample=500,
+    scatter_sample=20000,
+    plot_pairwise=True,
+    plot_ranking_heatmap=True,
+    random_seed=42,
+    show_plots=True,
+    save_dpi=300,
+):
+    """
+    Identify embedding dimensions that best separate each `final_population` state,
+    and optionally generate plots with visualization toggles.
+
+    Returns
+    -------
+    bestdims : list[int]
+    best_dimensions_per_state : dict[str, list[int]]
+    state_stats : dict[str, dict]
+    dimension_rankings : dict[str, list[tuple[int, float]]]
+    """
+
+    import os
+    from itertools import combinations
+
+    from scipy import stats as scipy_stats
+
+    # ---------------------------------------------------------------------
+    # Defaults & inputs
+    # ---------------------------------------------------------------------
+    if hasattr(analysis_metadata, "to_pandas"):
+        meta = analysis_metadata.to_pandas()
+    else:
+        meta = analysis_metadata.copy()
+
+    emb = np.asarray(analysis_embeddings)
+    if emb.ndim != 2:
+        raise ValueError(f"analysis_embeddings must be (N, D). Got shape={emb.shape}")
+
+    nan_mask = ~np.isnan(emb).any(axis=1)
+    if nan_mask.sum() < len(emb):
+        n_nan = len(emb) - nan_mask.sum()
+        print(f"   Filtered out {n_nan:,} rows with NaN embeddings")
+        emb = emb[nan_mask]
+        meta = meta.loc[nan_mask].reset_index(drop=True)
+
+    if use_standard_scaler:
+        from sklearn.preprocessing import StandardScaler
+
+        emb = StandardScaler().fit_transform(emb)
+
+    if use_minmax_scaler:
+        from sklearn.preprocessing import MinMaxScaler
+
+        emb = MinMaxScaler().fit_transform(emb)
+
+    if "final_population" not in meta.columns:
+        raise KeyError("'final_population' not found in analysis_metadata")
+
+    N, D = emb.shape
+
+    if population_order is None:
+        population_order = [
+            "bound_stationary",
+            "subdiffusive_motion",
+            "superdiffusive_transport",
+            "fast_exploratory",
+            "mixed_exploratory_bound",
+        ]
+
+    raw_states = meta["final_population"].dropna().unique().tolist()
+    states = [s for s in population_order if s in raw_states]
+    states += sorted([s for s in raw_states if s not in states])
+    K = len(states)
+
+    if color_palette is None:
+        color_palette = [
+            "#0173B2",
+            "#DE8F05",
+            "#029E73",
+            "#CC78BC",
+            "#CA9161",
+            "#FBAFE4",
+            "#949494",
+            "#ECE133",
+            "#56B4E9",
+            "#D55E00",
+        ]
+
+    plot_toggles = plot_toggles or {}
+    flags = {
+        "ci_bands": plot_toggles.get("ci_bands", True),
+        "distributions": plot_toggles.get("distributions", True),
+        "states_by_dim": plot_toggles.get("states_by_dim", True),
+        "swarm_per_state": plot_toggles.get("swarm_per_state", True),
+        "pairwise_scatter": plot_toggles.get("pairwise_scatter", plot_pairwise),
+        "ranking_heatmap": plot_toggles.get("ranking_heatmap", plot_ranking_heatmap),
+    }
+
+    rng = np.random.default_rng(random_seed)
+    dims_arr = np.arange(D)
+
+    # Consistent per-state colors
+    state2color = {s: color_palette[i % len(color_palette)] for i, s in enumerate(states)}
+
+    # ---------------------------------------------------------------------
+    # Compute per-state statistics (mean/median + CI per dim)
+    # ---------------------------------------------------------------------
+    use_ci = bool(ci_level is not None and ci_level > 0)
+    print(
+        f"   Data: {N:,} embeddings x {D} dims, {K} states; "
+        f"method={selection_method}, center={'median' if use_median else 'mean'}"
+    )
+
+    state_stats = {}
+    dim_values = {}
+
+    for state in states:
+        mask = (meta["final_population"] == state).values
+        se = emb[mask]
+        if len(se) == 0:
+            continue
+
+        central = np.median(se, axis=0) if use_median else np.mean(se, axis=0)
+
+        if use_ci:
+            n_s = se.shape[0]
+            sem = scipy_stats.sem(se, axis=0)
+            t_c = scipy_stats.t.ppf((1 + ci_level) / 2, n_s - 1)
+            ci_lo = central - t_c * sem
+            ci_hi = central + t_c * sem
+        else:
+            sd = np.std(se, axis=0)
+            ci_lo = central - sd
+            ci_hi = central + sd
+
+        state_stats[state] = dict(central=central, ci_lo=ci_lo, ci_hi=ci_hi, n=int(mask.sum()))
+        dim_values[state] = {d: se[:, d] for d in range(D)}
+
+    # ---------------------------------------------------------------------
+    # Separation score helpers
+    # ---------------------------------------------------------------------
+    def _cohens_d(g1, g2):
+        n1, n2 = len(g1), len(g2)
+        v1, v2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
+        ps = np.sqrt(((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2))
+        return abs(np.mean(g1) - np.mean(g2)) / ps if ps > 0 else 0.0
+
+    def _auc(g1, g2):
+        from sklearn.metrics import roc_auc_score
+
+        y = np.concatenate([np.ones(len(g1)), np.zeros(len(g2))])
+        s = np.concatenate([g1, g2])
+        if len(np.unique(y)) < 2:
+            return 0.5
+        try:
+            return abs(roc_auc_score(y, s) - 0.5) * 2
+        except Exception:
+            return 0.5
+
+    def _range_sep(g1, g2):
+        mn1, mx1 = g1.min(), g1.max()
+        mn2, mx2 = g2.min(), g2.max()
+        overlap = max(0.0, min(mx1, mx2) - max(mn1, mn2))
+        tr = max(mx1, mx2) - min(mn1, mn2)
+        if tr == 0:
+            return 0.0
+        return (1 - overlap / tr + abs(np.mean(g1) - np.mean(g2)) / tr) / 2
+
+    # ---------------------------------------------------------------------
+    # Select best dimensions per state
+    # ---------------------------------------------------------------------
+    dimension_rankings = {}
+    best_dimensions_per_state = {}
+
+    for state in states:
+        if state not in state_stats:
+            continue
+
+        mask_s = (meta["final_population"] == state).values
+        se = emb[mask_s]
+        oe = emb[~mask_s]
+
+        if selection_method == "distance_from_zero":
+            scores = np.abs(state_stats[state]["central"])
+            ranked = sorted(range(D), key=lambda d: scores[d], reverse=True)
+            dimension_rankings[state] = [(d, float(scores[d])) for d in ranked]
+
+        elif selection_method == "separation_metrics":
+            dim_scores = []
+            for d in range(D):
+                sv, ov = se[:, d], oe[:, d]
+                parts = []
+                if use_cohens_d:
+                    parts.append(_cohens_d(sv, ov))
+                if use_auc_roc:
+                    parts.append(_auc(sv, ov))
+                if use_range_separation:
+                    parts.append(_range_sep(sv, ov))
+                if use_mann_whitney:
+                    try:
+                        _, p = scipy_stats.mannwhitneyu(sv, ov, alternative="two-sided")
+                        parts.append(1 - min(p, 0.999))
+                    except Exception:
+                        parts.append(0.0)
+                dim_scores.append((d, float(np.mean(parts) if parts else 0.0)))
+            dim_scores.sort(key=lambda x: x[1], reverse=True)
+            dimension_rankings[state] = dim_scores
+
+        elif selection_method == "pca_variance":
+            from sklearn.decomposition import PCA as _PCA
+
+            n_comp = min(n_dims_per_state, D)
+            pca_g = _PCA(n_components=n_comp, random_state=random_seed).fit(se)
+            loadings = np.abs(pca_g.components_[:n_comp]).sum(axis=0)
+            loadings *= pca_g.explained_variance_ratio_[:n_comp].sum()
+            ranked = sorted(range(D), key=lambda d: loadings[d], reverse=True)
+            dimension_rankings[state] = [(d, float(loadings[d])) for d in ranked]
+
+        else:
+            raise ValueError(f"Unknown selection_method: {selection_method}")
+
+        best = [d for d, _ in dimension_rankings[state][:n_dims_per_state]]
+        best_dimensions_per_state[state] = best
+
+    bestdims = sorted({d for ds in best_dimensions_per_state.values() for d in ds})
+    print(f"   bestdims = {bestdims} ({len(bestdims)} unique)")
+
+    # ---------------------------------------------------------------------
+    # Plot y-limits (shared)
+    # ---------------------------------------------------------------------
+    if y_lim is not None:
+        _ymin, _ymax = y_lim
+    else:
+        _all_lo = np.concatenate([s["ci_lo"] for s in state_stats.values()])
+        _all_hi = np.concatenate([s["ci_hi"] for s in state_stats.values()])
+        _ymin = float(_all_lo.min())
+        _ymax = float(_all_hi.max())
+        _yr = _ymax - _ymin
+        _ymin -= _yr * 0.05
+        _ymax += _yr * 0.05
+
+    # ---------------------------------------------------------------------
+    # Plot 1: CI bands
+    # ---------------------------------------------------------------------
+    if flags["ci_bands"]:
+        if ci_mode == "small_multiples":
+            n_cols = min(3, K) if K > 0 else 1
+            n_rows = (K + n_cols - 1) // n_cols if K > 0 else 1
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 5, n_rows * 4))
+            axes = [axes] if K == 1 else axes.flatten()
+
+            for idx, state in enumerate(states):
+                ax = axes[idx]
+                if state not in state_stats:
+                    ax.axis("off")
+                    continue
+                s = state_stats[state]
+                c = state2color[state]
+
+                ax.fill_between(dims_arr, s["ci_lo"], s["ci_hi"], alpha=0.3, color=c)
+                ax.plot(dims_arr, s["central"], color=c, lw=2, marker="o", ms=3)
+
+                if state in best_dimensions_per_state:
+                    bd = best_dimensions_per_state[state]
+                    ax.scatter(bd, s["central"][bd], s=150, facecolors="none", edgecolors="red", lw=2, zorder=5)
+
+                ax.set_xlim(-0.5, D - 0.5)
+                ax.set_ylim(_ymin, _ymax)
+                ax.set_title(f"{state}\n(n={s['n']:,})", fontsize=12, fontweight="bold")
+                ax.set_xlabel("Embedding Dimension", fontsize=10)
+                ax.set_ylabel(f"{'Median' if use_median else 'Mean'} Embedding Value", fontsize=10)
+                ax.grid(True, alpha=0.3)
+
+            for idx in range(K, len(axes)):
+                axes[idx].set_visible(False)
+
+            plt.suptitle(
+                f"{'Median' if use_median else 'Mean'} per Dimension + CI [{selection_method}]\n"
+                f"(Small Multiples by final_population)",
+                fontsize=14,
+                fontweight="bold",
+                y=1.02,
+            )
+            plt.tight_layout()
+
+            if output_dir:
+                plt.savefig(
+                    os.path.join(output_dir, f"dim_ci_bands_{ci_mode}.png"),
+                    dpi=save_dpi,
+                    bbox_inches="tight",
+                )
+            if show_plots:
+                plt.show()
+            else:
+                plt.close(fig)
+
+        else:
+            fig, ax = plt.subplots(figsize=(14, 6))
+            for state in states:
+                if state not in state_stats:
+                    continue
+                s = state_stats[state]
+                c = state2color[state]
+                ax.fill_between(dims_arr, s["ci_lo"], s["ci_hi"], alpha=0.2, color=c)
+                ax.plot(dims_arr, s["central"], color=c, lw=2, marker="o", ms=3, label=state)
+                if state in best_dimensions_per_state:
+                    bd = best_dimensions_per_state[state]
+                    ax.scatter(bd, s["central"][bd], s=150, facecolors="none", edgecolors="red", lw=2, zorder=5)
+
+            ax.set_xlim(-0.5, D - 0.5)
+            ax.set_ylim(_ymin, _ymax)
+            ax.set_xlabel("Embedding Dimension")
+            ax.set_ylabel(f"{'Median' if use_median else 'Mean'} Embedding Value")
+            ax.set_title(f"All States Overlaid [{selection_method}]", fontweight="bold")
+            ax.grid(True, alpha=0.3)
+            ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+            plt.tight_layout()
+
+            if output_dir:
+                plt.savefig(
+                    os.path.join(output_dir, f"dim_ci_bands_{ci_mode}.png"),
+                    dpi=save_dpi,
+                    bbox_inches="tight",
+                )
+            if show_plots:
+                plt.show()
+            else:
+                plt.close(fig)
+
+    # ---------------------------------------------------------------------
+    # Plot 2: Distribution histograms (best dim vs others)
+    # ---------------------------------------------------------------------
+    if flags["distributions"]:
+        fig, axes = plt.subplots(K, 1, figsize=(14, 4 * max(K, 1)))
+        axes = [axes] if K == 1 else axes
+
+        for idx, state in enumerate(states):
+            ax = axes[idx]
+            bd = best_dimensions_per_state.get(state, [])
+            if not bd:
+                ax.axis("off")
+                continue
+            best_d = bd[0]
+
+            mask_s = (meta["final_population"] == state).values
+            sv = emb[mask_s, best_d]
+            ov = emb[~mask_s, best_d]
+
+            ax.hist(ov, bins=50, alpha=0.5, color="gray", density=True, label="Other states")
+            ax.hist(sv, bins=50, alpha=0.7, color=state2color[state], density=True, label=state)
+
+            for pct, ls in [(5, "--"), (50, "-"), (95, "--")]:
+                ax.axvline(np.percentile(sv, pct), color="red", ls=ls, lw=2)
+
+            top_score = dimension_rankings[state][0][1] if state in dimension_rankings else 0.0
+            ax.set_title(f"{state} — Dim {best_d} (score: {top_score:.4f})", fontweight="bold")
+            ax.set_xlabel(f"Dim {best_d}")
+            ax.set_ylabel("Density")
+            ax.legend(fontsize=9)
+            ax.grid(True, alpha=0.3)
+
+        plt.suptitle("Best Dimension Distributions (state vs others)", fontsize=14, fontweight="bold", y=0.995)
+        plt.tight_layout()
+        if output_dir:
+            plt.savefig(os.path.join(output_dir, "dim_distributions.png"), dpi=save_dpi, bbox_inches="tight")
+        if show_plots:
+            plt.show()
+        else:
+            plt.close(fig)
+
+    # ---------------------------------------------------------------------
+    # Plot 3: one subplot per selected dimension
+    # ---------------------------------------------------------------------
+    if flags["states_by_dim"]:
+        fig, axes = plt.subplots(len(bestdims), 1, figsize=(12, 5 * max(len(bestdims), 1)))
+        axes = [axes] if len(bestdims) == 1 else axes
+
+        for di, (dim_idx, ax) in enumerate(zip(bestdims, axes)):
+            pd_list, lb_list = [], []
+            for state in states:
+                vals = dim_values[state][dim_idx]
+                if len(vals) > swarm_sample:
+                    vals = rng.choice(vals, size=swarm_sample, replace=False)
+                pd_list.append(vals)
+                lb_list.append(state)
+
+            bp = ax.boxplot(pd_list, labels=lb_list, patch_artist=True, widths=0.6, showmeans=True, meanline=True)
+            for i, patch in enumerate(bp["boxes"]):
+                patch.set_facecolor(state2color[states[i]])
+                patch.set_alpha(0.7)
+
+            for i, data in enumerate(pd_list):
+                jitter = rng.normal(0, 0.05, size=len(data))
+                ax.scatter(i + 1 + jitter, data, alpha=0.3, s=10, color=state2color[lb_list[i]])
+
+            owner = next((st for st, ds in best_dimensions_per_state.items() if dim_idx in ds), None)
+            title = f"Dim {dim_idx}" + (f"  (best for: {owner})" if owner else "")
+            ax.set_title(title, fontweight="bold")
+            ax.set_ylabel(f"Dim {dim_idx}")
+            ax.grid(True, alpha=0.3, axis="y")
+            plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+
+        plt.suptitle("Selected Dimensions: All States", fontsize=14, fontweight="bold", y=0.995)
+        plt.tight_layout()
+        if output_dir:
+            plt.savefig(os.path.join(output_dir, "dim_states_by_dim.png"), dpi=save_dpi, bbox_inches="tight")
+        if show_plots:
+            plt.show()
+        else:
+            plt.close(fig)
+
+    # ---------------------------------------------------------------------
+    # Plot 4: one subplot per state (best dims + others)
+    # ---------------------------------------------------------------------
+    if flags["swarm_per_state"]:
+        fig, axes = plt.subplots(K, 1, figsize=(14, 5 * max(K, 1)))
+        axes = [axes] if K == 1 else axes
+
+        for idx, state in enumerate(states):
+            ax = axes[idx]
+            bd = best_dimensions_per_state.get(state, [])
+            if not bd:
+                ax.axis("off")
+                continue
+
+            mask_s = (meta["final_population"] == state).values
+            se = emb[mask_s]
+            c = state2color[state]
+
+            pd_list, lb_list = [], []
+            for d in bd:
+                v = se[:, d]
+                if len(v) > swarm_sample:
+                    v = rng.choice(v, size=swarm_sample, replace=False)
+                pd_list.append(v)
+                lb_list.append(f"Dim {d}")
+
+            ov = emb[~mask_s, bd[0]]
+            if len(ov) > swarm_sample:
+                ov = rng.choice(ov, size=swarm_sample, replace=False)
+            pd_list.append(ov)
+            lb_list.append("Others")
+
+            bp = ax.boxplot(pd_list, labels=lb_list, patch_artist=True, widths=0.6, showmeans=True, meanline=True)
+            for i, patch in enumerate(bp["boxes"]):
+                patch.set_facecolor(c if i < len(bd) else "lightgray")
+                patch.set_alpha(0.7)
+
+            for i, data in enumerate(pd_list):
+                sc = c if i < len(bd) else "gray"
+                jitter = rng.normal(0, 0.05, size=len(data))
+                ax.scatter(i + 1 + jitter, data, alpha=0.3, s=10, color=sc)
+
+            score = dimension_rankings[state][0][1] if state in dimension_rankings else 0.0
+            ax.set_title(f"{state} — dims {bd} (score: {score:.4f})", fontweight="bold")
+            ax.set_ylabel("Value")
+            ax.grid(True, alpha=0.3, axis="y")
+            plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+
+        plt.suptitle("Per-State Best Dimensions + Others", fontsize=14, fontweight="bold", y=0.995)
+        plt.tight_layout()
+        if output_dir:
+            plt.savefig(os.path.join(output_dir, "dim_swarm_per_state.png"), dpi=save_dpi, bbox_inches="tight")
+        if show_plots:
+            plt.show()
+        else:
+            plt.close(fig)
+
+    # ---------------------------------------------------------------------
+    # Plot 5: pairwise scatter of selected dims (colored by population)
+    # ---------------------------------------------------------------------
+    if flags["pairwise_scatter"] and len(bestdims) >= 2:
+        pairs = list(combinations(bestdims, 2))
+        n_p = len(pairs)
+        nc = min(3, n_p)
+        nr = (n_p + nc - 1) // nc
+        fig, axes = plt.subplots(nr, nc, figsize=(nc * 5, nr * 4))
+        axes_flat = [axes] if n_p == 1 else axes.flatten()
+
+        pop_labels = meta["final_population"].values
+
+        # Optional sampling
+        if N > scatter_sample:
+            idxs = rng.choice(N, size=scatter_sample, replace=False)
+            emb_s = emb[idxs]
+            labels_s = pop_labels[idxs]
+        else:
+            emb_s = emb
+            labels_s = pop_labels
+
+        for pi, (dx, dy) in enumerate(pairs):
+            ax = axes_flat[pi]
+            xv, yv = emb_s[:, dx], emb_s[:, dy]
+            lv = labels_s
+
+            for s in states:
+                m = lv == s
+                if np.sum(m) > 0:
+                    ax.scatter(xv[m], yv[m], c=[state2color[s]], s=20, alpha=0.5, label=s, edgecolors="none")
+
+            ox = next((st for st, ds in best_dimensions_per_state.items() if dx in ds), "")
+            oy = next((st for st, ds in best_dimensions_per_state.items() if dy in ds), "")
+            ax.set_xlabel(f"Dim {dx}")
+            ax.set_ylabel(f"Dim {dy}")
+
+            title = f"Dim {dx} vs {dy}"
+            if ox or oy:
+                parts = []
+                if ox:
+                    parts.append(f"{dx}:{ox}")
+                if oy:
+                    parts.append(f"{dy}:{oy}")
+                title += f"\n({', '.join(parts)})"
+            ax.set_title(title, fontsize=10, fontweight="bold")
+            ax.grid(True, alpha=0.3)
+            ax.legend(fontsize=7, loc="upper left")
+
+        for i in range(n_p, len(axes_flat)):
+            axes_flat[i].set_visible(False)
+
+        plt.suptitle("Pairwise Scatter: Selected Dims", fontsize=14, fontweight="bold", y=0.995)
+        plt.tight_layout()
+        if output_dir:
+            plt.savefig(os.path.join(output_dir, "dim_pairwise_scatter.png"), dpi=save_dpi, bbox_inches="tight")
+        if show_plots:
+            plt.show()
+        else:
+            plt.close(fig)
+
+    elif flags["pairwise_scatter"]:
+        print(f"   Skipping pairwise scatter (need >= 2 dims, got {len(bestdims)})")
+
+    # ---------------------------------------------------------------------
+    # Plot 6: ranking heatmap (states x all dims)
+    # ---------------------------------------------------------------------
+    if flags["ranking_heatmap"]:
+        mat = np.zeros((K, D), dtype=float)
+        for i, state in enumerate(states):
+            if state in dimension_rankings:
+                for d, sc in dimension_rankings[state]:
+                    mat[i, d] = sc
+
+        fig, ax = plt.subplots(figsize=(max(12, D // 5), max(4, K * 0.8)))
+        im = ax.imshow(mat, cmap="viridis", aspect="auto")
+        ax.set_xticks(np.arange(D))
+        ax.set_xticklabels(np.arange(D), fontsize=6)
+        ax.set_yticks(np.arange(K))
+        ax.set_yticklabels(states)
+
+        for i, state in enumerate(states):
+            if state in best_dimensions_per_state:
+                for d in best_dimensions_per_state[state]:
+                    ax.add_patch(plt.Rectangle((d - 0.5, i - 0.5), 1, 1, fill=False, edgecolor="red", lw=2))
+
+        ax.set_xlabel("Dimension")
+        ax.set_ylabel("State")
+        ax.set_title(f"Separation Scores [{selection_method}]", fontweight="bold")
+        plt.colorbar(im, ax=ax, label="Score")
+        plt.tight_layout()
+
+        if output_dir:
+            plt.savefig(os.path.join(output_dir, "dim_ranking_heatmap.png"), dpi=save_dpi, bbox_inches="tight")
+        if show_plots:
+            plt.show()
+        else:
+            plt.close(fig)
+
+    return bestdims, best_dimensions_per_state, state_stats, dimension_rankings
+
+
 def plot_multiple_tracks_augmentation_analysis(
     window_uids,
     instant_df,
@@ -18965,3 +20882,377 @@ def plot_tracks_augmentation_panel(
     
     plt.show()
     return fig
+
+
+# =============================================================================
+# Interactive UMAP + lasso cluster labeling
+# =============================================================================
+
+
+def align_embeddings_to_metadata(X, meta, plot_idx=None):
+    """
+    Align embedding rows to a metadata table when their lengths differ.
+
+    Typical notebook pattern: ``EMBEDDING_FOR_CLUSTERING`` holds **all** windows
+    (N_full × D) while the UMAP/PHATE cell sets ``_plot_idx`` and builds
+    ``X_vis_plot = X_vis[_plot_idx]`` but **replaces** ``analysis_metadata`` with
+    ``analysis_metadata.iloc[_plot_idx]`` (N_sub rows). Another common mistake is
+    subsampled metadata without subsetting ``X`` the same way.
+
+    Parameters
+    ----------
+    X : ndarray, shape (N_full, D) or (N_sub, D)
+        Embedding matrix.
+    meta : pandas.DataFrame
+        Metadata with one row per **intended** sample.
+    plot_idx : ndarray of int, optional
+        Row indices into the **full** embedding array (e.g. ``_plot_idx`` from the
+        UMAP cell). If omitted, alignment is only attempted when lengths already
+        match.
+
+    Returns
+    -------
+    X_aligned : ndarray
+    meta_aligned : pandas.DataFrame
+    note : str or None
+        Short message if a subset was applied.
+
+    Raises
+    ------
+    ValueError
+        If rows cannot be aligned with the information given.
+    """
+    X = np.asarray(X)
+    if not isinstance(meta, pd.DataFrame):
+        meta = meta.to_pandas()
+    n_x, n_m = X.shape[0], len(meta)
+
+    if n_x == n_m:
+        return X, meta.copy(), None
+
+    idx = None if plot_idx is None else np.asarray(plot_idx, dtype=np.int64)
+
+    # Full embeddings + metadata = one row per index vector
+    if idx is not None and idx.ndim == 1:
+        if len(idx) == n_m and n_x > n_m:
+            if idx.max() >= n_x or idx.min() < 0:
+                raise ValueError("plot_idx out of range for X.")
+            return X[idx], meta.copy(), (
+                f"subset X with plot_idx: {n_m:,} rows (embeddings had {n_x:,})"
+            )
+        if len(idx) == n_x and n_m > n_x:
+            return (
+                X,
+                meta.iloc[idx].reset_index(drop=True).copy(),
+                f"subset metadata with plot_idx: {n_x:,} rows (metadata had {n_m:,})",
+            )
+
+    raise ValueError(
+        f"Cannot align: embeddings have {n_x:,} rows, metadata has {n_m:,} rows. "
+        "Pass plot_idx (e.g. _plot_idx from the UMAP/PHATE cell) so the same rows "
+        "are used for both, or use full analysis_metadata and full EMBEDDING_FOR_CLUSTERING."
+    )
+
+
+def interactive_umap_lasso_clustering(
+    X=None,
+    *,
+    embedding_2d=None,
+    labels=None,
+    n_neighbors=15,
+    min_dist=0.1,
+    random_state=42,
+    metric="euclidean",
+    umap_kwargs=None,
+    assign_unassigned_only=True,
+    selector_mode="polygon",
+    figsize=(10, 8),
+    point_size=2,
+    alpha=0.35,
+    cmap="tab10",
+    title=None,
+    block_until_done=True,
+):
+    """
+    Show a 2D embedding (UMAP of ``X`` or precomputed ``embedding_2d``) and assign
+    integer cluster IDs from **regions you draw** on the plot.
+
+    **Recommended (Jupyter / ipympl):** ``selector_mode="polygon"`` — click vertices,
+    **close the polygon** by clicking the first vertex again, then press **``a``**
+    (*apply*) to assign the next cluster id (0, 1, 2, …) to points inside. Press
+    **``Esc``** to clear the polygon and draw another region. **``r``** resets all
+    labels to ``-1``.
+
+    **``selector_mode="lasso"``** — freehand drag (works more reliably with
+    ``%matplotlib tk`` or Qt; ipympl often does not deliver drag events).
+
+    Points never selected stay ``-1``. Close the figure when finished.
+
+    Parameters
+    ----------
+    X : ndarray, shape (n_samples, n_features), optional
+        High-dimensional data for UMAP. Not required if ``embedding_2d`` is provided.
+    embedding_2d : ndarray, shape (n_samples, 2), optional
+        Precomputed 2D coordinates (e.g. existing UMAP). If given, UMAP is not run and
+        ``X`` may be omitted.
+    labels : ndarray of int, optional
+        Initial labels (same length as rows); typically all ``-1``. Updated on a copy.
+    n_neighbors, min_dist, random_state, metric
+        Passed to UMAP when ``embedding_2d`` is None. ``random_state=None`` allows
+        parallel UMAP (``n_jobs``); a fixed seed forces single-threaded UMAP.
+    umap_kwargs : dict, optional
+        Extra keyword arguments for ``umap.UMAP``.
+    assign_unassigned_only : bool
+        If True (default), a region only assigns points that are still ``-1``.
+    selector_mode : {"polygon", "lasso"}
+        How to draw regions. ``polygon`` is default and notebook-friendly.
+    figsize, point_size, alpha, cmap, title
+        Plot appearance. ``title`` default explains keys.
+    block_until_done : bool, default True
+        If True, after showing the figure, wait for you to press Enter in the
+        terminal / notebook (so the function does not return before you finish
+        drawing). Set False only if you will keep the cell running and interact
+        with the figure before running another cell (rare). **Do not** use a
+        ``plt.pause`` loop with ipympl — it causes blank extra windows.
+
+    Returns
+    -------
+    dict
+        ``labels``, ``xy_umap``, ``umap_reducer`` (or ``None`` if 2D was given).
+    """
+    from matplotlib.widgets import LassoSelector, PolygonSelector
+
+    import matplotlib
+
+    if title is None:
+        title = (
+            "UMAP — polygon: click vertices, close on first point, then press 'a' to apply "
+            "(or lasso: drag, release)"
+        )
+
+    if embedding_2d is not None:
+        xy = np.asarray(embedding_2d, dtype=np.float64)
+        if xy.ndim != 2 or xy.shape[1] != 2:
+            hint = ""
+            if xy.ndim == 2 and xy.shape[1] > 2:
+                hint = (
+                    f" Received shape {xy.shape} — that looks like high-dimensional embeddings, "
+                    "not a 2D layout. Use an N×2 UMAP (or PHATE-2D) array, e.g. "
+                    "`xy_umap[SUBSAMPLE_ROW_INDEX]` if you subsampled. "
+                    "Or omit `embedding_2d` and pass only `X` so UMAP is fit inside this function."
+                )
+            elif xy.ndim == 2 and xy.shape[1] == 1:
+                hint = " If this is 1D, stack a second column or use a true 2D embedding."
+            raise ValueError(
+                "embedding_2d must have shape (n_samples, 2) — two columns (x, y in embedding space)."
+                + (f" {hint}" if hint else "")
+            )
+        n = xy.shape[0]
+        if X is not None:
+            X = np.asarray(X, dtype=np.float64)
+            if X.ndim != 2:
+                raise ValueError("X must be 2D (n_samples, n_features).")
+            if X.shape[0] != n:
+                raise ValueError(
+                    f"Row count mismatch: X has {X.shape[0]:,} rows but embedding_2d has {n:,}; "
+                    "they must be the same points in the same order."
+                )
+    else:
+        if X is None:
+            raise ValueError("Provide X (embeddings) or embedding_2d (2D coordinates).")
+        X = np.asarray(X, dtype=np.float64)
+        if X.ndim != 2:
+            raise ValueError("X must be 2D (n_samples, n_features).")
+        n = X.shape[0]
+
+    if embedding_2d is not None:
+        umap_reducer = None
+    else:
+        try:
+            import umap.umap_ as umap_mod
+        except ImportError as e:
+            raise ImportError(
+                "umap-learn is required when embedding_2d is not provided. "
+                "Install with: pip install umap-learn"
+            ) from e
+        kw = {
+            "n_components": 2,
+            "n_neighbors": int(n_neighbors),
+            "min_dist": float(min_dist),
+            "metric": metric,
+        }
+        if random_state is not None:
+            kw["random_state"] = random_state
+        else:
+            kw["n_jobs"] = -1
+        if umap_kwargs:
+            kw.update(umap_kwargs)
+        print(f"   Fitting UMAP ({X.shape[0]:,} × {X.shape[1]} → 2D)…", flush=True)
+        umap_reducer = umap_mod.UMAP(**kw)
+        xy = np.asarray(umap_reducer.fit_transform(X), dtype=np.float64)
+        print("   UMAP done.", flush=True)
+
+    if labels is None:
+        out_labels = np.full(n, -1, dtype=np.int32)
+    else:
+        out_labels = np.asarray(labels, dtype=np.int32).copy()
+        if out_labels.shape[0] != n:
+            raise ValueError("labels length must match number of rows in X.")
+
+    selector_mode = str(selector_mode).strip().lower()
+    if selector_mode not in ("polygon", "lasso"):
+        raise ValueError("selector_mode must be 'polygon' or 'lasso'")
+
+    fig, ax = plt.subplots(figsize=figsize)
+    cmap_obj = plt.get_cmap(cmap)
+    norm = mpl.colors.Normalize(vmin=-1, vmax=9)
+
+    def _colors_for_labels(lab):
+        c = np.empty((len(lab), 4), dtype=float)
+        for i, v in enumerate(lab):
+            if v < 0:
+                c[i] = mpl.colors.to_rgba("#bbbbbb")
+            else:
+                c[i] = cmap_obj(norm(int(v) % 10))
+        return c
+
+    sc = ax.scatter(
+        xy[:, 0],
+        xy[:, 1],
+        c=_colors_for_labels(out_labels),
+        s=point_size,
+        alpha=alpha,
+        linewidths=0,
+        edgecolors="none",
+        rasterized=True,
+        zorder=1,
+    )
+    try:
+        sc.set_picker(False)
+    except Exception:
+        pass
+    ax.set_title(title, fontsize=10)
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.set_aspect("equal", adjustable="datalim")
+
+    next_cluster = [0]
+    selector_state = {"poly": None}
+
+    def _redraw():
+        sc.set_facecolors(_colors_for_labels(out_labels))
+        fig.canvas.draw_idle()
+
+    def _assign_from_closed_path(verts_a):
+        if len(verts_a) < 3:
+            return
+        closed = np.vstack([verts_a, verts_a[0]])
+        path = mpltPath.Path(closed)
+        inside = path.contains_points(xy)
+        cid = next_cluster[0]
+        if assign_unassigned_only:
+            inside = inside & (out_labels < 0)
+        out_labels[inside] = cid
+        next_cluster[0] = cid + 1
+        _redraw()
+        print(f"   Region → cluster {cid} ({int(inside.sum())} points)")
+
+    def onselect_lasso(verts):
+        if len(verts) < 3:
+            return
+        verts_a = np.asarray(verts, dtype=np.float64)
+        _assign_from_closed_path(verts_a)
+
+    def apply_polygon_key(event):
+        if event.key not in ("a", "A"):
+            return
+        poly = selector_state["poly"]
+        if poly is None or not getattr(poly, "_selection_completed", False):
+            print("   Close the polygon first (click the first vertex again), then press 'a'.")
+            return
+        verts_list = poly.verts
+        verts_a = np.asarray(verts_list, dtype=np.float64)
+        _assign_from_closed_path(verts_a)
+
+    def on_key_global(event):
+        if event.key == "r":
+            out_labels[:] = -1
+            next_cluster[0] = 0
+            _redraw()
+            print("   Reset: all labels = -1, next cluster = 0")
+
+    fig.canvas.mpl_connect("key_press_event", on_key_global)
+    if selector_mode == "polygon":
+        poly = PolygonSelector(
+            ax,
+            onselect=lambda *args, **kwargs: None,
+            useblit=False,
+            props=dict(color="red", linestyle="-", linewidth=2, alpha=0.85),
+            handle_props=dict(marker="o", markerfacecolor="red", markersize=5),
+        )
+        selector_state["poly"] = poly
+        fig._sptnano_cluster_selector = poly
+        fig.canvas.mpl_connect("key_press_event", apply_polygon_key)
+        print(
+            "Polygon mode (works in Jupyter with %matplotlib widget):\n"
+            "  • Click vertices; close the polygon by clicking the first vertex again.\n"
+            "  • Press 'a' to assign the next cluster id (0, 1, 2, …) to points inside.\n"
+            "  • Press Esc to discard the current polygon and start a new one.\n"
+            "  • Press 'r' to clear all cluster labels (-1) and reset numbering.\n"
+            "  • Close this window when finished.\n"
+        )
+    else:
+        lasso = LassoSelector(
+            ax,
+            onselect=onselect_lasso,
+            useblit=False,
+            props=dict(color="red", linestyle="-", linewidth=2, alpha=0.85),
+        )
+        fig._sptnano_cluster_selector = lasso
+        print(
+            "Lasso mode:\n"
+            "  • Hold left button and drag a freehand loop; release to assign the next cluster id.\n"
+            "  • If nothing draws, try: matplotlib tk  OR  run from a plain Python script.\n"
+            "  • Key 'r': reset labels. Close the window when finished.\n"
+        )
+
+    _bk = matplotlib.get_backend().lower()
+    if "inline" in _bk and "notebook" not in _bk:
+        print(
+            "⚠️  Current backend is non-interactive (inline). Polygon clicks will not work.\n"
+            "   In Jupyter, run **before** importing pyplot:  %matplotlib widget\n"
+            "   (pip install ipympl), then re-run this cell."
+        )
+
+    # Single show — do NOT use plt.pause() in a loop here: it breaks ipympl and can
+    # spawn many blank windows / starve the GUI thread (see batch_roi_selector-style
+    # notebooks: one figure + widgets, not a spin loop).
+    plt.show()
+
+    if block_until_done:
+        # With `%matplotlib inline`, figures normally render at *cell end*; `input()`
+        # blocks the cell, so the plot would not appear until after Enter. Force an
+        # immediate render in the notebook output before waiting.
+        try:
+            from IPython import get_ipython
+            from IPython.display import display
+
+            if get_ipython() is not None and "inline" in _bk:
+                display(fig)
+        except Exception:
+            pass
+        try:
+            input(
+                "\n👉 After you finish drawing polygons and pressing 'a' (see instructions above), "
+                "click in this input box and press Enter ONCE to finish and return `out`.\n"
+                "   (If the plot was hidden until now, you were on inline backend — use "
+                "`%matplotlib widget` in a fresh kernel for a live interactive plot.)\n"
+            )
+        except EOFError:
+            pass
+
+    return {
+        "labels": out_labels,
+        "xy_umap": xy,
+        "umap_reducer": umap_reducer,
+    }
