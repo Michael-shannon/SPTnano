@@ -26,6 +26,11 @@ except (ImportError, ModuleNotFoundError):
     pass  # Requires Qt/napari - not needed for training
 
 try:
+    from .segmentation_cellposeSAM import *
+except (ImportError, ModuleNotFoundError):
+    pass  # Optional Cellpose-SAM helpers; Cellpose lives in a separate env
+
+try:
     from .superwindow_statistics import (
         beta_binomial_proportion_ci,
         bootstrap_superwindow_metrics,
@@ -43,6 +48,11 @@ try:
         summarize_superwindow_sequences,
         summarize_superwindow_sequences_by_group,
     )
+except (ImportError, ModuleNotFoundError):
+    pass
+
+try:
+    from .contour_spatial_metrics import measure_track_counts_in_contour_boxes
 except (ImportError, ModuleNotFoundError):
     pass
 

@@ -3,6 +3,7 @@ import math
 import os
 import random
 import re
+from pathlib import Path
 
 # from matplotlib import path as mpltPath
 import colorcet
@@ -25,7 +26,7 @@ from .config import FEATURES2  # import additional features from your config
 from datashader.reductions import mean
 from matplotlib import cm
 from matplotlib.collections import LineCollection
-from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize, is_color_like
+from matplotlib.colors import LinearSegmentedColormap, ListedColormap, LogNorm, Normalize, is_color_like
 from matplotlib.ticker import FuncFormatter
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from napari.utils.colormaps import Colormap, ensure_colormap
@@ -125,6 +126,1652 @@ def _get_location_column(df):
             "Neither 'Location' nor 'location' column found in dataframe. Available columns: "
             + str(list(df.columns))
         )
+
+
+def _contour_plot_to_pandas(data_df):
+    """Return a pandas copy for plotting helpers."""
+    if isinstance(data_df, pl.DataFrame):
+        return data_df.to_pandas()
+    if isinstance(data_df, pd.DataFrame):
+        return data_df.copy()
+    raise TypeError("data_df must be a pandas.DataFrame or polars.DataFrame.")
+
+
+def _contour_values_to_array(values):
+    """Coerce contour coordinate values into a 1D float array."""
+    import ast
+
+    if values is None:
+        return np.array([], dtype=float)
+    if isinstance(values, str):
+        try:
+            values = ast.literal_eval(values)
+        except (SyntaxError, ValueError):
+            return np.array([], dtype=float)
+    arr = np.asarray(values, dtype=float).ravel()
+    return arr[np.isfinite(arr)]
+
+
+def _sample_contour_overlay_rows(
+    data_df,
+    group_col=None,
+    subsample_fraction=1.0,
+    max_total=None,
+    max_per_group=None,
+    balance_groups=False,
+    random_state=42,
+):
+    """Sample rows for contour glyph overlays, optionally balancing groups."""
+    if data_df.empty:
+        return data_df.copy()
+
+    sample_df = data_df.copy()
+    subsample_fraction = float(np.clip(subsample_fraction, 0, 1))
+    if subsample_fraction <= 0:
+        return sample_df.iloc[0:0].copy()
+
+    rng = np.random.default_rng(random_state)
+
+    if group_col is not None and group_col in sample_df.columns:
+        groups = [(group, group_df) for group, group_df in sample_df.groupby(group_col, dropna=False)]
+        sampled_groups = []
+        if balance_groups:
+            min_group_size = min(len(group_df) for _, group_df in groups)
+            target_n = max(1, int(np.ceil(min_group_size * subsample_fraction)))
+            if max_per_group is not None:
+                target_n = min(target_n, int(max_per_group))
+            for _, group_df in groups:
+                n = min(len(group_df), target_n)
+                sampled_groups.append(group_df.sample(n=n, random_state=int(rng.integers(0, 2**31 - 1))))
+        else:
+            for _, group_df in groups:
+                n = max(1, int(np.ceil(len(group_df) * subsample_fraction)))
+                if max_per_group is not None:
+                    n = min(n, int(max_per_group))
+                sampled_groups.append(group_df.sample(n=n, random_state=int(rng.integers(0, 2**31 - 1))))
+        sample_df = pd.concat(sampled_groups, ignore_index=True) if sampled_groups else sample_df.iloc[0:0]
+    else:
+        n = max(1, int(np.ceil(len(sample_df) * subsample_fraction)))
+        sample_df = sample_df.sample(n=n, random_state=random_state)
+
+    if max_total is not None and len(sample_df) > int(max_total):
+        sample_df = sample_df.sample(n=int(max_total), random_state=random_state)
+
+    return sample_df.reset_index(drop=True)
+
+
+def add_contour_shape_metrics(
+    data_df,
+    area_col="area",
+    perimeter_col="perimeter",
+    contour_x_col="contour_x",
+    contour_y_col="contour_y",
+    coordinate_units_col="coordinate_units",
+    pixel_size_um=None,
+    recompute_geometry=True,
+    output_prefix="contour",
+):
+    """
+    Add contour geometry metrics useful for compactness/circularity analysis.
+
+    Metrics added:
+    - ``{output_prefix}_area_um2``
+    - ``{output_prefix}_perimeter_um``
+    - ``{output_prefix}_shape_index`` = perimeter / sqrt(area)
+    - ``{output_prefix}_compactness`` = perimeter^2 / (4*pi*area)
+    - ``{output_prefix}_circularity`` = 4*pi*area / perimeter^2
+
+    If ``recompute_geometry`` is True and contour coordinate arrays are present,
+    area and perimeter are measured from the contour coordinates. Otherwise the
+    provided area/perimeter columns are used.
+    """
+    input_is_polars = isinstance(data_df, pl.DataFrame)
+    out = _contour_plot_to_pandas(data_df)
+    if pixel_size_um is None:
+        pixel_size_um = getattr(config, "PIXELSIZE_MICRONS", 1.0)
+
+    measured_area = []
+    measured_perimeter = []
+    can_recompute = recompute_geometry and {contour_x_col, contour_y_col}.issubset(out.columns)
+
+    if can_recompute:
+        for _, row in out.iterrows():
+            contour_x = _contour_values_to_array(row[contour_x_col])
+            contour_y = _contour_values_to_array(row[contour_y_col])
+            n_points = min(len(contour_x), len(contour_y))
+            if n_points < 3:
+                measured_area.append(np.nan)
+                measured_perimeter.append(np.nan)
+                continue
+            contour_x = contour_x[:n_points]
+            contour_y = contour_y[:n_points]
+            shoelace_area = 0.5 * np.abs(
+                np.dot(contour_x, np.roll(contour_y, -1))
+                - np.dot(contour_y, np.roll(contour_x, -1))
+            )
+            dx = np.diff(np.r_[contour_x, contour_x[0]])
+            dy = np.diff(np.r_[contour_y, contour_y[0]])
+            path_perimeter = np.sqrt(dx**2 + dy**2).sum()
+            measured_area.append(shoelace_area)
+            measured_perimeter.append(path_perimeter)
+        out[f"{output_prefix}_area_measured"] = measured_area
+        out[f"{output_prefix}_perimeter_measured"] = measured_perimeter
+        base_area = out[f"{output_prefix}_area_measured"]
+        base_perimeter = out[f"{output_prefix}_perimeter_measured"]
+    else:
+        missing_cols = [col for col in [area_col, perimeter_col] if col not in out.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required geometry columns: {missing_cols}")
+        base_area = out[area_col]
+        base_perimeter = out[perimeter_col]
+
+    if coordinate_units_col in out.columns and out[coordinate_units_col].notna().any():
+        units = str(out[coordinate_units_col].dropna().iloc[0]).lower()
+    else:
+        units = "pixels"
+    scale_length = pixel_size_um if units in {"pixel", "pixels", "px"} else 1.0
+    scale_area = scale_length**2
+
+    area_um2_col = f"{output_prefix}_area_um2"
+    perimeter_um_col = f"{output_prefix}_perimeter_um"
+    out[area_um2_col] = pd.to_numeric(base_area, errors="coerce") * scale_area
+    out[perimeter_um_col] = pd.to_numeric(base_perimeter, errors="coerce") * scale_length
+
+    valid = (out[area_um2_col] > 0) & (out[perimeter_um_col] > 0)
+    out[f"{output_prefix}_shape_index"] = np.nan
+    out[f"{output_prefix}_compactness"] = np.nan
+    out[f"{output_prefix}_circularity"] = np.nan
+    out.loc[valid, f"{output_prefix}_shape_index"] = (
+        out.loc[valid, perimeter_um_col] / np.sqrt(out.loc[valid, area_um2_col])
+    )
+    out.loc[valid, f"{output_prefix}_compactness"] = (
+        out.loc[valid, perimeter_um_col] ** 2 / (4 * np.pi * out.loc[valid, area_um2_col])
+    )
+    out.loc[valid, f"{output_prefix}_circularity"] = (
+        4 * np.pi * out.loc[valid, area_um2_col] / out.loc[valid, perimeter_um_col] ** 2
+    )
+    if input_is_polars:
+        new_cols = [
+            col
+            for col in [
+                f"{output_prefix}_area_measured",
+                f"{output_prefix}_perimeter_measured",
+                area_um2_col,
+                perimeter_um_col,
+                f"{output_prefix}_shape_index",
+                f"{output_prefix}_compactness",
+                f"{output_prefix}_circularity",
+            ]
+            if col in out.columns
+        ]
+        return data_df.with_columns([pl.Series(col, out[col].to_list()) for col in new_cols])
+    return out
+
+
+def _xy_fit_transform(x_values, y_values, fit_method):
+    x = np.asarray(x_values, dtype=float)
+    y = np.asarray(y_values, dtype=float)
+    valid = np.isfinite(x) & np.isfinite(y)
+    if fit_method in {"loglog", "robust_loglog"}:
+        valid &= (x > 0) & (y > 0)
+        x_fit = np.log10(x[valid])
+        y_fit = np.log10(y[valid])
+    else:
+        x_fit = x[valid]
+        y_fit = y[valid]
+    return x[valid], y[valid], x_fit, y_fit
+
+
+def _xy_correlation_stats(x_values, y_values, method="spearman", fit_method="linear"):
+    from scipy.stats import pearsonr, spearmanr
+
+    _, _, x_fit, y_fit = _xy_fit_transform(x_values, y_values, fit_method)
+    if len(x_fit) < 3:
+        return {"method": method, "n": len(x_fit), "r": np.nan, "p": np.nan}
+    if method == "pearson":
+        r_value, p_value = pearsonr(x_fit, y_fit)
+    else:
+        r_value, p_value = spearmanr(x_fit, y_fit)
+    return {"method": method, "n": len(x_fit), "r": r_value, "p": p_value}
+
+
+def _standard_scale_xy_columns(data_df, x_col, y_col, group_col=None, by_group=False):
+    """Add z-scored x/y columns and return their names."""
+    scaled_df = data_df.copy()
+    x_scaled_col = f"{x_col}_zscore"
+    y_scaled_col = f"{y_col}_zscore"
+
+    def _zscore(series):
+        values = pd.to_numeric(series, errors="coerce")
+        std = values.std(ddof=0)
+        if not np.isfinite(std) or std == 0:
+            return values * np.nan
+        return (values - values.mean()) / std
+
+    if by_group and group_col is not None and group_col in scaled_df.columns:
+        scaled_df[x_scaled_col] = scaled_df.groupby(group_col)[x_col].transform(_zscore)
+        scaled_df[y_scaled_col] = scaled_df.groupby(group_col)[y_col].transform(_zscore)
+    else:
+        scaled_df[x_scaled_col] = _zscore(scaled_df[x_col])
+        scaled_df[y_scaled_col] = _zscore(scaled_df[y_col])
+    return scaled_df, x_scaled_col, y_scaled_col
+
+
+def _draw_xy_fit_line(
+    ax,
+    data_df,
+    x_col,
+    y_col,
+    color="black",
+    fit_method="linear",
+    linewidth=2.0,
+    alpha=0.9,
+    label=None,
+):
+    if fit_method in {None, "none"}:
+        return None
+    from scipy.stats import linregress, theilslopes
+
+    x_raw, y_raw, x_fit, y_fit = _xy_fit_transform(data_df[x_col], data_df[y_col], fit_method)
+    if len(x_fit) < 3:
+        return None
+
+    x_line_fit = np.linspace(np.nanmin(x_fit), np.nanmax(x_fit), 100)
+    if fit_method == "robust_loglog":
+        slope, intercept, _, _ = theilslopes(y_fit, x_fit)
+    else:
+        fit = linregress(x_fit, y_fit)
+        slope = fit.slope
+        intercept = fit.intercept
+    y_line_fit = intercept + slope * x_line_fit
+
+    if fit_method in {"loglog", "robust_loglog"}:
+        x_line = 10**x_line_fit
+        y_line = 10**y_line_fit
+    else:
+        x_line = x_line_fit
+        y_line = y_line_fit
+
+    ax.plot(x_line, y_line, color=color, linewidth=linewidth, alpha=alpha, label=label)
+    return {"slope": slope, "intercept": intercept, "n": len(x_fit), "fit_method": fit_method}
+
+
+def _add_xy_fits_and_stats(
+    ax,
+    data_df,
+    x_col,
+    y_col,
+    group_col=None,
+    group_order=None,
+    color_map=None,
+    fit_method=None,
+    fit_by_group=True,
+    fit_global=False,
+    correlation_method="spearman",
+    show_correlation=True,
+    fit_linewidth=2.0,
+    fit_alpha=0.9,
+):
+    fit_rows = []
+    stats_df = data_df.dropna(subset=[x_col, y_col]).copy()
+    if stats_df.empty:
+        return pd.DataFrame()
+
+    if group_col is not None and fit_by_group:
+        groups = group_order if group_order is not None else stats_df[group_col].dropna().unique()
+        for group in groups:
+            group_df = stats_df[stats_df[group_col] == group]
+            if group_df.empty:
+                continue
+            color = color_map.get(group, "black") if color_map else "black"
+            fit_info = _draw_xy_fit_line(
+                ax,
+                group_df,
+                x_col,
+                y_col,
+                color=color,
+                fit_method=fit_method,
+                linewidth=fit_linewidth,
+                alpha=fit_alpha,
+            )
+            corr = _xy_correlation_stats(group_df[x_col], group_df[y_col], correlation_method, fit_method or "linear")
+            row = {"group": group, **corr}
+            if fit_info is not None:
+                row.update(fit_info)
+            fit_rows.append(row)
+
+    if fit_global or group_col is None or not fit_by_group:
+        fit_info = _draw_xy_fit_line(
+            ax,
+            stats_df,
+            x_col,
+            y_col,
+            color="black",
+            fit_method=fit_method,
+            linewidth=fit_linewidth + 0.5,
+            alpha=fit_alpha,
+            label="global fit" if group_col is not None else None,
+        )
+        corr = _xy_correlation_stats(stats_df[x_col], stats_df[y_col], correlation_method, fit_method or "linear")
+        row = {"group": "global", **corr}
+        if fit_info is not None:
+            row.update(fit_info)
+        fit_rows.append(row)
+
+    fit_stats = pd.DataFrame(fit_rows)
+    if show_correlation and not fit_stats.empty:
+        text_lines = []
+        for _, row in fit_stats.iterrows():
+            group_label = row["group"]
+            r_value = row.get("r", np.nan)
+            p_value = row.get("p", np.nan)
+            n_value = row.get("n", np.nan)
+            text_lines.append(f"{group_label}: {correlation_method} r={r_value:.2f}, p={p_value:.2g}, n={int(n_value)}")
+        ax.text(
+            0.02,
+            0.98,
+            "\n".join(text_lines),
+            transform=ax.transAxes,
+            va="top",
+            ha="left",
+            fontsize=8,
+            bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none"},
+        )
+    return fit_stats
+
+
+def plot_contour_area_perimeter_shapes(
+    data_df,
+    area_col="contour_area_um2",
+    perimeter_col="contour_perimeter_um",
+    contour_x_col="contour_x",
+    contour_y_col="contour_y",
+    group_col="geno",
+    palette="colorblind",
+    group_order=None,
+    subsample_fraction=1.0,
+    max_total=None,
+    max_per_group=None,
+    balance_groups=False,
+    random_state=42,
+    glyph_size=0.035,
+    contour_linewidth=0.7,
+    contour_alpha=0.75,
+    point_size=16,
+    point_alpha=0.95,
+    point_edgecolor="black",
+    fit_method=None,
+    fit_by_group=True,
+    fit_global=False,
+    correlation_method="spearman",
+    show_correlation=True,
+    fit_linewidth=2.0,
+    fit_alpha=0.9,
+    return_fit_stats=False,
+    figsize=(10, 8),
+    xlim=None,
+    ylim=None,
+    title=None,
+    xlabel=None,
+    ylabel=None,
+    grid=True,
+    show_legend=True,
+    master_dir=None,
+    custom="contour_area_perimeter_shapes",
+    export_format="svg",
+    transparent=True,
+    show_plot=True,
+):
+    """
+    Plot contour area vs perimeter with miniature contour glyphs centered on each point.
+
+    The contour glyphs are shape overlays in axis coordinates. They preserve each
+    contour's outline shape, while area and perimeter are encoded by the point
+    position. Use subsampling when the glyphs overlap heavily.
+
+    Parameters
+    ----------
+    data_df : pandas.DataFrame or polars.DataFrame
+        Contour-level dataframe with area, perimeter, and contour coordinate columns.
+    area_col, perimeter_col : str
+        Columns used for the scatter x and y coordinates.
+    contour_x_col, contour_y_col : str
+        Columns containing per-contour x/y coordinate arrays.
+    group_col : str or None
+        Column used for color grouping and optional balanced sampling.
+    subsample_fraction : float
+        Fraction of rows to draw as contour glyphs. Values are clipped to [0, 1].
+    balance_groups : bool
+        If True, sample the same number of rows from each group, based on the
+        smallest group and subsample_fraction.
+
+    fit_method : {None, "linear", "loglog", "robust_loglog"}
+        Optional line of best fit. "loglog" is usually best for area/perimeter
+        scaling because perimeter often follows a power law with area.
+    correlation_method : {"spearman", "pearson"}
+        Correlation metric reported on the plotted relationship. For log-log
+        fits, correlation is computed on log10-transformed positive values.
+
+    return_fit_stats : bool
+        If True, return ``(fig, ax, sampled_df, fit_stats_df)``. If False,
+        preserve the older ``(fig, ax, sampled_df)`` return shape.
+
+    Returns
+    -------
+    tuple
+        (fig, ax, sampled_df) or (fig, ax, sampled_df, fit_stats_df)
+    """
+    plot_df = _contour_plot_to_pandas(data_df)
+    required_cols = [area_col, perimeter_col, contour_x_col, contour_y_col]
+    if group_col is not None:
+        required_cols.append(group_col)
+    missing_cols = [col for col in required_cols if col not in plot_df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+
+    plot_df = plot_df.dropna(subset=[area_col, perimeter_col]).copy()
+    if plot_df.empty:
+        raise ValueError("No rows remain after dropping missing area/perimeter values.")
+
+    if group_col is not None:
+        if group_order is None:
+            group_order = list(pd.Series(plot_df[group_col].dropna().unique()).sort_values())
+        else:
+            group_order = [group for group in group_order if group in set(plot_df[group_col])]
+        colors = _process_palette(palette, max(len(group_order), 1)) if not isinstance(palette, dict) else None
+        color_map = palette if isinstance(palette, dict) else dict(zip(group_order, colors))
+    else:
+        group_order = [None]
+        color_map = {None: "black"}
+
+    sample_df = _sample_contour_overlay_rows(
+        plot_df,
+        group_col=group_col,
+        subsample_fraction=subsample_fraction,
+        max_total=max_total,
+        max_per_group=max_per_group,
+        balance_groups=balance_groups,
+        random_state=random_state,
+    )
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    if xlim is None:
+        x_values = plot_df[area_col].astype(float)
+        x_pad = (x_values.max() - x_values.min()) * 0.05 or 1
+        xlim = (x_values.min() - x_pad, x_values.max() + x_pad)
+    if ylim is None:
+        y_values = plot_df[perimeter_col].astype(float)
+        y_pad = (y_values.max() - y_values.min()) * 0.05 or 1
+        ylim = (y_values.min() - y_pad, y_values.max() + y_pad)
+
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    x_span = xlim[1] - xlim[0]
+    y_span = ylim[1] - ylim[0]
+    glyph_width = x_span * glyph_size
+    glyph_height = y_span * glyph_size
+
+    for group in group_order:
+        if group_col is None:
+            group_df = sample_df
+            label = None
+            color = color_map[None]
+        else:
+            group_df = sample_df[sample_df[group_col] == group]
+            label = str(group)
+            color = color_map.get(group, "black")
+
+        if group_df.empty:
+            continue
+
+        ax.scatter(
+            group_df[area_col],
+            group_df[perimeter_col],
+            s=point_size,
+            c=[color],
+            alpha=point_alpha,
+            edgecolors=point_edgecolor,
+            linewidths=0.4,
+            label=label,
+            zorder=3,
+        )
+
+        for _, row in group_df.iterrows():
+            contour_x = _contour_values_to_array(row[contour_x_col])
+            contour_y = _contour_values_to_array(row[contour_y_col])
+            n_points = min(len(contour_x), len(contour_y))
+            if n_points < 3:
+                continue
+            contour_x = contour_x[:n_points]
+            contour_y = contour_y[:n_points]
+            contour_x = contour_x - np.nanmean(contour_x)
+            contour_y = contour_y - np.nanmean(contour_y)
+            max_abs_x = np.nanmax(np.abs(contour_x)) or 1
+            max_abs_y = np.nanmax(np.abs(contour_y)) or 1
+            glyph_x = row[area_col] + (contour_x / max_abs_x) * glyph_width
+            glyph_y = row[perimeter_col] + (contour_y / max_abs_y) * glyph_height
+            ax.plot(
+                glyph_x,
+                glyph_y,
+                color=color,
+                alpha=contour_alpha,
+                linewidth=contour_linewidth,
+                zorder=2,
+            )
+
+    fit_stats_df = _add_xy_fits_and_stats(
+        ax,
+        sample_df,
+        area_col,
+        perimeter_col,
+        group_col=group_col,
+        group_order=group_order,
+        color_map=color_map,
+        fit_method=fit_method,
+        fit_by_group=fit_by_group,
+        fit_global=fit_global,
+        correlation_method=correlation_method,
+        show_correlation=show_correlation,
+        fit_linewidth=fit_linewidth,
+        fit_alpha=fit_alpha,
+    )
+
+    ax.set_xlabel(xlabel or area_col)
+    ax.set_ylabel(ylabel or perimeter_col)
+    ax.set_title(title or f"{perimeter_col} vs {area_col} with contour glyphs")
+    if grid:
+        ax.grid(True, alpha=0.25)
+    if show_legend and group_col is not None:
+        ax.legend(title=group_col, frameon=False, bbox_to_anchor=(1.02, 1), loc="upper left")
+
+    plt.tight_layout()
+
+    if master_dir is not None:
+        os.makedirs(master_dir, exist_ok=True)
+        ext = export_format.lower()
+        if ext not in ["png", "svg", "pdf"]:
+            ext = "svg"
+        save_path = os.path.join(master_dir, f"{custom}.{ext}")
+        fig.savefig(save_path, bbox_inches="tight", transparent=transparent, format=ext)
+        print(f"Saved: {save_path}")
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    if return_fit_stats:
+        return fig, ax, sample_df, fit_stats_df
+    return fig, ax, sample_df
+
+
+def interactive_contour_area_perimeter_shapes(
+    data_df,
+    area_col="contour_area_um2",
+    perimeter_col="contour_perimeter_um",
+    contour_x_col="contour_x",
+    contour_y_col="contour_y",
+    group_col="geno",
+    palette="colorblind",
+    group_order=None,
+    subsample_fraction=0.25,
+    max_per_group=100,
+    balance_groups=True,
+    random_state=42,
+    glyph_size=0.035,
+    fit_method="loglog",
+    correlation_method="spearman",
+    figsize=(10, 8),
+):
+    """
+    Interactive notebook widget for contour area/perimeter glyph plots.
+
+    The fraction slider subsamples each group at the same level when
+    balance_groups is enabled.
+    """
+    try:
+        import ipywidgets as widgets
+        from IPython.display import clear_output, display
+    except ImportError as exc:
+        raise ImportError("interactive_contour_area_perimeter_shapes requires ipywidgets.") from exc
+
+    fraction_slider = widgets.FloatSlider(
+        value=subsample_fraction,
+        min=0.01,
+        max=1.0,
+        step=0.01,
+        description="Fraction",
+        readout_format=".0%",
+        continuous_update=False,
+    )
+    max_per_group_slider = widgets.IntSlider(
+        value=max_per_group,
+        min=1,
+        max=max(500, max_per_group),
+        step=1,
+        description="Max/group",
+        continuous_update=False,
+    )
+    glyph_slider = widgets.FloatSlider(
+        value=glyph_size,
+        min=0.005,
+        max=0.12,
+        step=0.005,
+        description="Glyph size",
+        continuous_update=False,
+    )
+    seed_slider = widgets.IntSlider(
+        value=random_state,
+        min=0,
+        max=9999,
+        step=1,
+        description="Seed",
+        continuous_update=False,
+    )
+    balance_checkbox = widgets.Checkbox(value=balance_groups, description="Balance groups")
+    fit_dropdown = widgets.Dropdown(
+        value=fit_method,
+        options=[("None", None), ("Linear", "linear"), ("Log-log", "loglog"), ("Robust log-log", "robust_loglog")],
+        description="Fit",
+    )
+    output = widgets.Output()
+
+    def _redraw(change=None):
+        with output:
+            clear_output(wait=True)
+            plot_contour_area_perimeter_shapes(
+                data_df,
+                area_col=area_col,
+                perimeter_col=perimeter_col,
+                contour_x_col=contour_x_col,
+                contour_y_col=contour_y_col,
+                group_col=group_col,
+                palette=palette,
+                group_order=group_order,
+                subsample_fraction=fraction_slider.value,
+                max_per_group=max_per_group_slider.value,
+                balance_groups=balance_checkbox.value,
+                random_state=seed_slider.value,
+                glyph_size=glyph_slider.value,
+                fit_method=fit_dropdown.value,
+                fit_by_group=True,
+                fit_global=False,
+                correlation_method=correlation_method,
+                figsize=figsize,
+                master_dir=None,
+                show_plot=True,
+            )
+
+    controls = widgets.VBox(
+        [
+            widgets.HBox([fraction_slider, max_per_group_slider]),
+            widgets.HBox([glyph_slider, seed_slider, fit_dropdown, balance_checkbox]),
+        ]
+    )
+    for widget in [fraction_slider, max_per_group_slider, glyph_slider, seed_slider, fit_dropdown, balance_checkbox]:
+        widget.observe(_redraw, names="value")
+
+    display(controls, output)
+    _redraw()
+    return controls, output
+
+
+def prepare_contour_feature_xy_dataframe(
+    contour_df,
+    windowed_df,
+    contour_metric,
+    window_feature,
+    group_col="geno",
+    state_col="transformer_behavior_state",
+    state_filter=None,
+    state_match_mode="exact",
+    window_cell_key=None,
+    contour_cell_key=None,
+    aggfunc="median",
+):
+    """
+    Merge one contour-level metric with one per-cell aggregated window/track feature.
+
+    This is useful for questions like: contour compactness vs median speed of
+    transport windows in the same cell.
+    """
+    contour_pd = _contour_plot_to_pandas(contour_df)
+    window_pd = _contour_plot_to_pandas(windowed_df)
+
+    if window_cell_key is None or contour_cell_key is None:
+        if "contour_cell_key" in window_pd.columns and "cell_key" in contour_pd.columns:
+            window_cell_key = window_cell_key or "contour_cell_key"
+            contour_cell_key = contour_cell_key or "cell_key"
+        elif "cell_key" in window_pd.columns and "cell_key" in contour_pd.columns:
+            window_cell_key = window_cell_key or "cell_key"
+            contour_cell_key = contour_cell_key or "cell_key"
+        else:
+            window_cell_key = window_cell_key or "filename"
+            contour_cell_key = contour_cell_key or "filename"
+
+    required_contour_cols = [contour_cell_key, contour_metric]
+    if group_col is not None and group_col in contour_pd.columns:
+        required_contour_cols.append(group_col)
+    required_window_cols = [window_cell_key, window_feature]
+    if group_col is not None and group_col in window_pd.columns:
+        required_window_cols.append(group_col)
+    if state_filter is not None:
+        required_window_cols.append(state_col)
+
+    missing_contour_cols = [col for col in required_contour_cols if col not in contour_pd.columns]
+    missing_window_cols = [col for col in required_window_cols if col not in window_pd.columns]
+    if missing_contour_cols:
+        raise ValueError(f"Missing required contour columns: {missing_contour_cols}")
+    if missing_window_cols:
+        raise ValueError(f"Missing required window columns: {missing_window_cols}")
+
+    filtered_window = window_pd.copy()
+    if state_filter is not None:
+        state_values = filtered_window[state_col].astype(str)
+        filters = [state_filter] if isinstance(state_filter, str) else list(state_filter)
+        if state_match_mode == "contains":
+            mask = np.zeros(len(filtered_window), dtype=bool)
+            for state in filters:
+                mask |= state_values.str.contains(str(state), case=False, na=False)
+        else:
+            lowered = [str(state).lower() for state in filters]
+            mask = state_values.str.lower().isin(lowered)
+        filtered_window = filtered_window[mask].copy()
+
+    agg_map = {
+        "median": "median",
+        "mean": "mean",
+        "sum": "sum",
+        "max": "max",
+        "min": "min",
+    }
+    if aggfunc not in agg_map:
+        raise ValueError(f"aggfunc must be one of {list(agg_map)}")
+
+    group_cols = [window_cell_key]
+    if group_col is not None and group_col in filtered_window.columns:
+        group_cols.append(group_col)
+    feature_agg = (
+        filtered_window
+        .dropna(subset=[window_cell_key, window_feature])
+        .groupby(group_cols, as_index=False)[window_feature]
+        .agg(agg_map[aggfunc])
+        .rename(columns={window_cell_key: "_cell_key", window_feature: f"{aggfunc}_{window_feature}"})
+    )
+
+    contour_cols = [contour_cell_key, contour_metric]
+    if group_col is not None and group_col in contour_pd.columns and group_col not in feature_agg.columns:
+        contour_cols.append(group_col)
+    contour_single = (
+        contour_pd
+        .dropna(subset=[contour_cell_key, contour_metric])
+        .drop_duplicates(subset=[contour_cell_key])
+        [contour_cols]
+        .rename(columns={contour_cell_key: "_cell_key"})
+    )
+
+    xy_df = feature_agg.merge(contour_single, on="_cell_key", how="inner")
+    if group_col is not None and group_col not in xy_df.columns:
+        group_candidates = [f"{group_col}_x", f"{group_col}_y"]
+        for candidate in group_candidates:
+            if candidate in xy_df.columns:
+                xy_df[group_col] = xy_df[candidate]
+                break
+    xy_df["state_filter"] = "all" if state_filter is None else ",".join([state_filter] if isinstance(state_filter, str) else list(state_filter))
+    return xy_df
+
+
+def plot_cell_metric_xy(
+    data_df,
+    x_col,
+    y_col,
+    group_col="geno",
+    palette="colorblind",
+    group_order=None,
+    fit_method="loglog",
+    fit_by_group=True,
+    fit_global=False,
+    correlation_method="spearman",
+    show_correlation=True,
+    standard_scale=False,
+    standard_scale_by_group=False,
+    point_size=35,
+    point_alpha=0.75,
+    edgecolor="black",
+    figsize=(5, 4),
+    title=None,
+    xlabel=None,
+    ylabel=None,
+    grid=True,
+    master_dir=None,
+    custom="cell_metric_xy",
+    export_format="svg",
+    transparent=True,
+    show_plot=True,
+):
+    """Static XY plot for any two cell-level metrics with optional fit/correlation."""
+    plot_df = _contour_plot_to_pandas(data_df).dropna(subset=[x_col, y_col]).copy()
+    if plot_df.empty:
+        raise ValueError("No rows remain after dropping missing x/y values.")
+
+    x_plot_col = x_col
+    y_plot_col = y_col
+    if standard_scale:
+        plot_df, x_plot_col, y_plot_col = _standard_scale_xy_columns(
+            plot_df,
+            x_col,
+            y_col,
+            group_col=group_col,
+            by_group=standard_scale_by_group,
+        )
+        if fit_method in {"loglog", "robust_loglog"}:
+            print("standard_scale=True uses z-scores, so switching log-log fit to linear.")
+            fit_method = "linear"
+
+    if group_col is not None and group_col in plot_df.columns:
+        if group_order is None:
+            group_order = list(pd.Series(plot_df[group_col].dropna().unique()).sort_values())
+        else:
+            group_order = [group for group in group_order if group in set(plot_df[group_col])]
+        colors = _process_palette(palette, max(len(group_order), 1)) if not isinstance(palette, dict) else None
+        color_map = palette if isinstance(palette, dict) else dict(zip(group_order, colors))
+    else:
+        group_col = None
+        group_order = [None]
+        color_map = {None: "black"}
+
+    fig, ax = plt.subplots(figsize=figsize)
+    for group in group_order:
+        if group_col is None:
+            group_df = plot_df
+            color = color_map[None]
+            label = None
+        else:
+            group_df = plot_df[plot_df[group_col] == group]
+            color = color_map.get(group, "black")
+            label = str(group)
+        if group_df.empty:
+            continue
+        ax.scatter(
+            group_df[x_plot_col],
+            group_df[y_plot_col],
+            s=point_size,
+            color=color,
+            alpha=point_alpha,
+            edgecolors=edgecolor,
+            linewidths=0.4,
+            label=label,
+        )
+
+    fit_stats_df = _add_xy_fits_and_stats(
+        ax,
+        plot_df,
+        x_plot_col,
+        y_plot_col,
+        group_col=group_col,
+        group_order=group_order,
+        color_map=color_map,
+        fit_method=fit_method,
+        fit_by_group=fit_by_group,
+        fit_global=fit_global,
+        correlation_method=correlation_method,
+        show_correlation=show_correlation,
+    )
+
+    default_xlabel = f"z-score({x_col})" if standard_scale else x_col
+    default_ylabel = f"z-score({y_col})" if standard_scale else y_col
+    ax.set_xlabel(xlabel or default_xlabel)
+    ax.set_ylabel(ylabel or default_ylabel)
+    ax.set_title(title or f"{default_ylabel} vs {default_xlabel}")
+    if grid:
+        ax.grid(True, alpha=0.25)
+    if group_col is not None:
+        ax.legend(title=group_col, frameon=False, bbox_to_anchor=(1.02, 1), loc="upper left")
+    plt.tight_layout()
+
+    if master_dir is not None:
+        os.makedirs(master_dir, exist_ok=True)
+        ext = export_format.lower()
+        if ext not in ["png", "svg", "pdf"]:
+            ext = "svg"
+        save_path = os.path.join(master_dir, f"{custom}.{ext}")
+        fig.savefig(save_path, bbox_inches="tight", transparent=transparent, format=ext)
+        print(f"Saved: {save_path}")
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
+    return fig, ax, plot_df, fit_stats_df
+
+
+def interactive_contour_feature_xy(
+    contour_df,
+    windowed_df,
+    contour_metrics,
+    window_features,
+    group_col="geno",
+    state_col="transformer_behavior_state",
+    state_options=None,
+    palette="colorblind",
+    group_order=None,
+    aggfunc="median",
+    fit_method="loglog",
+    correlation_method="spearman",
+    standard_scale=False,
+    figsize=(5, 4),
+):
+    """Interactive plot for contour metrics vs per-cell aggregated window features."""
+    try:
+        import ipywidgets as widgets
+        from IPython.display import clear_output, display
+    except ImportError as exc:
+        raise ImportError("interactive_contour_feature_xy requires ipywidgets.") from exc
+
+    contour_metrics = list(contour_metrics)
+    window_features = list(window_features)
+    if state_options is None and state_col in _contour_plot_to_pandas(windowed_df).columns:
+        state_options = ["all"] + sorted(_contour_plot_to_pandas(windowed_df)[state_col].dropna().astype(str).unique())
+    elif state_options is None:
+        state_options = ["all"]
+
+    contour_metric_dropdown = widgets.Dropdown(options=contour_metrics, value=contour_metrics[0], description="X")
+    feature_dropdown = widgets.Dropdown(options=window_features, value=window_features[0], description="Y feature")
+    state_dropdown = widgets.Dropdown(options=state_options, value=state_options[0], description="State")
+    fit_dropdown = widgets.Dropdown(
+        options=[("None", None), ("Linear", "linear"), ("Log-log", "loglog"), ("Robust log-log", "robust_loglog")],
+        value=fit_method,
+        description="Fit",
+    )
+    scale_checkbox = widgets.Checkbox(value=standard_scale, description="Z-score")
+    scale_by_group_checkbox = widgets.Checkbox(value=False, description="Z by group")
+    output = widgets.Output()
+
+    def _redraw(change=None):
+        with output:
+            clear_output(wait=True)
+            state_filter = None if state_dropdown.value == "all" else state_dropdown.value
+            xy_df = prepare_contour_feature_xy_dataframe(
+                contour_df,
+                windowed_df,
+                contour_metric=contour_metric_dropdown.value,
+                window_feature=feature_dropdown.value,
+                group_col=group_col,
+                state_col=state_col,
+                state_filter=state_filter,
+                aggfunc=aggfunc,
+            )
+            y_col = f"{aggfunc}_{feature_dropdown.value}"
+            _, _, _, fit_stats = plot_cell_metric_xy(
+                xy_df,
+                x_col=contour_metric_dropdown.value,
+                y_col=y_col,
+                group_col=group_col,
+                palette=palette,
+                group_order=group_order,
+                fit_method=fit_dropdown.value,
+                correlation_method=correlation_method,
+                standard_scale=scale_checkbox.value,
+                standard_scale_by_group=scale_by_group_checkbox.value,
+                title=f"{y_col} vs {contour_metric_dropdown.value} ({state_dropdown.value})",
+                figsize=figsize,
+                master_dir=None,
+                show_plot=True,
+            )
+            if not fit_stats.empty:
+                display(fit_stats)
+
+    controls = widgets.VBox(
+        [
+            widgets.HBox([contour_metric_dropdown, feature_dropdown]),
+            widgets.HBox([state_dropdown, fit_dropdown, scale_checkbox, scale_by_group_checkbox]),
+        ]
+    )
+    for widget in [
+        contour_metric_dropdown,
+        feature_dropdown,
+        state_dropdown,
+        fit_dropdown,
+        scale_checkbox,
+        scale_by_group_checkbox,
+    ]:
+        widget.observe(_redraw, names="value")
+    display(controls, output)
+    _redraw()
+    return controls, output
+
+
+def _draw_contour_glyph_on_axis(
+    ax,
+    row,
+    center_x,
+    center_y,
+    glyph_width,
+    glyph_height,
+    contour_x_col="contour_x",
+    contour_y_col="contour_y",
+    color="black",
+    linewidth=1.0,
+    alpha=0.9,
+    zorder=5,
+):
+    contour_x = _contour_values_to_array(row[contour_x_col])
+    contour_y = _contour_values_to_array(row[contour_y_col])
+    n_points = min(len(contour_x), len(contour_y))
+    if n_points < 3:
+        return False
+    contour_x = contour_x[:n_points]
+    contour_y = contour_y[:n_points]
+    contour_x = contour_x - np.nanmean(contour_x)
+    contour_y = contour_y - np.nanmean(contour_y)
+    max_abs_x = np.nanmax(np.abs(contour_x)) or 1
+    max_abs_y = np.nanmax(np.abs(contour_y)) or 1
+    glyph_x = center_x + (contour_x / max_abs_x) * glyph_width
+    glyph_y = center_y + (contour_y / max_abs_y) * glyph_height
+    ax.plot(glyph_x, glyph_y, color=color, linewidth=linewidth, alpha=alpha, zorder=zorder)
+    ax.scatter([center_x], [center_y], s=18, color=color, edgecolors="black", linewidths=0.4, zorder=zorder + 1)
+    return True
+
+
+def plot_contour_metric_histogram_with_glyphs(
+    data_df,
+    metric,
+    contour_x_col="contour_x",
+    contour_y_col="contour_y",
+    group_col=None,
+    palette="colorblind",
+    group_order=None,
+    bins=30,
+    hist=True,
+    kde=True,
+    overlay=True,
+    stat="density",
+    representative_quantiles=(0.1, 0.5, 0.9),
+    representative_labels=("low", "median", "high"),
+    representative_by_group=False,
+    glyph_size_x=0.035,
+    glyph_size_y=0.12,
+    glyph_linewidth=1.0,
+    glyph_alpha=0.9,
+    figsize=(6, 4),
+    title=None,
+    xlabel=None,
+    ylabel=None,
+    grid=True,
+    master_dir=None,
+    custom=None,
+    export_format="svg",
+    transparent=True,
+    show_plot=True,
+):
+    """
+    Plot a histogram/KDE for one contour metric with representative contour glyphs.
+
+    Representative glyphs are chosen as the contour rows nearest the requested
+    metric quantiles, e.g. low/median/high compactness.
+    """
+    plot_df = _contour_plot_to_pandas(data_df)
+    required_cols = [metric, contour_x_col, contour_y_col]
+    if group_col is not None:
+        required_cols.append(group_col)
+    missing_cols = [col for col in required_cols if col not in plot_df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+
+    plot_df = plot_df.dropna(subset=[metric]).copy()
+    if plot_df.empty:
+        raise ValueError(f"No rows remain after dropping missing values for {metric!r}.")
+
+    if group_col is not None:
+        if group_order is None:
+            group_order = list(pd.Series(plot_df[group_col].dropna().unique()).sort_values())
+        else:
+            group_order = [group for group in group_order if group in set(plot_df[group_col])]
+        colors = _process_palette(palette, max(len(group_order), 1)) if not isinstance(palette, dict) else None
+        color_map = palette if isinstance(palette, dict) else dict(zip(group_order, colors))
+    else:
+        group_order = [None]
+        color_map = {None: "black"}
+
+    if not hist and not kde:
+        raise ValueError("At least one of hist or kde must be True.")
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    if group_col is None:
+        if hist:
+            sns.histplot(data=plot_df, x=metric, bins=bins, kde=kde, stat=stat, color="0.4", ax=ax)
+        else:
+            sns.kdeplot(data=plot_df, x=metric, color="0.2", linewidth=2, ax=ax)
+    else:
+        if hist:
+            sns.histplot(
+                data=plot_df,
+                x=metric,
+                hue=group_col,
+                hue_order=group_order,
+                palette=color_map,
+                bins=bins,
+                kde=kde,
+                stat=stat,
+                common_norm=False,
+                multiple="layer" if overlay else "dodge",
+                element="step" if overlay else "bars",
+                fill=not overlay,
+                alpha=0.35,
+                ax=ax,
+            )
+        else:
+            sns.kdeplot(
+                data=plot_df,
+                x=metric,
+                hue=group_col,
+                hue_order=group_order,
+                palette=color_map,
+                common_norm=False,
+                linewidth=2,
+                ax=ax,
+            )
+
+    x_min, x_max = ax.get_xlim()
+    y_min, y_max = ax.get_ylim()
+    x_span = x_max - x_min
+    y_span = y_max - y_min
+    ax.set_ylim(y_min, y_max + y_span * 0.45)
+    glyph_width = x_span * glyph_size_x
+    glyph_height = y_span * glyph_size_y
+    base_glyph_y = y_max + y_span * 0.18
+
+    representative_rows = []
+    representative_sources = group_order if representative_by_group and group_col is not None else [None]
+    for group_idx, group in enumerate(representative_sources):
+        source_df = plot_df if group is None else plot_df[plot_df[group_col] == group]
+        if source_df.empty:
+            continue
+        color = "black" if group is None else color_map.get(group, "black")
+        glyph_y = base_glyph_y + group_idx * y_span * 0.16
+        for quantile, label in zip(representative_quantiles, representative_labels, strict=False):
+            target_value = source_df[metric].quantile(quantile)
+            idx = (source_df[metric] - target_value).abs().idxmin()
+            row = source_df.loc[idx]
+            drew = _draw_contour_glyph_on_axis(
+                ax,
+                row,
+                center_x=row[metric],
+                center_y=glyph_y,
+                glyph_width=glyph_width,
+                glyph_height=glyph_height,
+                contour_x_col=contour_x_col,
+                contour_y_col=contour_y_col,
+                color=color,
+                linewidth=glyph_linewidth,
+                alpha=glyph_alpha,
+            )
+            if drew:
+                text_label = label if group is None else f"{group} {label}"
+                ax.text(row[metric], glyph_y + glyph_height * 1.1, text_label, ha="center", va="bottom", fontsize=8, color=color)
+                representative_rows.append(
+                    {
+                        "group": "all" if group is None else group,
+                        "label": label,
+                        "quantile": quantile,
+                        metric: row[metric],
+                        "source_index": idx,
+                    }
+                )
+
+    ax.set_xlabel(xlabel or metric)
+    ax.set_ylabel(ylabel or stat)
+    ax.set_title(title or f"{metric} distribution with representative contours")
+    if grid:
+        ax.grid(True, alpha=0.25)
+
+    plt.tight_layout()
+
+    if master_dir is not None:
+        os.makedirs(master_dir, exist_ok=True)
+        ext = export_format.lower()
+        if ext not in ["png", "svg", "pdf"]:
+            ext = "svg"
+        custom = custom or f"contour_metric_histogram_{metric}"
+        save_path = os.path.join(master_dir, f"{custom}.{ext}")
+        fig.savefig(save_path, bbox_inches="tight", transparent=transparent, format=ext)
+        print(f"Saved: {save_path}")
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return fig, ax, pd.DataFrame(representative_rows)
+
+
+def interactive_contour_metric_histogram_with_glyphs(
+    data_df,
+    metric_options,
+    contour_x_col="contour_x",
+    contour_y_col="contour_y",
+    group_col=None,
+    palette="colorblind",
+    group_order=None,
+    bins=30,
+    hist=True,
+    kde=True,
+    overlay=True,
+    representative_by_group=False,
+    figsize=(6, 4),
+):
+    """Interactive notebook widget for contour metric histograms with glyphs."""
+    try:
+        import ipywidgets as widgets
+        from IPython.display import clear_output, display
+    except ImportError as exc:
+        raise ImportError("interactive_contour_metric_histogram_with_glyphs requires ipywidgets.") from exc
+
+    metric_options = list(metric_options)
+    metric_dropdown = widgets.Dropdown(options=metric_options, value=metric_options[0], description="Metric")
+    bins_slider = widgets.IntSlider(value=bins, min=5, max=100, step=1, description="Bins", continuous_update=False)
+    hist_checkbox = widgets.Checkbox(value=hist, description="Hist")
+    kde_checkbox = widgets.Checkbox(value=kde, description="KDE")
+    overlay_checkbox = widgets.Checkbox(value=overlay, description="Overlay")
+    by_group_checkbox = widgets.Checkbox(value=representative_by_group, description="Glyphs/group")
+    glyph_x_slider = widgets.FloatSlider(value=0.035, min=0.01, max=0.12, step=0.005, description="Glyph X", continuous_update=False)
+    glyph_y_slider = widgets.FloatSlider(value=0.12, min=0.03, max=0.30, step=0.01, description="Glyph Y", continuous_update=False)
+    output = widgets.Output()
+
+    def _redraw(change=None):
+        with output:
+            clear_output(wait=True)
+            _, _, reps = plot_contour_metric_histogram_with_glyphs(
+                data_df,
+                metric=metric_dropdown.value,
+                contour_x_col=contour_x_col,
+                contour_y_col=contour_y_col,
+                group_col=group_col,
+                palette=palette,
+                group_order=group_order,
+                bins=bins_slider.value,
+                hist=hist_checkbox.value,
+                kde=kde_checkbox.value,
+                overlay=overlay_checkbox.value,
+                representative_by_group=by_group_checkbox.value,
+                glyph_size_x=glyph_x_slider.value,
+                glyph_size_y=glyph_y_slider.value,
+                figsize=figsize,
+                master_dir=None,
+                show_plot=True,
+            )
+            display(reps)
+
+    controls = widgets.VBox(
+        [
+            widgets.HBox([metric_dropdown, bins_slider, hist_checkbox, kde_checkbox]),
+            widgets.HBox([overlay_checkbox, by_group_checkbox]),
+            widgets.HBox([glyph_x_slider, glyph_y_slider]),
+        ]
+    )
+    for widget in [
+        metric_dropdown,
+        bins_slider,
+        hist_checkbox,
+        kde_checkbox,
+        overlay_checkbox,
+        by_group_checkbox,
+        glyph_x_slider,
+        glyph_y_slider,
+    ]:
+        widget.observe(_redraw, names="value")
+    display(controls, output)
+    _redraw()
+    return controls, output
+
+
+def plot_ranked_contour_gallery(
+    data_df,
+    metric="contour_shape_index",
+    contour_x_col="contour_x",
+    contour_y_col="contour_y",
+    sort_ascending=True,
+    max_contours=None,
+    n_cols=10,
+    color_quantiles=(1 / 3, 2 / 3),
+    bin_colors=None,
+    scale_mode="individual",
+    global_extent=None,
+    axis_limit=1.05,
+    line_width=1.2,
+    center_label=False,
+    center_label_metric=None,
+    center_label_decimals=2,
+    center_label_fontsize=6,
+    center_label_color="black",
+    show_titles=True,
+    title_decimals=2,
+    figsize_per_panel=(1.4, 1.4),
+    suptitle=None,
+    master_dir=None,
+    custom=None,
+    export_format="svg",
+    transparent=True,
+    show_plot=True,
+):
+    """
+    Plot a gallery of contours ranked by a selected contour metric.
+
+    Contours are colored as low/medium/high according to metric quantiles.
+    Set ``scale_mode="global"`` and pass the same ``global_extent`` to multiple
+    calls when contours should be comparable across separate galleries.
+    """
+    plot_df = _contour_plot_to_pandas(data_df)
+    required_cols = [metric, contour_x_col, contour_y_col]
+    missing_cols = [col for col in required_cols if col not in plot_df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+
+    plot_df = plot_df.dropna(subset=[metric]).copy()
+    if plot_df.empty:
+        raise ValueError(f"No rows remain after dropping missing values for {metric!r}.")
+
+    plot_df = plot_df.sort_values(metric, ascending=sort_ascending).reset_index(drop=True)
+    if max_contours is not None:
+        plot_df = plot_df.head(int(max_contours)).copy()
+
+    q_low, q_high = plot_df[metric].quantile(list(color_quantiles)).to_list()
+    if bin_colors is None:
+        bin_colors = {
+            "low": "#0173B2",
+            "medium": "0.45",
+            "high": "#D55E00",
+        }
+
+    def _metric_bin(value):
+        if value <= q_low:
+            return "low"
+        if value >= q_high:
+            return "high"
+        return "medium"
+
+    plot_df["_metric_bin"] = plot_df[metric].apply(_metric_bin)
+
+    if scale_mode not in {"individual", "global"}:
+        raise ValueError("scale_mode must be 'individual' or 'global'.")
+
+    if scale_mode == "global" and global_extent is None:
+        extents = []
+        for _, row in plot_df.iterrows():
+            contour_x = _contour_values_to_array(row[contour_x_col])
+            contour_y = _contour_values_to_array(row[contour_y_col])
+            n_points = min(len(contour_x), len(contour_y))
+            if n_points < 3:
+                continue
+            contour_x = contour_x[:n_points] - np.nanmean(contour_x[:n_points])
+            contour_y = contour_y[:n_points] - np.nanmean(contour_y[:n_points])
+            extents.append(max(np.nanmax(np.abs(contour_x)), np.nanmax(np.abs(contour_y))))
+        global_extent = max(extents) if extents else 1
+    if global_extent is None or not np.isfinite(global_extent) or global_extent <= 0:
+        global_extent = 1
+
+    n_contours = len(plot_df)
+    n_cols = min(int(n_cols), n_contours)
+    n_rows = int(np.ceil(n_contours / n_cols))
+    fig_width = figsize_per_panel[0] * n_cols
+    fig_height = figsize_per_panel[1] * n_rows
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), squeeze=False)
+
+    for ax, (_, row) in zip(axes.flat, plot_df.iterrows(), strict=False):
+        contour_x = _contour_values_to_array(row[contour_x_col])
+        contour_y = _contour_values_to_array(row[contour_y_col])
+        n_points = min(len(contour_x), len(contour_y))
+        if n_points >= 3:
+            contour_x = contour_x[:n_points]
+            contour_y = contour_y[:n_points]
+            contour_x = contour_x - np.nanmean(contour_x)
+            contour_y = contour_y - np.nanmean(contour_y)
+            max_extent = (
+                global_extent
+                if scale_mode == "global"
+                else max(np.nanmax(np.abs(contour_x)), np.nanmax(np.abs(contour_y)), 1)
+            )
+            contour_x = contour_x / max_extent
+            contour_y = contour_y / max_extent
+            bin_label = row["_metric_bin"]
+            ax.plot(contour_x, contour_y, color=bin_colors.get(bin_label, "black"), linewidth=line_width)
+            if center_label:
+                label_metric = center_label_metric or metric
+                ax.text(
+                    0,
+                    0,
+                    f"{row[label_metric]:.{center_label_decimals}f}",
+                    ha="center",
+                    va="center",
+                    fontsize=center_label_fontsize,
+                    color=center_label_color,
+                )
+        ax.set_aspect("equal")
+        ax.set_xlim(-axis_limit, axis_limit)
+        ax.set_ylim(-axis_limit, axis_limit)
+        ax.axis("off")
+        if show_titles:
+            ax.set_title(f"{row[metric]:.{title_decimals}f}\n{row['_metric_bin']}", fontsize=7)
+
+    for ax in axes.flat[n_contours:]:
+        ax.axis("off")
+
+    if suptitle is None:
+        suptitle = f"Contours ranked by {metric}"
+    fig.suptitle(suptitle, y=1.0)
+    plt.tight_layout()
+
+    if master_dir is not None:
+        os.makedirs(master_dir, exist_ok=True)
+        ext = export_format.lower()
+        if ext not in ["png", "svg", "pdf"]:
+            ext = "svg"
+        custom = custom or f"ranked_contour_gallery_{metric}"
+        save_path = os.path.join(master_dir, f"{custom}.{ext}")
+        fig.savefig(save_path, bbox_inches="tight", transparent=transparent, format=ext)
+        print(f"Saved: {save_path}")
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
+    return fig, axes, plot_df
+
+
+def plot_ranked_contour_gallery_by_group(
+    data_df,
+    metric="contour_shape_index",
+    group_col="geno",
+    contour_x_col="contour_x",
+    contour_y_col="contour_y",
+    group_order=None,
+    sort_ascending=True,
+    n_cols=12,
+    color_quantiles=(1 / 3, 2 / 3),
+    bin_colors=None,
+    global_extent=None,
+    axis_limit=1.05,
+    line_width=1.2,
+    center_label=False,
+    center_label_metric=None,
+    center_label_decimals=2,
+    center_label_fontsize=6,
+    center_label_color="black",
+    show_titles=False,
+    title_decimals=2,
+    figsize_per_panel=(1.15, 1.15),
+    group_box_color="black",
+    group_box_linewidth=1.5,
+    suptitle=None,
+    master_dir=None,
+    custom=None,
+    export_format="svg",
+    transparent=True,
+    show_plot=True,
+):
+    """
+    Plot one large ranked contour gallery split into boxed group blocks.
+
+    Unlike separate per-group figures, this keeps all panels in one figure so the
+    contour scale and panel sizing are directly comparable across groups.
+    """
+    plot_df = _contour_plot_to_pandas(data_df)
+    required_cols = [metric, group_col, contour_x_col, contour_y_col]
+    missing_cols = [col for col in required_cols if col not in plot_df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+
+    plot_df = plot_df.dropna(subset=[metric, group_col]).copy()
+    if plot_df.empty:
+        raise ValueError("No rows remain after dropping missing metric/group values.")
+
+    if group_order is None:
+        group_order = list(pd.Series(plot_df[group_col].dropna().unique()).sort_values())
+    else:
+        group_order = [group for group in group_order if group in set(plot_df[group_col])]
+
+    if bin_colors is None:
+        bin_colors = {
+            "low": "#0173B2",
+            "medium": "0.45",
+            "high": "#D55E00",
+        }
+
+    if global_extent is None:
+        extents = []
+        for _, row in plot_df.iterrows():
+            contour_x = _contour_values_to_array(row[contour_x_col])
+            contour_y = _contour_values_to_array(row[contour_y_col])
+            n_points = min(len(contour_x), len(contour_y))
+            if n_points < 3:
+                continue
+            contour_x = contour_x[:n_points] - np.nanmean(contour_x[:n_points])
+            contour_y = contour_y[:n_points] - np.nanmean(contour_y[:n_points])
+            extents.append(max(np.nanmax(np.abs(contour_x)), np.nanmax(np.abs(contour_y))))
+        global_extent = max(extents) if extents else 1
+    if global_extent is None or not np.isfinite(global_extent) or global_extent <= 0:
+        global_extent = 1
+
+    ranked_groups = {}
+    total_rows = 0
+    for group in group_order:
+        group_df = plot_df[plot_df[group_col] == group].sort_values(metric, ascending=sort_ascending).reset_index(drop=True)
+        if group_df.empty:
+            continue
+        q_low, q_high = group_df[metric].quantile(list(color_quantiles)).to_list()
+        group_df["_metric_bin"] = np.where(
+            group_df[metric] <= q_low,
+            "low",
+            np.where(group_df[metric] >= q_high, "high", "medium"),
+        )
+        n_rows = int(np.ceil(len(group_df) / n_cols))
+        ranked_groups[group] = {"df": group_df, "row_start": total_rows, "n_rows": n_rows}
+        total_rows += n_rows
+
+    fig_width = figsize_per_panel[0] * n_cols
+    fig_height = figsize_per_panel[1] * max(total_rows, 1)
+    fig = plt.figure(figsize=(fig_width, fig_height))
+    grid = fig.add_gridspec(total_rows, n_cols, hspace=0.25, wspace=0.05)
+    axes_by_group = {}
+    combined_ranked = []
+
+    for group, info in ranked_groups.items():
+        group_df = info["df"]
+        row_start = info["row_start"]
+        axes = []
+        for idx, row in group_df.iterrows():
+            local_row = idx // n_cols
+            local_col = idx % n_cols
+            ax = fig.add_subplot(grid[row_start + local_row, local_col])
+            axes.append(ax)
+
+            contour_x = _contour_values_to_array(row[contour_x_col])
+            contour_y = _contour_values_to_array(row[contour_y_col])
+            n_points = min(len(contour_x), len(contour_y))
+            if n_points >= 3:
+                contour_x = contour_x[:n_points] - np.nanmean(contour_x[:n_points])
+                contour_y = contour_y[:n_points] - np.nanmean(contour_y[:n_points])
+                contour_x = contour_x / global_extent
+                contour_y = contour_y / global_extent
+                bin_label = row["_metric_bin"]
+                ax.plot(contour_x, contour_y, color=bin_colors.get(bin_label, "black"), linewidth=line_width)
+                if center_label:
+                    label_metric = center_label_metric or metric
+                    ax.text(
+                        0,
+                        0,
+                        f"{row[label_metric]:.{center_label_decimals}f}",
+                        ha="center",
+                        va="center",
+                        fontsize=center_label_fontsize,
+                        color=center_label_color,
+                    )
+            ax.set_aspect("equal")
+            ax.set_xlim(-axis_limit, axis_limit)
+            ax.set_ylim(-axis_limit, axis_limit)
+            ax.axis("off")
+            if show_titles:
+                ax.set_title(f"{row[metric]:.{title_decimals}f}\n{row['_metric_bin']}", fontsize=7)
+
+        # Fill unused panels in the group's final row so the boxed area is rectangular.
+        used_slots = len(group_df)
+        total_slots = info["n_rows"] * n_cols
+        for empty_idx in range(used_slots, total_slots):
+            local_row = empty_idx // n_cols
+            local_col = empty_idx % n_cols
+            ax = fig.add_subplot(grid[row_start + local_row, local_col])
+            ax.axis("off")
+            axes.append(ax)
+
+        axes_by_group[group] = axes
+        group_df = group_df.copy()
+        group_df["_gallery_group"] = group
+        combined_ranked.append(group_df)
+
+    fig.canvas.draw()
+    for group, axes in axes_by_group.items():
+        positions = [ax.get_position() for ax in axes]
+        left = min(pos.x0 for pos in positions)
+        right = max(pos.x1 for pos in positions)
+        bottom = min(pos.y0 for pos in positions)
+        top = max(pos.y1 for pos in positions)
+        pad = 0.004
+        rect = mpl.patches.Rectangle(
+            (left - pad, bottom - pad),
+            (right - left) + 2 * pad,
+            (top - bottom) + 2 * pad,
+            transform=fig.transFigure,
+            fill=False,
+            edgecolor=group_box_color,
+            linewidth=group_box_linewidth,
+            clip_on=False,
+        )
+        fig.add_artist(rect)
+        fig.text(left, top + pad * 1.5, f"{group} (n={len(ranked_groups[group]['df'])})", ha="left", va="bottom", fontsize=11)
+
+    if suptitle is None:
+        suptitle = f"Contours ranked by {metric}, grouped by {group_col}"
+    fig.suptitle(suptitle, y=0.995)
+
+    if master_dir is not None:
+        os.makedirs(master_dir, exist_ok=True)
+        ext = export_format.lower()
+        if ext not in ["png", "svg", "pdf"]:
+            ext = "svg"
+        custom = custom or f"ranked_contour_gallery_by_{group_col}_{metric}"
+        save_path = os.path.join(master_dir, f"{custom}.{ext}")
+        fig.savefig(save_path, bbox_inches="tight", transparent=transparent, format=ext)
+        print(f"Saved: {save_path}")
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    ranked_df = pd.concat(combined_ranked, ignore_index=True) if combined_ranked else pd.DataFrame()
+    return fig, axes_by_group, ranked_df
 
 
 def overlay_tracks_with_movie(tracks_df, movie_path, colormap=None):
@@ -1435,7 +3082,7 @@ def get_condition_from_filename(df, filename):
     return condition
 
 
-def save_movie(viewer, tracks, feature="particle", save_path="movie.mov", steps=None):
+def save_movie(viewer, tracks, feature="particle", save_path="movie.mov", steps=None, fps=None):
     animation = Animation(viewer)
 
     # Set the display to 2D
@@ -3160,6 +4807,7 @@ def plot_boxplots_svg(
     return_svg=False,
     annotatemultiplier=0.95,
     annotation_decimals=2,
+    annotate_stat="median",
 ):
     """
     Plot boxplots for the specified feature against a categorical x_category with custom order and styling options.
@@ -3215,7 +4863,9 @@ def plot_boxplots_svg(
     return_svg : bool, optional
         If True and export_format is 'svg', returns the post-processed SVG image data as a string.
     annotation_decimals : int, optional
-        Number of decimal places to display for annotated median values. Default is 2.
+        Number of decimal places to display for annotated values. Default is 2.
+    annotate_stat : {"median", "mean"}, optional
+        Statistic written above each box when annotate_median is True. Default is "median".
 
     Returns
     -------
@@ -3340,21 +4990,22 @@ def plot_boxplots_svg(
             spine.set_alpha(0.5)
 
     if annotate_median:
-        # Calculate medians using the helper function
-        medians_dict = _groupby_agg(original_df, x_category, feature, 'median')
+        # Keep labels aligned to the plotted category positions.
+        # Skipping missing categories used to shift later annotations onto the wrong boxes.
+        stat_name = annotate_stat if annotate_stat in {"mean", "median"} else "median"
+        stats_map = _groupby_agg(original_df, x_category, feature, stat_name)
+        if hasattr(stats_map, "to_dict"):
+            stats_map = stats_map.to_dict()
         current_y_max = plt.ylim()[1]
-        
-        # Sort medians by order if provided
-        if order:
-            sorted_medians_list = [medians_dict[cat] for cat in order if cat in medians_dict]
-        else:
-            sorted_medians_list = list(medians_dict.values())
-            
-        for i, median in enumerate(sorted_medians_list):
+        categories = list(order) if order else list(stats_map.keys())
+        for i, cat in enumerate(categories):
+            value = stats_map.get(cat)
+            if value is None or pd.isna(value):
+                continue
             plt.text(
                 i,
                 current_y_max * annotatemultiplier,
-                f"{median:.{annotation_decimals}f}",
+                f"{value:.{annotation_decimals}f}",
                 horizontalalignment="center",
                 size=font_size,
                 color=line_color,
@@ -3657,8 +5308,16 @@ def plot_stacked_bar_svg(
     )
 
     # Determine unique stack categories and assign colors
-    stack_categories = df[stack_category].unique() if stack_order is None else stack_order
-    if isinstance(colormap, (list, tuple, np.ndarray)):
+    stack_categories = list(percentage_data.columns) if stack_order is None else list(stack_order)
+    percentage_data = percentage_data.reindex(columns=stack_categories, fill_value=0)
+    if isinstance(colormap, dict):
+        missing_colors = [cat for cat in stack_categories if cat not in colormap]
+        if missing_colors:
+            raise ValueError(
+                f"colormap dictionary is missing colors for stack categories: {missing_colors}"
+            )
+        colors = [colormap[cat] for cat in stack_categories]
+    elif isinstance(colormap, (list, tuple, np.ndarray)):
         colors = list(colormap)
         if len(colors) < len(stack_categories):
             raise ValueError(
@@ -3669,8 +5328,12 @@ def plot_stacked_bar_svg(
     elif colormap == "colorblind":
         colors = sns.color_palette("colorblind", len(stack_categories))
     elif colormap == "Dark2":
-        cmap = cm.get_cmap("Dark2", len(stack_categories))
-        colors = cmap(np.linspace(0, 1, len(stack_categories)))
+        cmap = cm.get_cmap("Dark2")
+        base_colors = list(cmap.colors) if hasattr(cmap, "colors") else list(cmap(np.linspace(0, 1, 8)))
+        if len(base_colors) < len(stack_categories):
+            repeats = int(np.ceil(len(stack_categories) / len(base_colors)))
+            base_colors = base_colors * repeats
+        colors = base_colors[: len(stack_categories)]
     else:
         colors = plt.get_cmap(colormap, len(stack_categories)).colors
 
@@ -7082,7 +8745,6 @@ def save_movie(
     timer_format="{time:.2f}s",
     fps=100,
 ):
-    import imageio
     import numpy as np
     import pandas as pd
 
@@ -7116,24 +8778,17 @@ def save_movie(
     else:
         steps = total_frames
 
-    frames_list = []
+    # Stream frames directly to disk instead of storing every screenshot in RAM.
+    # Napari canvas screenshots can be large enough that collecting them first
+    # will crash notebooks for long movies.
+    with imageio.get_writer(save_path, fps=fps) as writer:
+        for frame in unique_frames:
+            viewer.dims.set_point(0, frame)
+            if timer_overlay and timer_df is not None:
+                update_timer_text(viewer, timer_df, frame, timer_format)
+            writer.append_data(viewer.screenshot(canvas_only=True))
 
-    # Loop through each frame, update the viewer, and capture a screenshot.
-    for frame in unique_frames:
-        # Set the current frame in the viewer (assuming the time dimension is 0)
-        viewer.dims.set_point(0, frame)
-        # Update timer overlay if enabled.
-        if timer_overlay and timer_df is not None:
-            # update_timer_text should update the viewer overlay based on the current frame.
-            update_timer_text(viewer, timer_df, frame, timer_format)
-        # Take a screenshot of the canvas (set canvas_only=True to exclude UI elements)
-        frame_img = viewer.screenshot(canvas_only=True)
-        frames_list.append(frame_img)
-
-    # Write the frames to a movie file with the specified frames per second.
-    # At 100 fps, each frame displays for 10 ms.
-    imageio.mimwrite(save_path, frames_list, fps=fps)
-    print(f"Movie saved to {save_path} with {len(frames_list)} frames at {fps} fps.")
+    print(f"Movie saved to {save_path} with {len(unique_frames)} frames at {fps} fps.")
 
 
 def load_lut_from_file(path):
@@ -7143,10 +8798,95 @@ def load_lut_from_file(path):
     with open(path, "rb") as f:
         raw = np.frombuffer(f.read(), dtype=np.uint8)
 
-    r, g, b = raw[:256], raw[256:512], raw[512:768]
+    if raw.size >= 768:
+        raw = raw[-768:] if raw.size != 768 else raw
+        r, g, b = raw[:256], raw[256:512], raw[512:768]
+    elif raw.size == 256:
+        r = g = b = raw
+    else:
+        raise ValueError(f"Unsupported Fiji LUT size for {path!r}: {raw.size} bytes")
     rgba_uint8 = np.stack([r, g, b, np.full_like(r, 255)], axis=1)
     rgba_float = rgba_uint8.astype(np.float32) / 255.0
     return rgba_float
+
+
+def fiji_lut_to_python(lut_path, name=None):
+    """
+    Convert one Fiji LUT into reusable Python colormaps.
+
+    Returns a dict with the LUT path, RGBA array, a napari ``Colormap``, and a
+    matplotlib ``LinearSegmentedColormap``.
+    """
+    rgba = load_lut_from_file(lut_path)
+    if name is None:
+        name = os.path.splitext(os.path.basename(lut_path))[0]
+    safe_name = str(name).replace(" ", "_")
+    return {
+        "name": name,
+        "path": str(lut_path),
+        "rgba": rgba,
+        "napari": Colormap(rgba, name=safe_name),
+        "matplotlib": LinearSegmentedColormap.from_list(safe_name, rgba),
+    }
+
+
+def load_fiji_lut_collection(
+    lut_dir=r"D:\GITHUB_SOFTWARE\Fiji.app\luts",
+    *,
+    prefix="JDM",
+    default_lut_name="JDM_Ink Wash Yellow",
+):
+    """
+    Load all Fiji LUTs with a given prefix and return ``(lut_dict, chosen_LUT)``.
+
+    ``chosen_LUT`` is the requested default when available; otherwise the first
+    matching LUT is used. This is intended for notebook use:
+
+    ``jdm_luts, chosen_LUT = load_fiji_lut_collection(...)``
+    """
+    lut_paths = []
+    if os.path.isdir(lut_dir):
+        for name in sorted(os.listdir(lut_dir)):
+            if name.lower().endswith(".lut") and name.startswith(prefix):
+                lut_paths.append(os.path.join(lut_dir, name))
+
+    if len(lut_paths) == 0:
+        raise FileNotFoundError(f"No {prefix!r} LUT files found in {lut_dir!r}")
+
+    lut_dict = {}
+    for path in lut_paths:
+        lut_name = os.path.splitext(os.path.basename(path))[0]
+        lut_dict[lut_name] = fiji_lut_to_python(path, name=lut_name)
+
+    if default_lut_name in lut_dict:
+        chosen_LUT = lut_dict[default_lut_name]
+    else:
+        chosen_name = sorted(lut_dict)[0]
+        print(
+            f"[LUT] Requested {default_lut_name!r} was not found. "
+            f"Using {chosen_name!r} instead."
+        )
+        chosen_LUT = lut_dict[chosen_name]
+
+    print(f"[LUT] Loaded {len(lut_dict)} {prefix!r} LUTs from {lut_dir}")
+    print(f"[LUT] chosen_LUT: {chosen_LUT['name']}")
+    return lut_dict, chosen_LUT
+
+
+def _coerce_lut_colormap(lut=None, *, target="matplotlib", fallback="gray"):
+    if lut is None:
+        return fallback
+    if isinstance(lut, dict):
+        if target in lut:
+            return lut[target]
+        if "rgba" in lut:
+            name = lut.get("name", "fiji_lut").replace(" ", "_")
+            if target == "napari":
+                return Colormap(lut["rgba"], name=name)
+            return LinearSegmentedColormap.from_list(name, lut["rgba"])
+    if target == "napari" and isinstance(lut, Colormap):
+        return lut
+    return lut
 
 
 def special_colormap_for_feature(lut_filepath=None):
@@ -7853,14 +9593,16 @@ def compute_cell_edge_angle_binning(
     The circle (0 to 2π) is divided into edge_angle_bins; for each bin, the maximum
     radial distance from the centroid is computed. Missing bins are filled by circular
     linear interpolation. The radii are then inflated by edge_padding and optionally
-    smoothed using a periodic spline (controlled by edge_smoothing).
+    smoothed in polar/radial space. Smoothing the radii rather than fitting an
+    unconstrained XY spline keeps one contour point per angle, which prevents the
+    outline from looping back and crossing itself.
 
     Parameters
       points (np.ndarray): Array of shape (N,2) of [x, y] coordinates.
       centroid (np.ndarray): [x, y] coordinates of the centroid.
       edge_angle_bins (int): Number of angular bins.
       edge_padding (float): Fractional padding (e.g., 0.05 increases each radius by 5%).
-      edge_smoothing (float): Spline smoothing parameter (0 means no smoothing).
+      edge_smoothing (float): Radial smoothing strength (0 means no smoothing).
 
     Returns
       np.ndarray: An (M,2) array with the [x, y] coordinates outlining the cell edge.
@@ -7894,23 +9636,297 @@ def compute_cell_edge_angle_binning(
             max_radii = np.interp(bin_centers, angles_ext, radii_ext)
 
     padded_radii = max_radii * (1 + edge_padding)
+    if edge_smoothing > 0 and len(padded_radii) > 2:
+        # Circular Gaussian smoothing in radius/angle space preserves angular order.
+        # Values < 1 are treated as a fraction of the angular sampling density.
+        sigma_bins = (
+            float(edge_smoothing) * edge_angle_bins / (2 * np.pi)
+            if edge_smoothing < 1
+            else float(edge_smoothing)
+        )
+        sigma_bins = max(sigma_bins, 0.25)
+        radius = max(1, int(math.ceil(3 * sigma_bins)))
+        offsets = np.arange(-radius, radius + 1)
+        kernel = np.exp(-(offsets**2) / (2 * sigma_bins**2))
+        kernel = kernel / kernel.sum()
+        padded_ext = np.pad(padded_radii, radius, mode="wrap")
+        padded_radii = np.convolve(padded_ext, kernel, mode="valid")
+
     x_edge = centroid[0] + padded_radii * np.cos(bin_centers)
     y_edge = centroid[1] + padded_radii * np.sin(bin_centers)
     edge_points = np.vstack((x_edge, y_edge)).T
 
+    # Repeat the first point so line plots visibly close the contour.
+    return np.vstack([edge_points, edge_points[0]])
+
+
+def compute_cell_edge_angle_binning_legacy_outer_envelope(
+    points,
+    centroid,
+    edge_angle_bins=180,
+    edge_padding=0.05,
+    edge_smoothing=0.1,
+    legacy_spline_points=200,
+):
+    """
+    Approximate the older XY-spline contour, then keep only its outer radial envelope.
+
+    The old XY spline could create loops. This keeps the old contour's reach by
+    sampling the spline, then re-binning those points by angle and taking the
+    outermost radius in each angular direction. The final contour is therefore
+    ordered around the cell and cannot self-cross.
+    """
+    diffs = points - centroid
+    angles = np.mod(np.arctan2(diffs[:, 1], diffs[:, 0]), 2 * np.pi)
+    radii = np.sqrt(np.sum(diffs**2, axis=1))
+
+    bin_edges = np.linspace(0, 2 * np.pi, edge_angle_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    max_radii = np.full_like(bin_centers, np.nan)
+
+    for i in range(edge_angle_bins):
+        mask = (angles >= bin_edges[i]) & (angles < bin_edges[i + 1])
+        if np.any(mask):
+            max_radii[i] = np.max(radii[mask])
+
+    if np.any(np.isnan(max_radii)):
+        valid = ~np.isnan(max_radii)
+        if np.sum(valid) < 2:
+            max_radii = np.zeros_like(bin_centers)
+        else:
+            angles_ext = np.concatenate(
+                (bin_centers[valid], np.array([bin_centers[valid][0] + 2 * np.pi]))
+            )
+            radii_ext = np.concatenate(
+                (max_radii[valid], np.array([max_radii[valid][0]]))
+            )
+            max_radii = np.interp(bin_centers, angles_ext, radii_ext)
+
+    padded_radii = max_radii * (1 + edge_padding)
+    old_edge = np.vstack(
+        [
+            centroid[0] + padded_radii * np.cos(bin_centers),
+            centroid[1] + padded_radii * np.sin(bin_centers),
+        ]
+    )
+
+    envelope_points = old_edge.T
     if edge_smoothing > 0:
         try:
-            tck, u = splprep(
-                [edge_points[:, 0], edge_points[:, 1]], s=edge_smoothing, per=True
-            )
-            u_fine = np.linspace(0, 1, 200)
-            smooth_edge = np.array(splev(u_fine, tck)).T
-            return smooth_edge
+            tck, _u = splprep(old_edge, s=edge_smoothing, per=True)
+            u_fine = np.linspace(0, 1, legacy_spline_points)
+            spline_points = np.array(splev(u_fine, tck)).T
+            envelope_points = np.vstack([envelope_points, spline_points])
         except Exception as e:
-            print("Smoothing failed:", e)
-            return edge_points
-    else:
-        return edge_points
+            print("Legacy smoothing failed; using unsmoothed envelope:", e)
+
+    return compute_cell_edge_angle_binning(
+        envelope_points,
+        centroid,
+        edge_angle_bins=edge_angle_bins,
+        edge_padding=0,
+        edge_smoothing=0,
+    )
+
+
+def _draw_disk_on_mask(mask, center_y, center_x, radius):
+    radius = int(max(0, radius))
+    y0 = max(0, int(round(center_y)) - radius)
+    y1 = min(mask.shape[0], int(round(center_y)) + radius + 1)
+    x0 = max(0, int(round(center_x)) - radius)
+    x1 = min(mask.shape[1], int(round(center_x)) + radius + 1)
+    if y0 >= y1 or x0 >= x1:
+        return
+    yy, xx = np.ogrid[y0:y1, x0:x1]
+    mask[y0:y1, x0:x1] |= (
+        (yy - center_y) ** 2 + (xx - center_x) ** 2 <= radius**2
+    )
+
+
+def _draw_line_on_mask(mask, point_a_xy, point_b_xy, width):
+    y0, x0 = int(round(point_a_xy[1])), int(round(point_a_xy[0]))
+    y1, x1 = int(round(point_b_xy[1])), int(round(point_b_xy[0]))
+    n_steps = max(abs(y1 - y0), abs(x1 - x0), 1) + 1
+    ys = np.linspace(y0, y1, n_steps)
+    xs = np.linspace(x0, x1, n_steps)
+    for y, x in zip(ys, xs):
+        _draw_disk_on_mask(mask, y, x, width)
+
+
+def _line_hits_forbidden(point_a_xy, point_b_xy, forbidden_mask):
+    if forbidden_mask is None:
+        return False
+    y0, x0 = int(round(point_a_xy[1])), int(round(point_a_xy[0]))
+    y1, x1 = int(round(point_b_xy[1])), int(round(point_b_xy[0]))
+    n_steps = max(abs(y1 - y0), abs(x1 - x0), 1) + 1
+    ys = np.clip(np.round(np.linspace(y0, y1, n_steps)).astype(int), 0, forbidden_mask.shape[0] - 1)
+    xs = np.clip(np.round(np.linspace(x0, x1, n_steps)).astype(int), 0, forbidden_mask.shape[1] - 1)
+    return bool(np.any(forbidden_mask[ys, xs]))
+
+
+def _polygon_to_mask(contour_xy, shape, min_xy):
+    from skimage.draw import polygon
+
+    contour_xy = np.asarray(contour_xy, dtype=float) - min_xy
+    rr, cc = polygon(contour_xy[:, 1], contour_xy[:, 0], shape=shape)
+    mask = np.zeros(shape, dtype=bool)
+    mask[rr, cc] = True
+    return mask
+
+
+def _smooth_closed_contour(contour, smoothing):
+    if smoothing <= 0 or len(contour) < 5:
+        return contour
+    sigma = float(smoothing) * len(contour) / (2 * np.pi) if smoothing < 1 else float(smoothing)
+    sigma = max(sigma, 0.25)
+    radius = max(1, int(math.ceil(3 * sigma)))
+    offsets = np.arange(-radius, radius + 1)
+    kernel = np.exp(-(offsets**2) / (2 * sigma**2))
+    kernel = kernel / kernel.sum()
+    smoothed = []
+    for dim in range(contour.shape[1]):
+        padded = np.pad(contour[:, dim], radius, mode="wrap")
+        smoothed.append(np.convolve(padded, kernel, mode="valid"))
+    return np.column_stack(smoothed)
+
+
+def compute_cell_edge_minimal_bridge(
+    points,
+    *,
+    point_radius=2.0,
+    bridge_width=1.5,
+    mask_padding=12,
+    edge_padding=0.0,
+    edge_smoothing=0.0,
+    forbidden_contours=None,
+    enforce_point_containment=True,
+):
+    """
+    Build a single contour from point blobs joined by narrow shortest bridges.
+
+    This is intended for cells/growth cones where the point footprint has sparse
+    or separated regions. Unlike radial/outer-envelope methods, it does not
+    inflate across empty angular sectors; separated components are connected by
+    narrow line bridges between their closest points before extracting the
+    contour from the resulting mask.
+    """
+    from scipy.ndimage import binary_fill_holes
+    from scipy.spatial import cKDTree
+    from skimage.measure import find_contours, label
+
+    points = np.asarray(points, dtype=float)
+    if len(points) < 3:
+        raise ValueError("At least three points are required to compute a contour")
+
+    point_radius = float(point_radius)
+    bridge_width = float(bridge_width)
+    pad = int(max(mask_padding, point_radius * 4, bridge_width * 4, 4))
+
+    min_xy = np.floor(points.min(axis=0)).astype(int) - pad
+    max_xy = np.ceil(points.max(axis=0)).astype(int) + pad
+    for forbidden in forbidden_contours or []:
+        forbidden = np.asarray(forbidden, dtype=float)
+        if len(forbidden):
+            min_xy = np.minimum(min_xy, np.floor(forbidden.min(axis=0)).astype(int) - pad)
+            max_xy = np.maximum(max_xy, np.ceil(forbidden.max(axis=0)).astype(int) + pad)
+    width = int(max_xy[0] - min_xy[0] + 1)
+    height = int(max_xy[1] - min_xy[1] + 1)
+    shifted = points - min_xy
+
+    mask = np.zeros((height, width), dtype=bool)
+    forbidden_mask = None
+    if forbidden_contours:
+        forbidden_mask = np.zeros_like(mask, dtype=bool)
+        for forbidden in forbidden_contours:
+            forbidden_mask |= _polygon_to_mask(forbidden, mask.shape, min_xy)
+
+    for x, y in shifted:
+        _draw_disk_on_mask(mask, y, x, point_radius)
+    if forbidden_mask is not None:
+        mask &= ~forbidden_mask
+
+    for _ in range(100):
+        labels = label(mask, connectivity=2)
+        component_ids = [component_id for component_id in np.unique(labels) if component_id != 0]
+        if len(component_ids) <= 1:
+            break
+
+        point_labels = labels[
+            np.clip(np.round(shifted[:, 1]).astype(int), 0, height - 1),
+            np.clip(np.round(shifted[:, 0]).astype(int), 0, width - 1),
+        ]
+        component_points = {
+            component_id: shifted[point_labels == component_id]
+            for component_id in component_ids
+        }
+        component_points = {
+            component_id: pts
+            for component_id, pts in component_points.items()
+            if len(pts) > 0
+        }
+        if len(component_points) <= 1:
+            break
+
+        best_pair = None
+        best_distance = np.inf
+        component_items = list(component_points.items())
+        for idx, (component_a, points_a) in enumerate(component_items[:-1]):
+            tree = cKDTree(points_a)
+            for component_b, points_b in component_items[idx + 1:]:
+                distances, indices = tree.query(points_b, k=1)
+                for candidate_idx in np.argsort(distances):
+                    candidate_idx = int(candidate_idx)
+                    point_a = points_a[int(indices[candidate_idx])]
+                    point_b = points_b[candidate_idx]
+                    if _line_hits_forbidden(point_a, point_b, forbidden_mask):
+                        continue
+                    distance = float(distances[candidate_idx])
+                    if distance < best_distance:
+                        best_distance = distance
+                        best_pair = (point_a, point_b, component_a, component_b)
+                    break
+        if best_pair is None:
+            break
+        _draw_line_on_mask(mask, best_pair[0], best_pair[1], bridge_width)
+        if forbidden_mask is not None:
+            mask &= ~forbidden_mask
+
+    if edge_padding > 0:
+        from scipy.ndimage import binary_dilation
+
+        iterations = max(1, int(round(edge_padding * max(width, height))))
+        mask = binary_dilation(mask, iterations=iterations)
+
+    mask = binary_fill_holes(mask)
+    if forbidden_mask is not None:
+        mask &= ~forbidden_mask
+    contours = find_contours(mask.astype(float), level=0.5)
+    if not contours:
+        raise ValueError("Could not extract a contour from the minimal-bridge mask")
+
+    contour_rc = max(contours, key=len)
+    unsmoothed_contour_xy = np.column_stack([contour_rc[:, 1], contour_rc[:, 0]]) + min_xy
+    contour_xy = _smooth_closed_contour(unsmoothed_contour_xy, edge_smoothing)
+    if enforce_point_containment:
+        contains = mpltPath.Path(contour_xy).contains_points(points, radius=1.0)
+        if not np.all(contains):
+            contour_xy = unsmoothed_contour_xy
+            contains = mpltPath.Path(contour_xy).contains_points(points, radius=1.0)
+        dilation_count = 0
+        while not np.all(contains) and dilation_count < 20:
+            from scipy.ndimage import binary_dilation
+
+            mask = binary_dilation(mask, iterations=1)
+            if forbidden_mask is not None:
+                mask &= ~forbidden_mask
+            contours = find_contours(mask.astype(float), level=0.5)
+            if not contours:
+                break
+            contour_rc = max(contours, key=len)
+            contour_xy = np.column_stack([contour_rc[:, 1], contour_rc[:, 0]]) + min_xy
+            contains = mpltPath.Path(contour_xy).contains_points(points, radius=1.0)
+            dilation_count += 1
+    return np.vstack([contour_xy, contour_xy[0]])
 
 
 # Default constants; adjust as needed.
@@ -9079,6 +11095,16 @@ def plot_tracks_polars_static(
     return_svg=False,  # if True and exporting as SVG, return the SVG string
     auto_select_tracks=30,  # target number of tracks for auto time selection (disabled if time_start/end specified)
     filename=None,  # filename to display on the plot
+    contours_df=None,  # optional contour dataframe with stored contour_x/contour_y columns
+    show_contour=False,
+    contour_group_col="filename",
+    contour_x_col="contour_x",
+    contour_y_col="contour_y",
+    contour_coordinate_units="pixels",
+    contour_color="black",
+    contour_linewidth=1.0,
+    contour_alpha=0.95,
+    contour_linestyle="--",
 ):
     """
     Create a static plot of tracks using Polars DataFrame directly with full functionality.
@@ -9149,6 +11175,19 @@ def plot_tracks_polars_static(
         Only used when both time_start and time_end are None.
     filename : str, optional
         Filename to display on the plot as an annotation
+    contours_df : polars.DataFrame or pandas.DataFrame, optional
+        Contour dataframe containing stored contour coordinate columns.
+    show_contour : bool
+        Whether to overlay matching contours from ``contours_df``.
+    contour_group_col : str
+        Column used to match contour rows to this plotted cell/movie.
+    contour_x_col, contour_y_col : str
+        Columns containing stored contour x/y coordinate arrays.
+    contour_coordinate_units : str
+        ``"pixels"`` converts contours by ``pixel_size_um``; otherwise coordinates
+        are assumed to already be in microns.
+    contour_color, contour_linewidth, contour_alpha, contour_linestyle
+        Matplotlib styling for contour overlays.
         
     Returns
     -------
@@ -9234,45 +11273,56 @@ def plot_tracks_polars_static(
     if df_pandas.empty:
         raise ValueError("No data remaining after filtering")
     
-    # Enhanced color mapping with order support
+    # Enhanced color mapping with order support. If an explicit dictionary is
+    # provided, always use it as state -> color and do not infer/sample colors.
     if color_by in df_pandas.columns:
-        # Handle categorical vs continuous coloring
-        is_categorical = (
-            df_pandas[color_by].dtype == 'object' or 
-            pd.api.types.is_categorical_dtype(df_pandas[color_by]) or
-            color_by in ['cluster', 'cluster_id', 'motion_class'] or 
-            'cluster' in color_by.lower()
-        )
-        
-        if is_categorical:
-            # Get unique values and apply order if provided
-            all_unique_values = sorted([v for v in df_pandas[color_by].unique() if pd.notna(v)])
-            
+        if isinstance(colorway, dict):
+            all_unique_values = [v for v in df_pandas[color_by].unique() if pd.notna(v)]
             if order is None:
-                unique_classes = all_unique_values
+                unique_classes = list(colorway.keys())
+                unique_classes.extend([v for v in sorted(all_unique_values) if v not in unique_classes])
             else:
-                # Use provided order, but only include values that exist in data
-                unique_classes = [c for c in order if c in all_unique_values]
-                # Add any remaining values not in the provided order
-                remaining_values = [c for c in all_unique_values if c not in unique_classes]
-                unique_classes.extend(remaining_values)
-            
-            # Create color mapping
-            n_colors = len(unique_classes)
-            if n_colors > 0:
-                colors = plt.cm.get_cmap(colorway)(np.linspace(0, 1, max(n_colors, 1)))
-                color_map = dict(zip(unique_classes, colors))
-                df_pandas['plot_color'] = df_pandas[color_by].map(color_map)
-            else:
-                df_pandas['plot_color'] = 'blue'
+                unique_classes = [c for c in order if c in all_unique_values or c in colorway]
+                unique_classes.extend([v for v in sorted(all_unique_values) if v not in unique_classes])
+            color_map = {cls: colorway.get(cls, "gray") for cls in unique_classes}
+            df_pandas['plot_color'] = df_pandas[color_by].map(color_map).fillna("gray")
         else:
-            # Continuous coloring
-            norm = plt.Normalize(vmin=df_pandas[color_by].min(), 
-                               vmax=df_pandas[color_by].max())
-            df_pandas['plot_color'] = df_pandas[color_by].apply(
-                lambda x: plt.cm.get_cmap(colorway)(norm(x))
+        # Handle categorical vs continuous coloring
+            is_categorical = (
+                df_pandas[color_by].dtype == 'object' or 
+                pd.api.types.is_categorical_dtype(df_pandas[color_by]) or
+                color_by in ['cluster', 'cluster_id', 'motion_class'] or 
+                'cluster' in color_by.lower()
             )
-            unique_classes = None  # For continuous data
+        
+            if is_categorical:
+                # Get unique values and apply order if provided
+                all_unique_values = sorted([v for v in df_pandas[color_by].unique() if pd.notna(v)])
+                
+                if order is None:
+                    unique_classes = all_unique_values
+                else:
+                    # Use provided order, but only include values that exist in data
+                    unique_classes = [c for c in order if c in all_unique_values]
+                    # Add any remaining values not in the provided order
+                    remaining_values = [c for c in all_unique_values if c not in unique_classes]
+                    unique_classes.extend(remaining_values)
+                
+                n_colors = len(unique_classes)
+                if n_colors > 0:
+                    colors = plt.cm.get_cmap(colorway)(np.linspace(0, 1, max(n_colors, 1)))
+                    color_map = dict(zip(unique_classes, colors))
+                    df_pandas['plot_color'] = df_pandas[color_by].map(color_map)
+                else:
+                    df_pandas['plot_color'] = 'blue'
+            else:
+                # Continuous coloring
+                norm = plt.Normalize(vmin=df_pandas[color_by].min(), 
+                                   vmax=df_pandas[color_by].max())
+                df_pandas['plot_color'] = df_pandas[color_by].apply(
+                    lambda x: plt.cm.get_cmap(colorway)(norm(x))
+                )
+                unique_classes = None  # For continuous data
     else:
         # Default color if column doesn't exist
         df_pandas['plot_color'] = 'blue'
@@ -9363,6 +11413,60 @@ def plot_tracks_polars_static(
         # Set unique identifier for SVG
         line.set_gid(f"track_{track_id}")
         plotted_tracks.append(track_id)
+
+    # Optionally overlay stored cell contours on the same axes.
+    n_contours_plotted = 0
+    if show_contour and contours_df is not None:
+        if isinstance(contours_df, pl.DataFrame):
+            contour_pdf = contours_df.to_pandas()
+        elif isinstance(contours_df, pd.DataFrame):
+            contour_pdf = contours_df.copy()
+        else:
+            raise TypeError("contours_df must be a Polars or pandas dataframe")
+
+        missing_contour_cols = [
+            col for col in [contour_x_col, contour_y_col] if col not in contour_pdf.columns
+        ]
+        if missing_contour_cols:
+            raise ValueError(f"contours_df is missing required columns: {missing_contour_cols}")
+
+        contour_match_value = filename
+        if contour_match_value is None and contour_group_col in df_pandas.columns:
+            non_null_values = df_pandas[contour_group_col].dropna().unique()
+            if len(non_null_values):
+                contour_match_value = non_null_values[0]
+
+        if contour_group_col in contour_pdf.columns and contour_match_value is not None:
+            contour_pdf = contour_pdf[contour_pdf[contour_group_col] == contour_match_value].copy()
+
+        for _, contour_row in contour_pdf.iterrows():
+            x_values = contour_row[contour_x_col]
+            y_values = contour_row[contour_y_col]
+            if x_values is None or y_values is None:
+                continue
+
+            contour_x = np.asarray(x_values, dtype=float)
+            contour_y = np.asarray(y_values, dtype=float)
+            if contour_x.ndim != 1 or contour_y.ndim != 1 or len(contour_x) != len(contour_y):
+                raise ValueError("Stored contour x/y values must be 1D arrays of equal length")
+            if len(contour_x) == 0:
+                continue
+
+            if str(contour_coordinate_units).lower().startswith("pixel"):
+                contour_x = contour_x * pixel_size_um
+                contour_y = contour_y * pixel_size_um
+
+            contour_line = ax.plot(
+                contour_x,
+                contour_y,
+                color=contour_color,
+                linewidth=contour_linewidth,
+                alpha=contour_alpha,
+                linestyle=contour_linestyle,
+            )[0]
+            if "contour_id" in contour_row:
+                contour_line.set_gid(f"contour_{contour_row['contour_id']}")
+            n_contours_plotted += 1
     
     # Set plot limits and aspect
     ax.set_xlim(0, plot_size_um)
@@ -9491,7 +11595,8 @@ def plot_tracks_polars_static(
         else:
             base_name = f"tracks_plot_{len(plotted_tracks)}tracks"
             
-        out_filename = f"{base_name}_tracks.{ext}"
+        suffix = "tracks_with_contour" if show_contour else "tracks"
+        out_filename = f"{base_name}_{suffix}.{ext}"
         full_save_path = os.path.join(save_dir, out_filename)
         
         plt.savefig(
@@ -9536,6 +11641,7 @@ def plot_tracks_polars_static(
         "plotted_tracks": plotted_tracks,
         "n_tracks_plotted": len(plotted_tracks),
         "filtered_data_shape": df_pandas.shape,
+        "n_contours_plotted": n_contours_plotted,
         "coordinate_range": {
             "x_min": df_pandas['x_um'].min(),
             "x_max": df_pandas['x_um'].max(),
@@ -9550,6 +11656,4528 @@ def plot_tracks_polars_static(
         result["svg_data"] = svg_data
     
     return result
+
+
+def _as_pandas_copy(df):
+    """Return a pandas copy while accepting pandas or Polars input."""
+    if isinstance(df, pl.DataFrame):
+        return df.to_pandas()
+    if isinstance(df, pd.DataFrame):
+        return df.copy()
+    raise TypeError("Expected a pandas.DataFrame or polars.DataFrame")
+
+
+def _restore_dataframe_type(df_pandas, template_df):
+    """Return a dataframe with the same backend as the input template."""
+    if isinstance(template_df, pl.DataFrame):
+        return pl.from_pandas(df_pandas)
+    return df_pandas
+
+
+def select_single_cell_df(
+    tracks_df,
+    filename=None,
+    file_id=None,
+    *,
+    filename_col="filename",
+    file_id_col="file_id",
+    random_state=None,
+):
+    """
+    Select one cell/movie from a larger dataframe.
+
+    This is intended as the first step for paper raw-movie overlays: do all broad
+    filtering upstream, then pass the returned single-cell dataframe to the movie
+    and still-image helpers.
+    """
+    df = _as_pandas_copy(tracks_df)
+
+    if filename is not None:
+        if filename_col not in df.columns:
+            raise ValueError(f"Column {filename_col!r} not found")
+        df = df[df[filename_col] == filename].copy()
+    elif file_id is not None:
+        if file_id_col not in df.columns:
+            raise ValueError(f"Column {file_id_col!r} not found")
+        df = df[df[file_id_col] == file_id].copy()
+    else:
+        if filename_col not in df.columns:
+            raise ValueError(f"Column {filename_col!r} not found")
+        filenames = df[filename_col].dropna().unique()
+        if len(filenames) == 0:
+            raise ValueError("No filenames available for single-cell selection")
+        rng = np.random.default_rng(random_state)
+        filename = rng.choice(filenames)
+        df = df[df[filename_col] == filename].copy()
+
+    if df.empty:
+        raise ValueError("Single-cell selection returned no rows")
+
+    n_cells = df[filename_col].nunique() if filename_col in df.columns else 0
+    if n_cells != 1:
+        raise ValueError(
+            f"Expected exactly one {filename_col!r}; selected data contains {n_cells}"
+        )
+
+    return _restore_dataframe_type(df, tracks_df)
+
+
+def find_track_rich_frame_range(
+    single_cell_df,
+    *,
+    target_tracks=30,
+    window_frames=None,
+    window_seconds=15,
+    step_frames=None,
+    frame_interval=config.TIME_BETWEEN_FRAMES,
+    start_frame=None,
+    min_track_points=2,
+    track_id_col="unique_id",
+    frame_col="frame",
+):
+    """
+    Find the first time window containing at least ``target_tracks`` usable tracks.
+
+    This is a frame-based version of the older auto-selection logic used by
+    ``plot_tracks_polars_static``. It deliberately returns only a frame range so
+    track selection can stay outside the rendering functions.
+    """
+    df = _as_pandas_copy(single_cell_df)
+    for col in [track_id_col, frame_col]:
+        if col not in df.columns:
+            raise ValueError(f"Column {col!r} not found")
+
+    if window_frames is None:
+        window_frames = int(round(window_seconds / frame_interval))
+    if window_frames <= 0:
+        raise ValueError("window_frames must be positive")
+
+    min_frame = int(df[frame_col].min())
+    max_frame = int(df[frame_col].max())
+    if start_frame is None:
+        start_frame = min_frame
+    else:
+        start_frame = max(min_frame, int(start_frame))
+
+    if step_frames is None:
+        step_frames = max(1, int(round(1.0 / frame_interval)))
+
+    best = None
+    for current_start in range(start_frame, max_frame + 1, step_frames):
+        current_end = min(max_frame, current_start + window_frames - 1)
+        window = df[(df[frame_col] >= current_start) & (df[frame_col] <= current_end)]
+        counts = window.groupby(track_id_col).size()
+        usable = counts[counts >= min_track_points]
+        n_tracks = int(len(usable))
+
+        if best is None or n_tracks > best["n_tracks"]:
+            best = {
+                "frame_start": current_start,
+                "frame_end": current_end,
+                "n_tracks": n_tracks,
+            }
+
+        if n_tracks >= target_tracks:
+            return {
+                "frame_start": current_start,
+                "frame_end": current_end,
+                "n_tracks": n_tracks,
+                "target_tracks": target_tracks,
+                "target_met": True,
+            }
+
+    if best is None:
+        raise ValueError("Could not find a valid frame window")
+
+    best["target_tracks"] = target_tracks
+    best["target_met"] = False
+    return best
+
+
+def find_population_rich_frame_range(
+    single_cell_df,
+    *,
+    populations=None,
+    population_col="final_population",
+    min_tracks_per_population=1,
+    window_frames=None,
+    window_seconds=15,
+    step_frames=None,
+    frame_interval=config.TIME_BETWEEN_FRAMES,
+    start_frame=None,
+    min_track_points=2,
+    track_id_col="unique_id",
+    frame_col="frame",
+):
+    """
+    Find a frame window containing examples from every requested population.
+
+    A population is considered present when at least ``min_tracks_per_population``
+    unique tracks have at least ``min_track_points`` rows in that population within
+    the candidate window. This makes it useful for choosing one movie segment that
+    contains all behaviour types at some point in the clip.
+    """
+    df = _as_pandas_copy(single_cell_df)
+    for col in [track_id_col, frame_col, population_col]:
+        if col not in df.columns:
+            raise ValueError(f"Column {col!r} not found")
+
+    if populations is None:
+        populations = sorted(pd.Series(df[population_col]).dropna().unique())
+    else:
+        populations = list(populations)
+    if len(populations) == 0:
+        raise ValueError("No populations were provided or found")
+
+    if isinstance(min_tracks_per_population, dict):
+        min_by_population = {
+            pop: int(min_tracks_per_population.get(pop, 1)) for pop in populations
+        }
+    else:
+        min_by_population = {
+            pop: int(min_tracks_per_population) for pop in populations
+        }
+
+    if window_frames is None:
+        window_frames = int(round(window_seconds / frame_interval))
+    if window_frames <= 0:
+        raise ValueError("window_frames must be positive")
+
+    min_frame = int(df[frame_col].min())
+    max_frame = int(df[frame_col].max())
+    if start_frame is None:
+        start_frame = min_frame
+    else:
+        start_frame = max(min_frame, int(start_frame))
+
+    if step_frames is None:
+        step_frames = max(1, int(round(1.0 / frame_interval)))
+
+    def summarize_window(window_df):
+        counts_by_population = {}
+        for pop in populations:
+            pop_window = window_df[window_df[population_col] == pop]
+            if pop_window.empty:
+                counts_by_population[pop] = 0
+                continue
+            track_counts = pop_window.groupby(track_id_col).size()
+            usable = track_counts[track_counts >= min_track_points]
+            counts_by_population[pop] = int(len(usable))
+        missing = [
+            pop
+            for pop in populations
+            if counts_by_population[pop] < min_by_population[pop]
+        ]
+        return counts_by_population, missing
+
+    best = None
+    for current_start in range(start_frame, max_frame + 1, step_frames):
+        current_end = min(max_frame, current_start + window_frames - 1)
+        window = df[(df[frame_col] >= current_start) & (df[frame_col] <= current_end)]
+        counts_by_population, missing = summarize_window(window)
+        populations_present = len(populations) - len(missing)
+        total_population_tracks = int(sum(counts_by_population.values()))
+
+        candidate = {
+            "frame_start": current_start,
+            "frame_end": current_end,
+            "counts_by_population": counts_by_population,
+            "missing_populations": missing,
+            "populations_present": populations_present,
+            "total_population_tracks": total_population_tracks,
+        }
+
+        if best is None:
+            best = candidate
+        else:
+            best_score = (
+                best["populations_present"],
+                best["total_population_tracks"],
+            )
+            candidate_score = (populations_present, total_population_tracks)
+            if candidate_score > best_score:
+                best = candidate
+
+        if len(missing) == 0:
+            candidate["target_met"] = True
+            candidate["populations"] = populations
+            candidate["min_tracks_per_population"] = min_by_population
+            return candidate
+
+    if best is None:
+        raise ValueError("Could not find a valid frame window")
+
+    best["target_met"] = False
+    best["populations"] = populations
+    best["min_tracks_per_population"] = min_by_population
+    return best
+
+
+def filter_tracks_for_raw_overlay(
+    single_cell_df,
+    *,
+    frame_range=None,
+    track_id_col="unique_id",
+    frame_col="frame",
+    min_track_points=2,
+    min_track_length_frames=None,
+    target_tracks=30,
+    selection_method="longest",
+    include_track_ids=None,
+    population_col=None,
+    populations=None,
+    tracks_per_population=None,
+    random_state=42,
+):
+    """
+    Select the track subset to overlay, without doing any rendering.
+
+    The returned dataframe keeps all rows for the selected track IDs, so the same
+    selection can be used consistently for quick QC, napari movies, and stills.
+    """
+    df = _as_pandas_copy(single_cell_df)
+    for col in [track_id_col, frame_col]:
+        if col not in df.columns:
+            raise ValueError(f"Column {col!r} not found")
+
+    if population_col is not None and populations is not None:
+        if population_col not in df.columns:
+            raise ValueError(f"Column {population_col!r} not found")
+        populations = list(populations)
+        df = df[df[population_col].isin(populations)].copy()
+
+    if include_track_ids is not None:
+        selected_ids = list(include_track_ids)
+    else:
+        if frame_range is None:
+            window_df = df
+        else:
+            frame_start, frame_end = frame_range
+            window_df = df[
+                (df[frame_col] >= int(frame_start)) & (df[frame_col] <= int(frame_end))
+            ].copy()
+
+        if window_df.empty:
+            raise ValueError("No tracks are present in the requested frame range")
+
+        summary = (
+            window_df.groupby(track_id_col)[frame_col]
+            .agg(["count", "min", "max"])
+            .reset_index()
+        )
+        summary["track_length_frames"] = summary["max"] - summary["min"] + 1
+        summary = summary[summary["count"] >= min_track_points]
+
+        if min_track_length_frames is not None:
+            summary = summary[
+                summary["track_length_frames"] >= int(min_track_length_frames)
+            ]
+
+        if summary.empty:
+            raise ValueError("No tracks passed the selection filters")
+
+        if selection_method == "balanced_by_population":
+            if population_col is None:
+                raise ValueError(
+                    "population_col is required for selection_method='balanced_by_population'"
+                )
+            if population_col not in window_df.columns:
+                raise ValueError(f"Column {population_col!r} not found")
+            if populations is None:
+                populations = sorted(
+                    pd.Series(window_df[population_col]).dropna().unique()
+                )
+            else:
+                populations = list(populations)
+            if len(populations) == 0:
+                raise ValueError("No populations available for balanced selection")
+
+            if tracks_per_population is None:
+                if target_tracks is None:
+                    tracks_per_population = 1
+                else:
+                    tracks_per_population = max(1, int(target_tracks) // len(populations))
+            tracks_per_population = int(tracks_per_population)
+
+            selected_ids = []
+            selected_by_population = {}
+            for pop in populations:
+                pop_window = window_df[window_df[population_col] == pop]
+                pop_summary = (
+                    pop_window.groupby(track_id_col)[frame_col]
+                    .agg(["count", "min", "max"])
+                    .reset_index()
+                )
+                if pop_summary.empty:
+                    selected_by_population[pop] = []
+                    continue
+                pop_summary["track_length_frames"] = (
+                    pop_summary["max"] - pop_summary["min"] + 1
+                )
+                pop_summary = pop_summary[pop_summary["count"] >= min_track_points]
+                if min_track_length_frames is not None:
+                    pop_summary = pop_summary[
+                        pop_summary["track_length_frames"]
+                        >= int(min_track_length_frames)
+                    ]
+                pop_summary = pop_summary.sort_values(
+                    ["track_length_frames", "count"], ascending=False
+                )
+                pop_ids = pop_summary[track_id_col].head(tracks_per_population).tolist()
+                selected_by_population[pop] = pop_ids
+                for track_id in pop_ids:
+                    if track_id not in selected_ids:
+                        selected_ids.append(track_id)
+
+            if len(selected_ids) == 0:
+                raise ValueError("Balanced population selection returned no tracks")
+
+        elif selection_method == "longest":
+            summary = summary.sort_values(
+                ["track_length_frames", "count"], ascending=False
+            )
+        elif selection_method == "most_points":
+            summary = summary.sort_values(["count", "track_length_frames"], ascending=False)
+        elif selection_method == "random":
+            summary = summary.sample(
+                frac=1, random_state=random_state
+            ).reset_index(drop=True)
+        else:
+            raise ValueError(
+                "selection_method must be 'longest', 'most_points', 'random', "
+                "or 'balanced_by_population'"
+            )
+
+        if selection_method != "balanced_by_population":
+            if target_tracks is not None:
+                summary = summary.head(int(target_tracks))
+            selected_ids = summary[track_id_col].tolist()
+
+    selected = df[df[track_id_col].isin(selected_ids)].copy()
+    if selected.empty:
+        raise ValueError("Track selection returned no rows")
+
+    return {
+        "tracks_df": _restore_dataframe_type(selected, single_cell_df),
+        "selected_track_ids": selected_ids,
+        "n_tracks": len(selected_ids),
+        "frame_range": frame_range,
+    }
+
+
+def choose_single_cell_for_display(
+    source_df,
+    *,
+    mode="most_tracks",
+    gallery_lookup_df=None,
+    gallery_number=1,
+    manual_filename=None,
+    population_col="final_population",
+    target_population=None,
+    random_seed=42,
+    group_col="filename",
+    track_id_col="unique_id",
+):
+    """
+    Select one cell/movie for display workflows.
+
+    Modes are ``gallery_number``, ``manual``, ``random``, ``most_tracks``, and
+    ``most_tracks_in_population``.
+    """
+    candidate_source = source_df
+    if mode == "most_tracks_in_population":
+        if population_col not in candidate_source.columns:
+            raise ValueError(f"Column {population_col!r} not found")
+        if target_population is None:
+            raise ValueError("Set target_population for most_tracks_in_population")
+        if isinstance(candidate_source, pl.DataFrame):
+            candidate_source = candidate_source.filter(
+                pl.col(population_col) == target_population
+            )
+        else:
+            candidate_source = candidate_source[
+                candidate_source[population_col] == target_population
+            ]
+
+    selected_key = None
+    if mode == "gallery_number":
+        if gallery_lookup_df is None:
+            raise ValueError("Run the gallery first or use a non-gallery selection mode")
+        lookup_pdf = _as_pandas_copy(gallery_lookup_df)
+        selected_key = lookup_pdf.loc[
+            lookup_pdf["gallery_number"] == gallery_number,
+            group_col,
+        ].iloc[0]
+    elif mode == "manual":
+        if manual_filename is None:
+            raise ValueError("Set manual_filename when mode='manual'")
+        selected_key = manual_filename
+    else:
+        if isinstance(candidate_source, pl.DataFrame):
+            cell_track_counts = (
+                candidate_source.group_by(group_col)
+                .agg(
+                    [
+                        pl.col(track_id_col).n_unique().alias("n_tracks"),
+                        pl.len().alias("n_datapoints"),
+                    ]
+                )
+                .sort(["n_tracks", "n_datapoints"], descending=True)
+            )
+            if mode == "random":
+                filenames = cell_track_counts.select(group_col).to_series().to_list()
+                import random
+
+                random.seed(random_seed)
+                selected_key = random.choice(filenames)
+            elif mode in {"most_tracks", "most_tracks_in_population"}:
+                selected_key = cell_track_counts.select(group_col).to_series()[0]
+            else:
+                raise ValueError("Unknown display cell selection mode")
+        else:
+            df = _as_pandas_copy(candidate_source)
+            cell_track_counts = (
+                df.groupby(group_col)
+                .agg(
+                    n_tracks=(track_id_col, "nunique"),
+                    n_datapoints=(group_col, "size"),
+                )
+                .reset_index()
+                .sort_values(["n_tracks", "n_datapoints"], ascending=False)
+            )
+            if mode == "random":
+                selected_key = cell_track_counts[group_col].sample(
+                    n=1, random_state=random_seed
+                ).iloc[0]
+            elif mode in {"most_tracks", "most_tracks_in_population"}:
+                selected_key = cell_track_counts[group_col].iloc[0]
+            else:
+                raise ValueError("Unknown display cell selection mode")
+
+    if isinstance(source_df, pl.DataFrame):
+        if group_col not in source_df.columns:
+            raise ValueError(f"Column {group_col!r} not found")
+        selected_cell_df = source_df.filter(pl.col(group_col) == selected_key)
+    else:
+        df = _as_pandas_copy(source_df)
+        if group_col not in df.columns:
+            raise ValueError(f"Column {group_col!r} not found")
+        selected_cell_df = df[df[group_col] == selected_key].copy()
+    selected_pdf = _as_pandas_copy(selected_cell_df)
+    selected_key = selected_pdf[group_col].dropna().unique()[0]
+    return selected_key, selected_cell_df
+
+
+def choose_frame_range_for_display(
+    single_cell_df,
+    *,
+    mode="all",
+    manual_frame_range=None,
+    target_tracks=30,
+    window_seconds=15,
+    frame_interval=config.TIME_BETWEEN_FRAMES,
+    start_frame=None,
+    min_track_points=10,
+    population_col="final_population",
+    populations=None,
+    min_tracks_per_population=1,
+    track_id_col="unique_id",
+    frame_col="frame",
+):
+    """Choose a frame range for display workflows."""
+    if mode == "all":
+        df = _as_pandas_copy(single_cell_df)
+        frame_range = (int(df[frame_col].min()), int(df[frame_col].max()))
+        return frame_range, {"mode": "all", "target_met": None}
+    if mode == "manual":
+        if manual_frame_range is None:
+            raise ValueError("Set manual_frame_range when mode='manual'")
+        return manual_frame_range, {"mode": "manual", "target_met": None}
+    if mode == "track_rich":
+        info = find_track_rich_frame_range(
+            single_cell_df,
+            target_tracks=target_tracks,
+            window_seconds=window_seconds,
+            frame_interval=frame_interval,
+            start_frame=start_frame,
+            min_track_points=min_track_points,
+            track_id_col=track_id_col,
+            frame_col=frame_col,
+        )
+        return (info["frame_start"], info["frame_end"]), info
+    if mode == "population_rich":
+        info = find_population_rich_frame_range(
+            single_cell_df,
+            populations=populations,
+            population_col=population_col,
+            min_tracks_per_population=min_tracks_per_population,
+            window_seconds=window_seconds,
+            frame_interval=frame_interval,
+            start_frame=start_frame,
+            min_track_points=min_track_points,
+            track_id_col=track_id_col,
+            frame_col=frame_col,
+        )
+        return (info["frame_start"], info["frame_end"]), info
+    raise ValueError("Unknown display frame range mode")
+
+
+def select_tracks_for_gallery_cells(
+    source_df,
+    *,
+    frame_range=None,
+    selection_method="longest",
+    target_tracks_per_cell=20,
+    min_track_points=20,
+    min_track_length_frames=None,
+    population_col=None,
+    populations=None,
+    tracks_per_population=None,
+    random_state=42,
+    group_col="filename",
+    track_id_col="unique_id",
+):
+    """Select track subsets independently for every cell in a gallery source df."""
+    selected_cells = []
+    selection_rows = []
+    filenames = _as_pandas_copy(source_df)[group_col].dropna().unique().tolist()
+    for filename in filenames:
+        if isinstance(source_df, pl.DataFrame):
+            cell_df = source_df.filter(pl.col(group_col) == filename)
+        else:
+            cell_df = source_df[source_df[group_col] == filename].copy()
+        try:
+            selection = filter_tracks_for_raw_overlay(
+                cell_df,
+                frame_range=frame_range,
+                selection_method=selection_method,
+                target_tracks=target_tracks_per_cell,
+                min_track_points=min_track_points,
+                min_track_length_frames=min_track_length_frames,
+                population_col=population_col,
+                populations=populations,
+                tracks_per_population=tracks_per_population,
+                random_state=random_state,
+                track_id_col=track_id_col,
+            )
+        except ValueError:
+            continue
+        tracks_df = selection["tracks_df"]
+        if len(_as_pandas_copy(tracks_df)) == 0:
+            continue
+        selected_cells.append(tracks_df)
+        selection_rows.append(
+            {
+                group_col: filename,
+                "n_selected_tracks": selection["n_tracks"],
+                "selected_track_ids": selection["selected_track_ids"],
+            }
+        )
+    if not selected_cells:
+        raise ValueError("No gallery tracks were selected. Loosen the gallery filters.")
+    if isinstance(source_df, pl.DataFrame):
+        return pl.concat(selected_cells, how="vertical"), pl.DataFrame(selection_rows)
+    return pd.concat(selected_cells, ignore_index=True), pd.DataFrame(selection_rows)
+
+
+def quick_plot_single_cell_tracks(
+    single_cell_df,
+    tracks_to_plot_df=None,
+    *,
+    frame_range=None,
+    color_by="unique_id",
+    track_id_col="unique_id",
+    frame_col="frame",
+    x_col=None,
+    y_col=None,
+    use_microns=True,
+    colorway="tab20",
+    line_width=0.8,
+    alpha=0.85,
+    figsize=(3, 3),
+    dpi=150,
+    show_plot=True,
+    save_path=None,
+):
+    """
+    Quick notebook QC plot of selected tracks without raw-image overlay.
+    """
+    df = _as_pandas_copy(tracks_to_plot_df if tracks_to_plot_df is not None else single_cell_df)
+    if x_col is None:
+        x_col = "x_um" if use_microns and "x_um" in df.columns else "x"
+    if y_col is None:
+        y_col = "y_um" if use_microns and "y_um" in df.columns else "y"
+
+    for col in [track_id_col, frame_col, x_col, y_col]:
+        if col not in df.columns:
+            raise ValueError(f"Column {col!r} not found")
+
+    if frame_range is not None:
+        frame_start, frame_end = frame_range
+        df = df[(df[frame_col] >= int(frame_start)) & (df[frame_col] <= int(frame_end))]
+
+    if df.empty:
+        raise ValueError("No data available to plot")
+
+    track_ids = list(pd.unique(df[track_id_col]))
+    color_map = _track_color_map(df, track_id_col, color_by, colorway)
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    for track_id, track in df.sort_values(frame_col).groupby(track_id_col):
+        if len(track) < 2:
+            continue
+        color = color_map.get(track_id, "blue")
+        ax.plot(track[x_col], track[y_col], color=color, lw=line_width, alpha=alpha)
+
+    ax.set_aspect("equal", adjustable="box")
+    ax.axis("off")
+    if frame_range is not None:
+        ax.set_title(f"Frames {int(frame_range[0])}-{int(frame_range[1])}")
+
+    if save_path is not None:
+        os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+        fig.savefig(save_path, dpi=dpi, bbox_inches="tight", transparent=True)
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return {"fig": fig, "ax": ax, "n_tracks": len(track_ids), "tracks_df": df}
+
+
+def _single_value_from_df(df, column, default=None):
+    if column not in df.columns or df.empty:
+        return default
+    values = pd.Series(df[column]).dropna().unique()
+    if len(values) == 0:
+        return default
+    return values[0]
+
+
+def with_cell_key(
+    df,
+    *,
+    folder_col="foldername",
+    filename_col="filename",
+    key_col="cell_key",
+    separator="||",
+):
+    """Return a dataframe with a stable unique key made from folder + filename."""
+    if isinstance(df, pl.DataFrame):
+        for col in [folder_col, filename_col]:
+            if col not in df.columns:
+                raise ValueError(f"Column {col!r} not found")
+        return df.with_columns(
+            (
+                pl.col(folder_col).cast(pl.Utf8)
+                + separator
+                + pl.col(filename_col).cast(pl.Utf8)
+            ).alias(key_col)
+        )
+
+    out = _as_pandas_copy(df)
+    for col in [folder_col, filename_col]:
+        if col not in out.columns:
+            raise ValueError(f"Column {col!r} not found")
+    out[key_col] = out[folder_col].astype(str) + separator + out[filename_col].astype(str)
+    return out
+
+
+def _resolve_raw_movie_path(single_cell_df, master_dir=None, filename=None, condition=None):
+    df = _as_pandas_copy(single_cell_df)
+    filename = filename or _single_value_from_df(df, "filename")
+    condition = condition or _single_value_from_df(df, "condition")
+    if filename is None:
+        raise ValueError("Could not infer filename from single_cell_df")
+    image_filename = str(filename).replace("_tracked", "") + ".tif"
+
+    if master_dir is None:
+        master_dir = _single_value_from_df(df, "foldername")
+    if master_dir is None:
+        raise ValueError("master_dir was not provided and foldername was not found")
+
+    candidates = []
+    if condition is not None:
+        candidates.append(os.path.join(master_dir, "data", str(condition), image_filename))
+        candidates.append(os.path.join(master_dir, str(condition), image_filename))
+    candidates.append(os.path.join(master_dir, "data", image_filename))
+    candidates.append(os.path.join(master_dir, image_filename))
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+
+    return candidates[0]
+
+
+def compute_fixed_cell_contour(
+    single_cell_df,
+    *,
+    coordinate_units="pixels",
+    x_col=None,
+    y_col=None,
+    contour_method="radial",
+    edge_angle_bins=180,
+    edge_padding=0.05,
+    edge_smoothing=0.1,
+    minimal_bridge_point_radius=2.0,
+    minimal_bridge_width=1.5,
+    minimal_bridge_mask_padding=12,
+):
+    """
+    Compute one fixed averaged cell contour from all coordinates in one cell.
+    """
+    df = _as_pandas_copy(single_cell_df)
+    if x_col is None:
+        x_col = "x" if coordinate_units == "pixels" else "x_um"
+    if y_col is None:
+        y_col = "y" if coordinate_units == "pixels" else "y_um"
+    for col in [x_col, y_col]:
+        if col not in df.columns:
+            raise ValueError(f"Column {col!r} not found")
+
+    points = df[[x_col, y_col]].dropna().to_numpy()
+    if len(points) < 3:
+        raise ValueError("At least three points are required to compute a contour")
+
+    centroid = points.mean(axis=0)
+    if contour_method == "radial":
+        return compute_cell_edge_angle_binning(
+            points,
+            centroid,
+            edge_angle_bins=edge_angle_bins,
+            edge_padding=edge_padding,
+            edge_smoothing=edge_smoothing,
+        )
+    if contour_method == "legacy_outer_envelope":
+        return compute_cell_edge_angle_binning_legacy_outer_envelope(
+            points,
+            centroid,
+            edge_angle_bins=edge_angle_bins,
+            edge_padding=edge_padding,
+            edge_smoothing=edge_smoothing,
+        )
+    if contour_method == "minimal_bridge":
+        return compute_cell_edge_minimal_bridge(
+            points,
+            point_radius=minimal_bridge_point_radius,
+            bridge_width=minimal_bridge_width,
+            mask_padding=minimal_bridge_mask_padding,
+            edge_padding=edge_padding,
+            edge_smoothing=edge_smoothing,
+        )
+    raise ValueError(
+        "contour_method must be 'radial', 'legacy_outer_envelope', or 'minimal_bridge'"
+    )
+
+
+def _polygon_area_perimeter(points):
+    """Return polygon area and perimeter for an ordered Nx2 contour."""
+    if points is None or len(points) < 3:
+        return np.nan, np.nan
+    x = points[:, 0]
+    y = points[:, 1]
+    area = 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+    diffs = np.diff(np.vstack([points, points[0]]), axis=0)
+    perimeter = float(np.sum(np.sqrt(np.sum(diffs**2, axis=1))))
+    return float(area), perimeter
+
+
+def _contour_from_stored_row(contour_source):
+    """Extract an Nx2 contour from a one-row dataframe with contour_x/contour_y."""
+    df = _as_pandas_copy(contour_source)
+    if "contour_x" not in df.columns or "contour_y" not in df.columns or df.empty:
+        return None
+
+    x_values = df["contour_x"].iloc[0]
+    y_values = df["contour_y"].iloc[0]
+    if x_values is None or y_values is None:
+        return None
+
+    x = np.asarray(x_values, dtype=float)
+    y = np.asarray(y_values, dtype=float)
+    if x.ndim != 1 or y.ndim != 1 or len(x) != len(y):
+        raise ValueError("Stored contour_x and contour_y must be 1D arrays of equal length")
+    return np.column_stack([x, y])
+
+
+def get_contour_array(contour_source, *, coordinate_units="pixels", contour_method="radial"):
+    """
+    Return an Nx2 contour from either a stored contour dataframe or a track dataframe.
+    """
+    stored = _contour_from_stored_row(contour_source)
+    if stored is not None:
+        return stored
+    return compute_fixed_cell_contour(
+        contour_source,
+        coordinate_units=coordinate_units,
+        contour_method=contour_method,
+    )
+
+
+def compute_cell_contours_dataframe(
+    tracks_df,
+    *,
+    group_col="filename",
+    coordinate_units="pixels",
+    x_col=None,
+    y_col=None,
+    metadata_cols=None,
+    selection_method=None,
+    n_cells=None,
+    track_id_col="unique_id",
+    random_state=42,
+    contour_method="radial",
+    edge_angle_bins=180,
+    edge_padding=0.05,
+    edge_smoothing=0.1,
+    minimal_bridge_point_radius=2.0,
+    minimal_bridge_width=1.5,
+    minimal_bridge_mask_padding=12,
+    on_error="raise",
+    show_progress=False,
+    return_backend="polars",
+):
+    """
+    Compute fixed contours for cells and store them one row per cell.
+
+    The contour itself is stored as list columns, ``contour_x`` and ``contour_y``.
+    This keeps the table compact and easy to save as Parquet while preserving
+    numeric arrays for later geometry measurements.
+    """
+    if x_col is None:
+        x_col = "x" if coordinate_units == "pixels" else "x_um"
+    if y_col is None:
+        y_col = "y" if coordinate_units == "pixels" else "y_um"
+
+    if isinstance(tracks_df, pl.DataFrame):
+        if group_col not in tracks_df.columns:
+            raise ValueError(f"Column {group_col!r} not found")
+        for col in [x_col, y_col]:
+            if col not in tracks_df.columns:
+                raise ValueError(f"Column {col!r} not found")
+
+        agg_exprs = [pl.len().alias("n_datapoints")]
+        if track_id_col in tracks_df.columns:
+            agg_exprs.append(pl.col(track_id_col).n_unique().alias("n_tracks"))
+        else:
+            agg_exprs.append(pl.len().alias("n_tracks"))
+        summary_pl = tracks_df.group_by(group_col).agg(agg_exprs)
+
+        if selection_method == "most_tracks":
+            summary_pl = summary_pl.sort(["n_tracks", "n_datapoints"], descending=True)
+        elif selection_method == "most_points":
+            summary_pl = summary_pl.sort(["n_datapoints", "n_tracks"], descending=True)
+        elif selection_method == "random":
+            summary_pl = summary_pl.sample(fraction=1.0, shuffle=True, seed=random_state)
+        elif selection_method is not None:
+            raise ValueError(
+                "selection_method must be None, 'most_tracks', 'most_points', or 'random'"
+            )
+        if n_cells is not None:
+            summary_pl = summary_pl.head(int(n_cells))
+
+        metadata_cols = list(metadata_cols or [])
+        metadata_cols = [
+            col for col in metadata_cols if col in tracks_df.columns and col != group_col
+        ]
+        selected_cells = summary_pl[group_col].to_list()
+        selected_cell_set = set(selected_cells)
+        selected_tracks_df = tracks_df.filter(pl.col(group_col).is_in(selected_cells))
+
+        grouped_cells = selected_tracks_df.group_by(group_col, maintain_order=True)
+        if show_progress:
+            try:
+                from tqdm.auto import tqdm
+
+                grouped_cells = tqdm(
+                    grouped_cells,
+                    total=len(selected_cells),
+                    desc="Computing cell contours",
+                    unit="cell",
+                )
+            except Exception:
+                pass
+
+        rows = []
+        for group_key, sub_pl in grouped_cells:
+            cell_id = group_key[0] if isinstance(group_key, tuple) else group_key
+            if cell_id not in selected_cell_set:
+                continue
+            sub = sub_pl.to_pandas()
+            points = sub[[x_col, y_col]].dropna().to_numpy()
+            if len(points) < 3:
+                continue
+            try:
+                contour = compute_fixed_cell_contour(
+                    sub,
+                    coordinate_units=coordinate_units,
+                    x_col=x_col,
+                    y_col=y_col,
+                    contour_method=contour_method,
+                    edge_angle_bins=edge_angle_bins,
+                    edge_padding=edge_padding,
+                    edge_smoothing=edge_smoothing,
+                    minimal_bridge_point_radius=minimal_bridge_point_radius,
+                    minimal_bridge_width=minimal_bridge_width,
+                    minimal_bridge_mask_padding=minimal_bridge_mask_padding,
+                )
+            except Exception as exc:
+                if on_error == "raise":
+                    raise ValueError(
+                        f"Failed to compute contour for {group_col}={cell_id!r}"
+                    ) from exc
+                if on_error != "record":
+                    raise ValueError("on_error must be 'raise' or 'record'") from exc
+                centroid = points.mean(axis=0)
+                row = {
+                    group_col: cell_id,
+                    "contour_id": 1,
+                    "coordinate_units": coordinate_units,
+                    "x_col": x_col,
+                    "y_col": y_col,
+                    "contour_x": [],
+                    "contour_y": [],
+                    "centroid_x": float(centroid[0]),
+                    "centroid_y": float(centroid[1]),
+                    "area": np.nan,
+                    "perimeter": np.nan,
+                    "circumference": np.nan,
+                    "bbox_min_x": np.nan,
+                    "bbox_max_x": np.nan,
+                    "bbox_min_y": np.nan,
+                    "bbox_max_y": np.nan,
+                    "n_contour_points": 0,
+                    "n_source_points": int(len(points)),
+                    "n_tracks": int(sub[track_id_col].nunique())
+                    if track_id_col in sub.columns
+                    else np.nan,
+                    "edge_angle_bins": int(edge_angle_bins),
+                    "edge_padding": float(edge_padding),
+                    "edge_smoothing": float(edge_smoothing),
+                    "minimal_bridge_point_radius": float(minimal_bridge_point_radius),
+                    "minimal_bridge_width": float(minimal_bridge_width),
+                    "minimal_bridge_mask_padding": int(minimal_bridge_mask_padding),
+                    "contour_method": contour_method,
+                    "contour_status": "failed",
+                    "contour_error": str(exc),
+                }
+                for col in metadata_cols:
+                    row[col] = _single_value_from_df(sub, col)
+                rows.append(row)
+                continue
+            area, perimeter = _polygon_area_perimeter(contour)
+            centroid = points.mean(axis=0)
+            row = {
+                group_col: cell_id,
+                "contour_id": 1,
+                "coordinate_units": coordinate_units,
+                "x_col": x_col,
+                "y_col": y_col,
+                "contour_x": contour[:, 0].astype(float).tolist(),
+                "contour_y": contour[:, 1].astype(float).tolist(),
+                "centroid_x": float(centroid[0]),
+                "centroid_y": float(centroid[1]),
+                "area": area,
+                "perimeter": perimeter,
+                "circumference": perimeter,
+                "bbox_min_x": float(np.min(contour[:, 0])),
+                "bbox_max_x": float(np.max(contour[:, 0])),
+                "bbox_min_y": float(np.min(contour[:, 1])),
+                "bbox_max_y": float(np.max(contour[:, 1])),
+                "n_contour_points": int(len(contour)),
+                "n_source_points": int(len(points)),
+                "n_tracks": int(sub[track_id_col].nunique())
+                if track_id_col in sub.columns
+                else np.nan,
+                "edge_angle_bins": int(edge_angle_bins),
+                "edge_padding": float(edge_padding),
+                "edge_smoothing": float(edge_smoothing),
+                "minimal_bridge_point_radius": float(minimal_bridge_point_radius),
+                "minimal_bridge_width": float(minimal_bridge_width),
+                "minimal_bridge_mask_padding": int(minimal_bridge_mask_padding),
+                "contour_method": contour_method,
+                "contour_status": "ok",
+                "contour_error": None,
+            }
+            for col in metadata_cols:
+                row[col] = _single_value_from_df(sub, col)
+            rows.append(row)
+
+        result = pd.DataFrame(rows)
+        if return_backend == "pandas":
+            return result
+        if return_backend == "polars":
+            return pl.from_pandas(result)
+        raise ValueError("return_backend must be 'polars' or 'pandas'")
+
+    df = _as_pandas_copy(tracks_df)
+    if group_col not in df.columns:
+        raise ValueError(f"Column {group_col!r} not found")
+
+    for col in [x_col, y_col]:
+        if col not in df.columns:
+            raise ValueError(f"Column {col!r} not found")
+
+    metadata_cols = list(metadata_cols or [])
+    metadata_cols = [col for col in metadata_cols if col in df.columns and col != group_col]
+
+    cell_summary = (
+        df.groupby(group_col)
+        .agg(
+            n_datapoints=(x_col, "size"),
+            n_tracks=(track_id_col, "nunique") if track_id_col in df.columns else (x_col, "size"),
+        )
+        .reset_index()
+    )
+
+    if selection_method == "most_tracks":
+        cell_summary = cell_summary.sort_values(
+            ["n_tracks", "n_datapoints"], ascending=False
+        )
+    elif selection_method == "most_points":
+        cell_summary = cell_summary.sort_values(
+            ["n_datapoints", "n_tracks"], ascending=False
+        )
+    elif selection_method == "random":
+        cell_summary = cell_summary.sample(
+            frac=1, random_state=random_state
+        ).reset_index(drop=True)
+    elif selection_method is not None:
+        raise ValueError(
+            "selection_method must be None, 'most_tracks', 'most_points', or 'random'"
+        )
+
+    if n_cells is not None:
+        cell_summary = cell_summary.head(int(n_cells))
+
+    cell_ids = cell_summary[group_col].tolist()
+    if show_progress:
+        try:
+            from tqdm.auto import tqdm
+
+            cell_ids = tqdm(
+                cell_ids,
+                total=len(cell_ids),
+                desc="Computing cell contours",
+                unit="cell",
+            )
+        except Exception:
+            pass
+
+    rows = []
+    for cell_id in cell_ids:
+        sub = df[df[group_col] == cell_id].copy()
+        points = sub[[x_col, y_col]].dropna().to_numpy()
+        if len(points) < 3:
+            continue
+
+        try:
+            contour = compute_fixed_cell_contour(
+                sub,
+                coordinate_units=coordinate_units,
+                x_col=x_col,
+                y_col=y_col,
+                contour_method=contour_method,
+                edge_angle_bins=edge_angle_bins,
+                edge_padding=edge_padding,
+                edge_smoothing=edge_smoothing,
+                minimal_bridge_point_radius=minimal_bridge_point_radius,
+                minimal_bridge_width=minimal_bridge_width,
+                minimal_bridge_mask_padding=minimal_bridge_mask_padding,
+            )
+        except Exception as exc:
+            if on_error == "raise":
+                raise ValueError(
+                    f"Failed to compute contour for {group_col}={cell_id!r}"
+                ) from exc
+            if on_error != "record":
+                raise ValueError("on_error must be 'raise' or 'record'") from exc
+            centroid = points.mean(axis=0)
+            row = {
+                group_col: cell_id,
+                "contour_id": 1,
+                "coordinate_units": coordinate_units,
+                "x_col": x_col,
+                "y_col": y_col,
+                "contour_x": [],
+                "contour_y": [],
+                "centroid_x": float(centroid[0]),
+                "centroid_y": float(centroid[1]),
+                "area": np.nan,
+                "perimeter": np.nan,
+                "circumference": np.nan,
+                "bbox_min_x": np.nan,
+                "bbox_max_x": np.nan,
+                "bbox_min_y": np.nan,
+                "bbox_max_y": np.nan,
+                "n_contour_points": 0,
+                "n_source_points": int(len(points)),
+                "n_tracks": int(sub[track_id_col].nunique())
+                if track_id_col in sub.columns
+                else np.nan,
+                "edge_angle_bins": int(edge_angle_bins),
+                "edge_padding": float(edge_padding),
+                "edge_smoothing": float(edge_smoothing),
+                "minimal_bridge_point_radius": float(minimal_bridge_point_radius),
+                "minimal_bridge_width": float(minimal_bridge_width),
+                "minimal_bridge_mask_padding": int(minimal_bridge_mask_padding),
+                "contour_method": contour_method,
+                "contour_status": "failed",
+                "contour_error": str(exc),
+            }
+            for col in metadata_cols:
+                row[col] = _single_value_from_df(sub, col)
+            rows.append(row)
+            continue
+        area, perimeter = _polygon_area_perimeter(contour)
+        centroid = points.mean(axis=0)
+        row = {
+            group_col: cell_id,
+            "contour_id": 1,
+            "coordinate_units": coordinate_units,
+            "x_col": x_col,
+            "y_col": y_col,
+            "contour_x": contour[:, 0].astype(float).tolist(),
+            "contour_y": contour[:, 1].astype(float).tolist(),
+            "centroid_x": float(centroid[0]),
+            "centroid_y": float(centroid[1]),
+            "area": area,
+            "perimeter": perimeter,
+            "circumference": perimeter,
+            "bbox_min_x": float(np.min(contour[:, 0])),
+            "bbox_max_x": float(np.max(contour[:, 0])),
+            "bbox_min_y": float(np.min(contour[:, 1])),
+            "bbox_max_y": float(np.max(contour[:, 1])),
+            "n_contour_points": int(len(contour)),
+            "n_source_points": int(len(points)),
+            "n_tracks": int(sub[track_id_col].nunique()) if track_id_col in sub.columns else np.nan,
+            "edge_angle_bins": int(edge_angle_bins),
+            "edge_padding": float(edge_padding),
+            "edge_smoothing": float(edge_smoothing),
+            "minimal_bridge_point_radius": float(minimal_bridge_point_radius),
+            "minimal_bridge_width": float(minimal_bridge_width),
+            "minimal_bridge_mask_padding": int(minimal_bridge_mask_padding),
+            "contour_method": contour_method,
+            "contour_status": "ok",
+            "contour_error": None,
+        }
+        for col in metadata_cols:
+            row[col] = _single_value_from_df(sub, col)
+        rows.append(row)
+
+    result = pd.DataFrame(rows)
+    if return_backend == "pandas":
+        return result
+    if return_backend == "polars":
+        return pl.from_pandas(result)
+    raise ValueError("return_backend must be 'polars' or 'pandas'")
+
+
+def compute_segmented_cell_contours(
+    single_cell_df,
+    *,
+    max_contours=2,
+    group_col="filename",
+    track_id_col="unique_id",
+    coordinate_units="pixels",
+    x_col=None,
+    y_col=None,
+    clustering_method="dbscan",
+    eps_pixels=20,
+    min_samples=3,
+    min_component_points=100,
+    min_component_tracks=5,
+    min_component_fraction=0.15,
+    fallback_to_single=True,
+    contour_method="radial",
+    edge_angle_bins=180,
+    edge_padding=0.05,
+    edge_smoothing=0.1,
+):
+    """
+    Experimental multi-contour version of ``compute_fixed_cell_contour``.
+
+    Tracks are clustered by their spatial centroids, then one fixed contour is
+    computed from all detections belonging to each retained track cluster. This
+    keeps a direct ``unique_id -> contour_id`` mapping for downstream dataframes.
+    """
+    df = _as_pandas_copy(single_cell_df)
+    if x_col is None:
+        x_col = "x" if coordinate_units == "pixels" else "x_um"
+    if y_col is None:
+        y_col = "y" if coordinate_units == "pixels" else "y_um"
+    for col in [x_col, y_col, track_id_col]:
+        if col not in df.columns:
+            raise ValueError(f"Column {col!r} not found")
+
+    df = df.dropna(subset=[x_col, y_col, track_id_col]).copy()
+    if len(df) < 3:
+        raise ValueError("At least three points are required to compute a contour")
+
+    def _single_contour_result(reason):
+        contour = compute_fixed_cell_contour(
+            df,
+            coordinate_units=coordinate_units,
+            x_col=x_col,
+            y_col=y_col,
+            contour_method=contour_method,
+            edge_angle_bins=edge_angle_bins,
+            edge_padding=edge_padding,
+            edge_smoothing=edge_smoothing,
+        )
+        area, perimeter = _polygon_area_perimeter(contour)
+        points = df[[x_col, y_col]].to_numpy()
+        centroid = points.mean(axis=0)
+        return [
+            {
+                "contour_id": 1,
+                "component_label": -1,
+                "split_status": reason,
+                "coordinate_units": coordinate_units,
+                "x_col": x_col,
+                "y_col": y_col,
+                "contour_x": contour[:, 0].astype(float).tolist(),
+                "contour_y": contour[:, 1].astype(float).tolist(),
+                "centroid_x": float(centroid[0]),
+                "centroid_y": float(centroid[1]),
+                "area": area,
+                "perimeter": perimeter,
+                "bbox_min_x": float(np.min(contour[:, 0])),
+                "bbox_max_x": float(np.max(contour[:, 0])),
+                "bbox_min_y": float(np.min(contour[:, 1])),
+                "bbox_max_y": float(np.max(contour[:, 1])),
+                "n_contour_points": int(len(contour)),
+                "n_source_points": int(len(points)),
+                "n_tracks": int(df[track_id_col].nunique()),
+                "track_ids": list(pd.unique(df[track_id_col])),
+                "clustering_method": clustering_method,
+                "eps_pixels": float(eps_pixels),
+                "min_samples": int(min_samples),
+                "min_component_points": int(min_component_points),
+                "min_component_tracks": int(min_component_tracks),
+                "min_component_fraction": float(min_component_fraction),
+                "max_contours": int(max_contours),
+                "edge_angle_bins": int(edge_angle_bins),
+                "edge_padding": float(edge_padding),
+                "edge_smoothing": float(edge_smoothing),
+                "contour_method": contour_method,
+            }
+        ]
+
+    track_summary = (
+        df.groupby(track_id_col)
+        .agg(
+            centroid_x=(x_col, "median"),
+            centroid_y=(y_col, "median"),
+            n_points=(x_col, "size"),
+        )
+        .reset_index()
+    )
+    if len(track_summary) < max(2, int(min_component_tracks)):
+        if fallback_to_single:
+            return _single_contour_result("fallback_too_few_tracks")
+        return []
+
+    if clustering_method != "dbscan":
+        raise ValueError("Currently only clustering_method='dbscan' is supported")
+    try:
+        from sklearn.cluster import DBSCAN
+    except ImportError as exc:
+        raise ImportError("scikit-learn is required for segmented contours") from exc
+
+    labels = DBSCAN(eps=float(eps_pixels), min_samples=int(min_samples)).fit_predict(
+        track_summary[["centroid_x", "centroid_y"]].to_numpy()
+    )
+    track_summary["_component_label"] = labels
+
+    labeled = df.merge(
+        track_summary[[track_id_col, "_component_label"]],
+        on=track_id_col,
+        how="left",
+    )
+    component_rows = []
+    total_points = len(labeled)
+    for label, component in labeled[labeled["_component_label"] >= 0].groupby(
+        "_component_label"
+    ):
+        n_points = len(component)
+        n_tracks = component[track_id_col].nunique()
+        fraction = n_points / total_points if total_points else 0
+        if n_points < min_component_points:
+            continue
+        if n_tracks < min_component_tracks:
+            continue
+        if fraction < min_component_fraction:
+            continue
+        component_rows.append(
+            {
+                "label": label,
+                "df": component.copy(),
+                "n_points": n_points,
+                "n_tracks": n_tracks,
+                "fraction": fraction,
+            }
+        )
+
+    component_rows = sorted(
+        component_rows,
+        key=lambda row: (row["n_tracks"], row["n_points"]),
+        reverse=True,
+    )[: int(max_contours)]
+
+    if len(component_rows) < 2:
+        if fallback_to_single:
+            return _single_contour_result("fallback_no_valid_split")
+        return []
+
+    rows = []
+    for contour_id, component_row in enumerate(component_rows, start=1):
+        component = component_row["df"]
+        if len(component[[x_col, y_col]].dropna()) < 3:
+            continue
+        contour = compute_fixed_cell_contour(
+            component,
+            coordinate_units=coordinate_units,
+            x_col=x_col,
+            y_col=y_col,
+            contour_method=contour_method,
+            edge_angle_bins=edge_angle_bins,
+            edge_padding=edge_padding,
+            edge_smoothing=edge_smoothing,
+        )
+        area, perimeter = _polygon_area_perimeter(contour)
+        points = component[[x_col, y_col]].to_numpy()
+        centroid = points.mean(axis=0)
+        rows.append(
+            {
+                "contour_id": contour_id,
+                "component_label": int(component_row["label"]),
+                "split_status": "segmented",
+                "coordinate_units": coordinate_units,
+                "x_col": x_col,
+                "y_col": y_col,
+                "contour_x": contour[:, 0].astype(float).tolist(),
+                "contour_y": contour[:, 1].astype(float).tolist(),
+                "centroid_x": float(centroid[0]),
+                "centroid_y": float(centroid[1]),
+                "area": area,
+                "perimeter": perimeter,
+                "bbox_min_x": float(np.min(contour[:, 0])),
+                "bbox_max_x": float(np.max(contour[:, 0])),
+                "bbox_min_y": float(np.min(contour[:, 1])),
+                "bbox_max_y": float(np.max(contour[:, 1])),
+                "n_contour_points": int(len(contour)),
+                "n_source_points": int(len(points)),
+                "n_tracks": int(component[track_id_col].nunique()),
+                "track_ids": list(pd.unique(component[track_id_col])),
+                "component_fraction": float(component_row["fraction"]),
+                "clustering_method": clustering_method,
+                "eps_pixels": float(eps_pixels),
+                "min_samples": int(min_samples),
+                "min_component_points": int(min_component_points),
+                "min_component_tracks": int(min_component_tracks),
+                "min_component_fraction": float(min_component_fraction),
+                "max_contours": int(max_contours),
+                "edge_angle_bins": int(edge_angle_bins),
+                "edge_padding": float(edge_padding),
+                "edge_smoothing": float(edge_smoothing),
+                "contour_method": contour_method,
+            }
+        )
+
+    if not rows and fallback_to_single:
+        return _single_contour_result("fallback_invalid_components")
+    return rows
+
+
+def _largest_blob_point_mask(points, *, point_radius=2.0, mask_padding=12):
+    """
+    Return a boolean mask for points belonging to the largest rasterized blob.
+    """
+    from skimage.measure import label
+
+    points = np.asarray(points, dtype=float)
+    pad = int(max(mask_padding, point_radius * 4, 4))
+    min_xy = np.floor(points.min(axis=0)).astype(int) - pad
+    max_xy = np.ceil(points.max(axis=0)).astype(int) + pad
+    width = int(max_xy[0] - min_xy[0] + 1)
+    height = int(max_xy[1] - min_xy[1] + 1)
+    shifted = points - min_xy
+
+    mask = np.zeros((height, width), dtype=bool)
+    for x, y in shifted:
+        _draw_disk_on_mask(mask, y, x, point_radius)
+
+    labels = label(mask, connectivity=2)
+    point_labels = labels[
+        np.clip(np.round(shifted[:, 1]).astype(int), 0, height - 1),
+        np.clip(np.round(shifted[:, 0]).astype(int), 0, width - 1),
+    ]
+    valid_labels = point_labels[point_labels > 0]
+    if len(valid_labels) == 0:
+        return np.ones(len(points), dtype=bool)
+    label_counts = pd.Series(valid_labels).value_counts()
+    largest_label = label_counts.index[0]
+    return point_labels == largest_label
+
+
+def compute_minimal_bridge_uncovered_cell_contours(
+    single_cell_df,
+    *,
+    group_col="filename",
+    track_id_col="unique_id",
+    coordinate_units="pixels",
+    x_col=None,
+    y_col=None,
+    max_contours=2,
+    min_uncovered_points=20,
+    min_uncovered_tracks=1,
+    min_uncovered_fraction=0.05,
+    point_radius=2.0,
+    bridge_width=1.5,
+    mask_padding=12,
+    edge_padding=0.0,
+    edge_smoothing=0.02,
+):
+    """
+    Compute one or two minimal-bridge contours for a cell.
+
+    The first contour is made from the largest locally connected point blob.
+    Points not covered by that first contour are then tested against thresholds;
+    if enough remain, a second minimal-bridge contour is made only from those
+    uncovered points.
+    """
+    df = _as_pandas_copy(single_cell_df)
+    if x_col is None:
+        x_col = "x" if coordinate_units == "pixels" else "x_um"
+    if y_col is None:
+        y_col = "y" if coordinate_units == "pixels" else "y_um"
+    for col in [x_col, y_col, track_id_col]:
+        if col not in df.columns:
+            raise ValueError(f"Column {col!r} not found")
+
+    df = df.dropna(subset=[x_col, y_col, track_id_col]).copy()
+    points = df[[x_col, y_col]].to_numpy()
+    if len(points) < 3:
+        raise ValueError("At least three points are required to compute a contour")
+
+    def _row_from_subset(sub, contour_id, source_status, forbidden_contours=None):
+        sub_points = sub[[x_col, y_col]].to_numpy()
+        contour = compute_cell_edge_minimal_bridge(
+            sub_points,
+            point_radius=point_radius,
+            bridge_width=bridge_width,
+            mask_padding=mask_padding,
+            edge_padding=edge_padding,
+            edge_smoothing=edge_smoothing,
+            forbidden_contours=forbidden_contours,
+            enforce_point_containment=forbidden_contours is None,
+        )
+        area, perimeter = _polygon_area_perimeter(contour)
+        centroid = sub_points.mean(axis=0)
+        return {
+            group_col: _single_value_from_df(df, group_col),
+            "contour_id": int(contour_id),
+            "split_status": source_status,
+            "coordinate_units": coordinate_units,
+            "x_col": x_col,
+            "y_col": y_col,
+            "contour_x": contour[:, 0].astype(float).tolist(),
+            "contour_y": contour[:, 1].astype(float).tolist(),
+            "centroid_x": float(centroid[0]),
+            "centroid_y": float(centroid[1]),
+            "area": area,
+            "perimeter": perimeter,
+            "bbox_min_x": float(np.min(contour[:, 0])),
+            "bbox_max_x": float(np.max(contour[:, 0])),
+            "bbox_min_y": float(np.min(contour[:, 1])),
+            "bbox_max_y": float(np.max(contour[:, 1])),
+            "n_contour_points": int(len(contour)),
+            "n_source_points": int(len(sub_points)),
+            "n_tracks": int(sub[track_id_col].nunique()),
+            "track_ids": list(pd.unique(sub[track_id_col])),
+            "contour_method": "minimal_bridge_uncovered",
+            "minimal_bridge_point_radius": float(point_radius),
+            "minimal_bridge_width": float(bridge_width),
+            "minimal_bridge_mask_padding": int(mask_padding),
+            "edge_padding": float(edge_padding),
+            "edge_smoothing": float(edge_smoothing),
+        }
+
+    main_mask = _largest_blob_point_mask(
+        points,
+        point_radius=point_radius,
+        mask_padding=mask_padding,
+    )
+    main_df = df[main_mask].copy()
+    if len(main_df) < 3:
+        main_df = df.copy()
+
+    rows = [_row_from_subset(main_df, 1, "main_largest_blob")]
+    if int(max_contours) <= 1:
+        return rows
+
+    contour1 = np.column_stack([rows[0]["contour_x"], rows[0]["contour_y"]])
+    covered = mpltPath.Path(contour1).contains_points(points, radius=0.5)
+    uncovered_df = df[~covered].copy()
+
+    if len(uncovered_df) >= int(min_uncovered_points):
+        if uncovered_df[track_id_col].nunique() >= int(min_uncovered_tracks):
+            if len(uncovered_df) / len(df) >= float(min_uncovered_fraction):
+                if len(uncovered_df[[x_col, y_col]].dropna()) >= 3:
+                    rows.append(
+                        _row_from_subset(
+                            uncovered_df,
+                            2,
+                            "uncovered_points",
+                            forbidden_contours=[contour1],
+                        )
+                    )
+
+    return rows
+
+
+def compute_minimal_bridge_uncovered_contours_dataframe(
+    tracks_df,
+    *,
+    group_col="filename",
+    coordinate_units="pixels",
+    x_col=None,
+    y_col=None,
+    metadata_cols=None,
+    selection_method=None,
+    n_cells=None,
+    track_id_col="unique_id",
+    random_state=42,
+    return_backend="polars",
+    **kwargs,
+):
+    """
+    Compute one or two minimal-bridge contours for multiple cells.
+    """
+    if x_col is None:
+        x_col = "x" if coordinate_units == "pixels" else "x_um"
+    if y_col is None:
+        y_col = "y" if coordinate_units == "pixels" else "y_um"
+
+    df = _as_pandas_copy(tracks_df)
+    for col in [group_col, x_col, y_col, track_id_col]:
+        if col not in df.columns:
+            raise ValueError(f"Column {col!r} not found")
+
+    metadata_cols = list(metadata_cols or [])
+    metadata_cols = [col for col in metadata_cols if col in df.columns and col != group_col]
+
+    cell_summary = (
+        df.groupby(group_col)
+        .agg(
+            n_datapoints=(x_col, "size"),
+            n_tracks=(track_id_col, "nunique"),
+        )
+        .reset_index()
+    )
+    if selection_method == "most_tracks":
+        cell_summary = cell_summary.sort_values(
+            ["n_tracks", "n_datapoints"], ascending=False
+        )
+    elif selection_method == "most_points":
+        cell_summary = cell_summary.sort_values(
+            ["n_datapoints", "n_tracks"], ascending=False
+        )
+    elif selection_method == "random":
+        cell_summary = cell_summary.sample(
+            frac=1, random_state=random_state
+        ).reset_index(drop=True)
+    elif selection_method is not None:
+        raise ValueError(
+            "selection_method must be None, 'most_tracks', 'most_points', or 'random'"
+        )
+    if n_cells is not None:
+        cell_summary = cell_summary.head(int(n_cells))
+
+    rows = []
+    for cell_id in cell_summary[group_col].tolist():
+        sub = df[df[group_col] == cell_id].copy()
+        contour_rows = compute_minimal_bridge_uncovered_cell_contours(
+            sub,
+            group_col=group_col,
+            track_id_col=track_id_col,
+            coordinate_units=coordinate_units,
+            x_col=x_col,
+            y_col=y_col,
+            **kwargs,
+        )
+        for row in contour_rows:
+            for col in metadata_cols:
+                row[col] = _single_value_from_df(sub, col)
+            rows.append(row)
+
+    result = pd.DataFrame(rows)
+    if return_backend == "pandas":
+        return result
+    if return_backend == "polars":
+        return pl.from_pandas(result)
+    raise ValueError("return_backend must be 'polars' or 'pandas'")
+
+
+def compute_segmented_cell_contours_dataframe(
+    tracks_df,
+    *,
+    group_col="filename",
+    coordinate_units="pixels",
+    x_col=None,
+    y_col=None,
+    metadata_cols=None,
+    selection_method=None,
+    n_cells=None,
+    track_id_col="unique_id",
+    random_state=42,
+    return_backend="polars",
+    **segmented_kwargs,
+):
+    """
+    Compute experimental segmented contours for multiple cells.
+
+    Returns one row per contour component. For unsplit cells, the returned table
+    still contains one row with ``contour_id == 1`` and ``split_status`` showing
+    the fallback reason.
+    """
+    if x_col is None:
+        x_col = "x" if coordinate_units == "pixels" else "x_um"
+    if y_col is None:
+        y_col = "y" if coordinate_units == "pixels" else "y_um"
+
+    if isinstance(tracks_df, pl.DataFrame) and n_cells is not None:
+        agg_exprs = [pl.len().alias("n_datapoints")]
+        if track_id_col in tracks_df.columns:
+            agg_exprs.append(pl.col(track_id_col).n_unique().alias("n_tracks"))
+        else:
+            agg_exprs.append(pl.len().alias("n_tracks"))
+        summary_pl = tracks_df.group_by(group_col).agg(agg_exprs)
+        if selection_method == "most_tracks":
+            summary_pl = summary_pl.sort(["n_tracks", "n_datapoints"], descending=True)
+        elif selection_method == "most_points":
+            summary_pl = summary_pl.sort(["n_datapoints", "n_tracks"], descending=True)
+        elif selection_method == "random":
+            summary_pl = summary_pl.sample(fraction=1.0, shuffle=True, seed=random_state)
+        elif selection_method is not None:
+            raise ValueError(
+                "selection_method must be None, 'most_tracks', 'most_points', or 'random'"
+            )
+        selected_cells = summary_pl.head(int(n_cells))[group_col].to_list()
+        tracks_df = tracks_df.filter(pl.col(group_col).is_in(selected_cells))
+
+    df = _as_pandas_copy(tracks_df)
+    for col in [group_col, x_col, y_col, track_id_col]:
+        if col not in df.columns:
+            raise ValueError(f"Column {col!r} not found")
+
+    metadata_cols = list(metadata_cols or [])
+    metadata_cols = [col for col in metadata_cols if col in df.columns and col != group_col]
+
+    cell_summary = (
+        df.groupby(group_col)
+        .agg(
+            n_datapoints=(x_col, "size"),
+            n_tracks=(track_id_col, "nunique"),
+        )
+        .reset_index()
+    )
+    if selection_method == "most_tracks":
+        cell_summary = cell_summary.sort_values(
+            ["n_tracks", "n_datapoints"], ascending=False
+        )
+    elif selection_method == "most_points":
+        cell_summary = cell_summary.sort_values(
+            ["n_datapoints", "n_tracks"], ascending=False
+        )
+    elif selection_method == "random":
+        cell_summary = cell_summary.sample(
+            frac=1, random_state=random_state
+        ).reset_index(drop=True)
+    elif selection_method is not None:
+        raise ValueError(
+            "selection_method must be None, 'most_tracks', 'most_points', or 'random'"
+        )
+    if n_cells is not None:
+        cell_summary = cell_summary.head(int(n_cells))
+
+    rows = []
+    for cell_id in cell_summary[group_col].tolist():
+        sub = df[df[group_col] == cell_id].copy()
+        contour_rows = compute_segmented_cell_contours(
+            sub,
+            group_col=group_col,
+            track_id_col=track_id_col,
+            coordinate_units=coordinate_units,
+            x_col=x_col,
+            y_col=y_col,
+            **segmented_kwargs,
+        )
+        for row in contour_rows:
+            row[group_col] = cell_id
+            for col in metadata_cols:
+                row[col] = _single_value_from_df(sub, col)
+            rows.append(row)
+
+    result = pd.DataFrame(rows)
+    if not result.empty and "component_label" in result.columns:
+        result["component_label"] = pd.to_numeric(
+            result["component_label"], errors="coerce"
+        ).astype("Int64")
+    if return_backend == "pandas":
+        return result
+    if return_backend == "polars":
+        return pl.from_pandas(result)
+    raise ValueError("return_backend must be 'polars' or 'pandas'")
+
+
+def add_contour_ids_for_multicontour_tracks(
+    df,
+    contours_df,
+    *,
+    group_col="filename",
+    track_id_col="unique_id",
+    contour_id_col="contour_id",
+    output_col="contour_id",
+    track_ids_col="track_ids",
+    return_backend=None,
+):
+    """
+    Add contour IDs to track rows only for filenames with multiple contours.
+
+    The mapping uses the ``track_ids`` stored in segmented ``contours_df``. This
+    avoids recomputing clustering for instant/windowed dataframes and only
+    touches cells where a filename has more than one contour row.
+    """
+    input_is_polars = isinstance(df, pl.DataFrame)
+    contours_pdf = _as_pandas_copy(contours_df)
+    for col in [group_col, contour_id_col, track_ids_col]:
+        if col not in contours_pdf.columns:
+            raise ValueError(f"Column {col!r} not found in contours_df")
+
+    contour_counts = contours_pdf.groupby(group_col)[contour_id_col].nunique()
+    multicontour_cells = contour_counts[contour_counts > 1].index.tolist()
+    mapping_rows = []
+    for _, row in contours_pdf[
+        contours_pdf[group_col].isin(multicontour_cells)
+    ].iterrows():
+        for track_id in row[track_ids_col]:
+            mapping_rows.append(
+                {
+                    group_col: row[group_col],
+                    track_id_col: track_id,
+                    "_mapped_contour_id": row[contour_id_col],
+                }
+            )
+
+    if not mapping_rows:
+        if return_backend == "polars" or (return_backend is None and input_is_polars):
+            result = df.clone() if input_is_polars else pl.from_pandas(_as_pandas_copy(df))
+            if output_col not in result.columns:
+                result = result.with_columns(pl.lit(None).alias(output_col))
+            return result
+        result = _as_pandas_copy(df)
+        if output_col not in result.columns:
+            result[output_col] = pd.NA
+        return result
+
+    mapping_pdf = pd.DataFrame(mapping_rows).drop_duplicates(
+        subset=[group_col, track_id_col]
+    )
+    if input_is_polars:
+        mapping_pl = pl.from_pandas(mapping_pdf)
+        result = df.join(mapping_pl, on=[group_col, track_id_col], how="left")
+        if output_col in result.columns:
+            result = result.with_columns(
+                pl.coalesce([pl.col("_mapped_contour_id"), pl.col(output_col)]).alias(
+                    output_col
+                )
+            )
+        else:
+            result = result.rename({"_mapped_contour_id": output_col})
+        if "_mapped_contour_id" in result.columns:
+            result = result.drop("_mapped_contour_id")
+        if return_backend == "pandas":
+            return result.to_pandas()
+        return result
+
+    result = _as_pandas_copy(df)
+    result = result.merge(mapping_pdf, on=[group_col, track_id_col], how="left")
+    if output_col in result.columns:
+        result[output_col] = result["_mapped_contour_id"].combine_first(result[output_col])
+        result = result.drop(columns=["_mapped_contour_id"])
+    else:
+        result = result.rename(columns={"_mapped_contour_id": output_col})
+    if return_backend == "polars":
+        return pl.from_pandas(result)
+    return result
+
+
+def add_contour_measurements_by_filename(
+    df,
+    contours_df,
+    *,
+    group_col="filename",
+    contour_id_col="contour_id",
+    area_col="area",
+    perimeter_col="perimeter",
+    circumference_col="circumference",
+    prefix="contour_",
+):
+    """
+    Join one-contour-per-filename measurements onto a track dataframe.
+
+    This is intended for the settled single-contour workflow. If ``contours_df``
+    contains multiple contour rows for a filename, the first contour_id after
+    sorting is used to avoid duplicating track rows.
+    """
+    output_is_polars = isinstance(df, pl.DataFrame)
+
+    if isinstance(contours_df, pl.DataFrame):
+        contour_columns = contours_df.columns
+        required = [group_col, contour_id_col, area_col, perimeter_col]
+        for col in required:
+            if col not in contour_columns:
+                raise ValueError(f"Column {col!r} not found in contours_df")
+        circumference_expr = (
+            pl.col(circumference_col)
+            if circumference_col in contour_columns
+            else pl.col(perimeter_col)
+        )
+        mapping = (
+            contours_df.sort([group_col, contour_id_col])
+            .group_by(group_col, maintain_order=True)
+            .agg(
+                [
+                    pl.col(contour_id_col).first().alias(f"{prefix}id"),
+                    pl.col(area_col).first().alias(f"{prefix}area"),
+                    pl.col(perimeter_col).first().alias(f"{prefix}perimeter"),
+                    circumference_expr.first().alias(f"{prefix}circumference"),
+                ]
+            )
+        )
+        if output_is_polars:
+            return df.join(mapping, on=group_col, how="left")
+        return _as_pandas_copy(df).merge(mapping.to_pandas(), on=group_col, how="left")
+
+    contour_pdf = _as_pandas_copy(contours_df)
+    required = [group_col, contour_id_col, area_col, perimeter_col]
+    for col in required:
+        if col not in contour_pdf.columns:
+            raise ValueError(f"Column {col!r} not found in contours_df")
+    if circumference_col not in contour_pdf.columns:
+        contour_pdf[circumference_col] = contour_pdf[perimeter_col]
+    mapping_pdf = (
+        contour_pdf.sort_values([group_col, contour_id_col])
+        .groupby(group_col, as_index=False)
+        .first()
+    )
+    mapping_pdf = mapping_pdf[
+        [group_col, contour_id_col, area_col, perimeter_col, circumference_col]
+    ].rename(
+        columns={
+            contour_id_col: f"{prefix}id",
+            area_col: f"{prefix}area",
+            perimeter_col: f"{prefix}perimeter",
+            circumference_col: f"{prefix}circumference",
+        }
+    )
+    if output_is_polars:
+        return df.join(pl.from_pandas(mapping_pdf), on=group_col, how="left")
+    return _as_pandas_copy(df).merge(mapping_pdf, on=group_col, how="left")
+
+
+def plot_segmented_cell_contours_qc(
+    single_cell_df,
+    contours_df,
+    *,
+    group_col="filename",
+    track_id_col="unique_id",
+    contour_id_col="contour_id",
+    coordinate_units="pixels",
+    x_col=None,
+    y_col=None,
+    frame_col="frame",
+    frame_range=None,
+    track_colorway="tab10",
+    track_line_width=0.8,
+    track_alpha=0.7,
+    contour_colors=None,
+    contour_line_width=1.4,
+    contour_line_style="--",
+    show_raw_projection=False,
+    raw_movie_path=None,
+    raw_master_dir=None,
+    raw_projection="max",
+    raw_max_frames=250,
+    raw_contrast_limits=None,
+    invert_raw=False,
+    raw_cmap="gray",
+    raw_lut=None,
+    figsize=(4, 4),
+    dpi=150,
+    show_plot=True,
+):
+    """
+    QC plot for one cell with segmented contours and matching track colors.
+    """
+    tracks = _as_pandas_copy(single_cell_df)
+    contours = _as_pandas_copy(contours_df)
+    if x_col is None:
+        x_col = "x" if coordinate_units == "pixels" else "x_um"
+    if y_col is None:
+        y_col = "y" if coordinate_units == "pixels" else "y_um"
+    for col in [x_col, y_col, track_id_col]:
+        if col not in tracks.columns:
+            raise ValueError(f"Column {col!r} not found in single_cell_df")
+    for col in ["contour_x", "contour_y", contour_id_col]:
+        if col not in contours.columns:
+            raise ValueError(f"Column {col!r} not found in contours_df")
+
+    if group_col in tracks.columns and group_col in contours.columns:
+        cell_id = _single_value_from_df(tracks, group_col)
+        contours = contours[contours[group_col] == cell_id].copy()
+
+    mapped_tracks = add_contour_ids_for_multicontour_tracks(
+        tracks,
+        contours,
+        group_col=group_col,
+        track_id_col=track_id_col,
+        contour_id_col=contour_id_col,
+        output_col=contour_id_col,
+        return_backend="pandas",
+    )
+    if frame_range is not None and frame_col in mapped_tracks.columns:
+        frame_start, frame_end = map(int, frame_range)
+        mapped_tracks = mapped_tracks[
+            (mapped_tracks[frame_col] >= frame_start)
+            & (mapped_tracks[frame_col] <= frame_end)
+        ].copy()
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+
+    if show_raw_projection:
+        if frame_range is not None:
+            raw_frame_start, raw_frame_end = map(int, frame_range)
+        elif frame_col in tracks.columns:
+            raw_frame_start = int(tracks[frame_col].min())
+            raw_frame_end = int(tracks[frame_col].max())
+        else:
+            raw_frame_start = raw_frame_end = None
+        if raw_frame_start is not None and raw_frame_end is not None:
+            raw_movie_path = raw_movie_path or _resolve_raw_movie_path(
+                tracks, master_dir=raw_master_dir
+            )
+            raw_frame_indices = np.arange(raw_frame_start, raw_frame_end + 1)
+            if raw_max_frames is not None and len(raw_frame_indices) > int(raw_max_frames):
+                raw_frame_indices = np.linspace(
+                    raw_frame_start,
+                    raw_frame_end,
+                    int(raw_max_frames),
+                    dtype=int,
+                )
+            raw_stack = _load_raw_frame_indices(raw_movie_path, raw_frame_indices)
+            if raw_stack.ndim == 2:
+                raw_image = raw_stack
+            elif raw_projection == "max":
+                raw_image = np.nanmax(raw_stack, axis=0)
+            elif raw_projection == "sum":
+                raw_image = np.nansum(raw_stack, axis=0)
+            elif raw_projection == "mean":
+                raw_image = np.nanmean(raw_stack, axis=0)
+            else:
+                raise ValueError("raw_projection must be 'max', 'sum', or 'mean'")
+            ax.imshow(
+                _normalize_raw_image(
+                    raw_image,
+                    contrast_limits=raw_contrast_limits,
+                    invert_image=invert_raw,
+                ),
+                cmap=_coerce_lut_colormap(raw_lut, target="matplotlib", fallback=raw_cmap),
+                origin="upper",
+            )
+
+    if contour_colors is None:
+        cmap = plt.get_cmap(track_colorway, max(len(contours), 1))
+        contour_colors = {
+            contour_id: cmap(i)
+            for i, contour_id in enumerate(pd.unique(contours[contour_id_col]))
+        }
+
+    segments = []
+    colors = []
+    color_source = (
+        mapped_tracks.dropna(subset=[contour_id_col])
+        if contour_id_col in mapped_tracks.columns
+        else pd.DataFrame()
+    )
+    color_map = (
+        _track_color_map(color_source, track_id_col, contour_id_col, track_colorway)
+        if not color_source.empty
+        else {}
+    )
+    sort_col = frame_col if frame_col in mapped_tracks.columns else x_col
+    for track_id, track in mapped_tracks.sort_values(sort_col).groupby(track_id_col):
+        if len(track) < 2:
+            continue
+        segments.append(track[[x_col, y_col]].to_numpy())
+        colors.append(color_map.get(track_id, "0.55"))
+    if segments:
+        ax.add_collection(
+            LineCollection(
+                segments,
+                colors=colors,
+                linewidths=track_line_width,
+                alpha=track_alpha,
+            )
+        )
+
+    for _, row in contours.iterrows():
+        contour = np.column_stack(
+            [
+                np.asarray(row["contour_x"], dtype=float),
+                np.asarray(row["contour_y"], dtype=float),
+            ]
+        )
+        contour_id = row[contour_id_col]
+        ax.plot(
+            contour[:, 0],
+            contour[:, 1],
+            color=contour_colors.get(contour_id, "yellow")
+            if isinstance(contour_colors, dict)
+            else None,
+            lw=contour_line_width,
+            linestyle=contour_line_style,
+            label=f"contour {contour_id}",
+        )
+
+    ax.set_aspect("equal", adjustable="box")
+    if coordinate_units == "pixels":
+        ax.invert_yaxis()
+    ax.axis("off")
+    ax.legend(loc="upper right", fontsize=7)
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
+    return {
+        "fig": fig,
+        "ax": ax,
+        "tracks_df": mapped_tracks,
+        "contours_df": contours,
+    }
+
+
+def plot_segmented_contour_gallery(
+    tracks_df,
+    contours_df,
+    *,
+    n_cells=16,
+    selection_method="most_tracks",
+    group_col="filename",
+    track_id_col="unique_id",
+    contour_id_col="contour_id",
+    track_ids_col="track_ids",
+    coordinate_units="pixels",
+    x_col=None,
+    y_col=None,
+    n_cols=4,
+    figsize_per_cell=(2, 2),
+    contour_colors=None,
+    contour_colorway="tab10",
+    contour_line_width=1.0,
+    contour_line_style="--",
+    show_contour_ids=True,
+    contour_id_fontsize=8,
+    show_panel_numbers=True,
+    panel_number_start=1,
+    show_tracks=True,
+    track_color_mode="by_contour",
+    track_color="0.55",
+    track_colorway="tab20",
+    track_line_width=0.7,
+    track_alpha=0.85,
+    max_tracks_per_cell=80,
+    frame_range=None,
+    frame_col="frame",
+    show_raw_projection=False,
+    raw_projection="max",
+    raw_projection_frame_range=None,
+    raw_max_frames=250,
+    raw_master_dir=None,
+    raw_contrast_limits=None,
+    invert_raw=False,
+    raw_cmap="gray",
+    raw_lut=None,
+    raw_alpha=1.0,
+    title_col=None,
+    save_path=None,
+    dpi=150,
+    show_plot=True,
+):
+    """
+    Gallery for segmented contour results.
+
+    Unlike ``plot_cell_contour_gallery``, this groups multiple contour rows with
+    the same filename into a single panel and labels each ``contour_id``.
+    """
+    contour_pdf = _as_pandas_copy(contours_df)
+    if contour_pdf.empty:
+        raise ValueError("contours_df is empty")
+    for col in [group_col, contour_id_col, "contour_x", "contour_y"]:
+        if col not in contour_pdf.columns:
+            raise ValueError(f"Column {col!r} not found in contours_df")
+
+    if isinstance(tracks_df, pl.DataFrame):
+        if group_col not in tracks_df.columns:
+            raise ValueError(f"Column {group_col!r} not found in tracks_df")
+        summary_pl = tracks_df.group_by(group_col).agg(
+            [
+                pl.len().alias("n_datapoints"),
+                pl.col(track_id_col).n_unique().alias("n_tracks")
+                if track_id_col in tracks_df.columns
+                else pl.len().alias("n_tracks"),
+            ]
+        )
+        if selection_method == "most_tracks":
+            summary_pl = summary_pl.sort(["n_tracks", "n_datapoints"], descending=True)
+        elif selection_method == "most_points":
+            summary_pl = summary_pl.sort(["n_datapoints", "n_tracks"], descending=True)
+        elif selection_method == "random":
+            summary_pl = summary_pl.sample(fraction=1.0, shuffle=True, seed=42)
+        elif selection_method is not None:
+            raise ValueError(
+                "selection_method must be None, 'most_tracks', 'most_points', or 'random'"
+            )
+        available_cells = set(contour_pdf[group_col].dropna().unique())
+        selected_cells = [
+            cell for cell in summary_pl[group_col].to_list() if cell in available_cells
+        ]
+        if n_cells is not None:
+            selected_cells = selected_cells[: int(n_cells)]
+        selected_tracks = tracks_df.filter(pl.col(group_col).is_in(selected_cells))
+        if frame_range is not None and frame_col in selected_tracks.columns:
+            frame_start, frame_end = map(int, frame_range)
+            selected_tracks = selected_tracks.filter(
+                (pl.col(frame_col) >= frame_start) & (pl.col(frame_col) <= frame_end)
+            )
+        if (
+            max_tracks_per_cell is not None
+            and track_id_col in selected_tracks.columns
+            and show_tracks
+        ):
+            track_counts = selected_tracks.group_by([group_col, track_id_col]).agg(
+                pl.len().alias("_n_track_points")
+            )
+            top_tracks = (
+                track_counts.with_columns(
+                    pl.col("_n_track_points")
+                    .rank("ordinal", descending=True)
+                    .over(group_col)
+                    .alias("_track_rank")
+                )
+                .filter(pl.col("_track_rank") <= int(max_tracks_per_cell))
+                .select([group_col, track_id_col])
+            )
+            selected_tracks = selected_tracks.join(
+                top_tracks, on=[group_col, track_id_col], how="inner"
+            )
+        selected_track_df = selected_tracks.to_pandas()
+    else:
+        track_pdf = _as_pandas_copy(tracks_df)
+        summary = (
+            track_pdf.groupby(group_col)
+            .agg(
+                n_datapoints=(group_col, "size"),
+                n_tracks=(track_id_col, "nunique")
+                if track_id_col in track_pdf.columns
+                else (group_col, "size"),
+            )
+            .reset_index()
+        )
+        if selection_method == "most_tracks":
+            summary = summary.sort_values(["n_tracks", "n_datapoints"], ascending=False)
+        elif selection_method == "most_points":
+            summary = summary.sort_values(["n_datapoints", "n_tracks"], ascending=False)
+        elif selection_method == "random":
+            summary = summary.sample(frac=1, random_state=42)
+        elif selection_method is not None:
+            raise ValueError(
+                "selection_method must be None, 'most_tracks', 'most_points', or 'random'"
+            )
+        available_cells = set(contour_pdf[group_col].dropna().unique())
+        selected_cells = [
+            cell for cell in summary[group_col].tolist() if cell in available_cells
+        ]
+        if n_cells is not None:
+            selected_cells = selected_cells[: int(n_cells)]
+        selected_track_df = track_pdf[track_pdf[group_col].isin(selected_cells)].copy()
+
+    contour_pdf = contour_pdf[contour_pdf[group_col].isin(selected_cells)].copy()
+    if contour_pdf.empty:
+        raise ValueError("No segmented contours available for selected cells")
+
+    n = len(selected_cells)
+    n_cols = max(1, int(n_cols))
+    n_rows = int(math.ceil(n / n_cols))
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(figsize_per_cell[0] * n_cols, figsize_per_cell[1] * n_rows),
+        squeeze=False,
+        dpi=dpi,
+    )
+    for ax in axes.ravel():
+        ax.axis("off")
+
+    if contour_colors is None:
+        contour_ids = list(pd.unique(contour_pdf[contour_id_col]))
+        cmap = plt.get_cmap(contour_colorway, max(len(contour_ids), 1))
+        contour_colors = {contour_id: cmap(i) for i, contour_id in enumerate(contour_ids)}
+
+    lookup_rows = []
+    for idx, cell_id in enumerate(selected_cells):
+        ax = axes.ravel()[idx]
+        cell_contours = contour_pdf[contour_pdf[group_col] == cell_id].copy()
+        cell_tracks = selected_track_df[selected_track_df[group_col] == cell_id].copy()
+
+        panel_number = int(panel_number_start) + idx
+        foldername = _single_value_from_df(cell_tracks, "foldername", default="")
+        filename_value = _single_value_from_df(cell_tracks, "filename", default=cell_id)
+        lookup_rows.append(
+            {
+                "gallery_number": panel_number,
+                group_col: cell_id,
+                "filename": filename_value,
+                "foldername": foldername,
+                "n_contours": int(cell_contours[contour_id_col].nunique()),
+            }
+        )
+
+        if show_raw_projection and not cell_tracks.empty:
+            if raw_projection_frame_range is not None:
+                raw_frame_start, raw_frame_end = map(int, raw_projection_frame_range)
+            elif frame_range is not None:
+                raw_frame_start, raw_frame_end = map(int, frame_range)
+            elif frame_col in cell_tracks.columns:
+                raw_frame_start = int(cell_tracks[frame_col].min())
+                raw_frame_end = int(cell_tracks[frame_col].max())
+            else:
+                raw_frame_start = raw_frame_end = None
+            if raw_frame_start is not None and raw_frame_end is not None:
+                raw_movie_path = _resolve_raw_movie_path(
+                    cell_tracks, master_dir=raw_master_dir
+                )
+                raw_frame_indices = np.arange(raw_frame_start, raw_frame_end + 1)
+                if raw_max_frames is not None and len(raw_frame_indices) > int(raw_max_frames):
+                    raw_frame_indices = np.linspace(
+                        raw_frame_start,
+                        raw_frame_end,
+                        int(raw_max_frames),
+                        dtype=int,
+                    )
+                raw_stack = _load_raw_frame_indices(raw_movie_path, raw_frame_indices)
+                if raw_stack.ndim == 2:
+                    raw_image = raw_stack
+                elif raw_projection == "max":
+                    raw_image = np.nanmax(raw_stack, axis=0)
+                elif raw_projection == "sum":
+                    raw_image = np.nansum(raw_stack, axis=0)
+                elif raw_projection == "mean":
+                    raw_image = np.nanmean(raw_stack, axis=0)
+                else:
+                    raise ValueError("raw_projection must be 'max', 'sum', or 'mean'")
+                ax.imshow(
+                    _normalize_raw_image(
+                        raw_image,
+                        contrast_limits=raw_contrast_limits,
+                        invert_image=invert_raw,
+                    ),
+                    cmap=_coerce_lut_colormap(
+                        raw_lut, target="matplotlib", fallback=raw_cmap
+                    ),
+                    origin="upper",
+                    alpha=raw_alpha,
+                    zorder=0,
+                )
+
+        if show_tracks and not cell_tracks.empty:
+            x_col = (
+                x_col
+                or ("x" if coordinate_units == "pixels" and "x" in cell_tracks.columns else "x_um")
+            )
+            y_col = (
+                y_col
+                or ("y" if coordinate_units == "pixels" and "y" in cell_tracks.columns else "y_um")
+            )
+            if x_col not in cell_tracks.columns or y_col not in cell_tracks.columns:
+                raise ValueError(f"Columns {x_col!r} and/or {y_col!r} not found in tracks_df")
+            if {x_col, y_col, track_id_col}.issubset(cell_tracks.columns):
+                track_to_contour = {}
+                if track_ids_col in cell_contours.columns:
+                    for _, contour_row in cell_contours.iterrows():
+                        for track_id in contour_row[track_ids_col]:
+                            track_to_contour[track_id] = contour_row[contour_id_col]
+                cell_tracks["_gallery_contour_id"] = cell_tracks[track_id_col].map(
+                    track_to_contour
+                )
+                if track_color_mode == "by_contour":
+                    color_source = cell_tracks.dropna(subset=["_gallery_contour_id"])
+                    track_colors = (
+                        _track_color_map(
+                            color_source,
+                            track_id_col,
+                            "_gallery_contour_id",
+                            contour_colorway,
+                        )
+                        if not color_source.empty
+                        else {}
+                    )
+                elif track_color_mode == "by_track":
+                    track_colors = _track_color_map(
+                        cell_tracks, track_id_col, track_id_col, track_colorway
+                    )
+                elif track_color_mode == "single":
+                    track_colors = None
+                else:
+                    raise ValueError(
+                        "track_color_mode must be 'by_contour', 'by_track', or 'single'"
+                    )
+                sort_col = frame_col if frame_col in cell_tracks.columns else x_col
+                segments = []
+                colors = []
+                for track_id, track in cell_tracks.sort_values(sort_col).groupby(track_id_col):
+                    if len(track) < 2:
+                        continue
+                    segments.append(track[[x_col, y_col]].to_numpy())
+                    colors.append(
+                        track_colors.get(track_id, track_color)
+                        if track_colors is not None
+                        else track_color
+                    )
+                if segments:
+                    ax.add_collection(
+                        LineCollection(
+                            segments,
+                            colors=colors,
+                            linewidths=track_line_width,
+                            alpha=track_alpha,
+                            zorder=1,
+                        )
+                    )
+
+        for _, contour_row in cell_contours.iterrows():
+            contour = np.column_stack(
+                [
+                    np.asarray(contour_row["contour_x"], dtype=float),
+                    np.asarray(contour_row["contour_y"], dtype=float),
+                ]
+            )
+            contour_id = contour_row[contour_id_col]
+            color = (
+                contour_colors.get(contour_id, "yellow")
+                if isinstance(contour_colors, dict)
+                else None
+            )
+            ax.plot(
+                contour[:, 0],
+                contour[:, 1],
+                color=color,
+                lw=contour_line_width,
+                linestyle=contour_line_style,
+                zorder=2,
+            )
+            if show_contour_ids:
+                label_x = contour_row.get("centroid_x", np.nanmean(contour[:, 0]))
+                label_y = contour_row.get("centroid_y", np.nanmean(contour[:, 1]))
+                ax.text(
+                    label_x,
+                    label_y,
+                    str(contour_id),
+                    color=color,
+                    fontsize=contour_id_fontsize,
+                    weight="bold",
+                    ha="center",
+                    va="center",
+                    zorder=3,
+                )
+
+        ax.set_aspect("equal", adjustable="box")
+        if coordinate_units == "pixels":
+            ax.invert_yaxis()
+        ax.axis("off")
+        if show_panel_numbers:
+            ax.set_title(str(panel_number), fontsize=8)
+        elif title_col is not None and title_col in cell_contours.columns:
+            ax.set_title(str(_single_value_from_df(cell_contours, title_col)), fontsize=8)
+        else:
+            ax.set_title(str(cell_id), fontsize=8)
+
+    plt.tight_layout()
+    if save_path is not None:
+        os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+        fig.savefig(save_path, dpi=dpi, bbox_inches="tight", transparent=True)
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return {
+        "fig": fig,
+        "axes": axes,
+        "contours_df": contour_pdf,
+        "selected_cells": selected_cells,
+        "cell_lookup_df": pd.DataFrame(lookup_rows),
+    }
+
+
+def plot_cell_contour_gallery(
+    tracks_or_contours_df,
+    *,
+    n_cells=16,
+    selection_method="most_tracks",
+    group_col="filename",
+    track_id_col="unique_id",
+    coordinate_units="pixels",
+    metadata_cols=None,
+    n_cols=4,
+    figsize_per_cell=(2, 2),
+    contour_color="cyan",
+    contour_line_width=1.0,
+    contour_line_style="-",
+    show_tracks=False,
+    track_color_mode=None,
+    track_color="yellow",
+    track_color_by=None,
+    track_colorway="tab20",
+    track_line_width=0.7,
+    track_alpha=0.85,
+    max_tracks_per_cell=None,
+    frame_range=None,
+    frame_col="frame",
+    show_raw_projection=False,
+    raw_projection="max",
+    raw_projection_frame_range=None,
+    raw_max_frames=None,
+    raw_master_dir=None,
+    raw_contrast_limits=None,
+    invert_raw=False,
+    raw_cmap="gray",
+    raw_lut=None,
+    raw_alpha=1.0,
+    show_points=False,
+    point_size=0.4,
+    point_alpha=0.15,
+    title_col=None,
+    title_metadata_cols=None,
+    title_fontsize=8,
+    title_metadata_fontsize=4,
+    show_panel_numbers=False,
+    panel_number_start=1,
+    save_path=None,
+    dpi=200,
+    show_plot=True,
+    **contour_kwargs,
+):
+    """
+    Plot a gallery of fixed contours from either tracks or a stored contour table.
+
+    If ``show_tracks=True`` and the input is a track dataframe, the selected cell
+    tracks are drawn behind each contour for track-footprint QC.
+
+    If ``show_raw_projection=True``, a raw movie projection is drawn below the
+    tracks/contour for each selected cell. Use ``raw_max_frames`` to sample long
+    movies for gallery QC without loading every frame.
+
+    ``track_color_mode`` can be ``"single"``, ``"by_track"``, or ``"by_column"``.
+    For ``"by_column"``, pass the column name with ``track_color_by``. If left
+    as ``None``, the function uses ``"by_column"`` when ``track_color_by`` is
+    valid and otherwise uses ``"by_track"``.
+    """
+    source_is_contour_table = False
+    selected_track_df = None
+
+    if isinstance(tracks_or_contours_df, pl.DataFrame):
+        source_columns = tracks_or_contours_df.columns
+        source_is_contour_table = {"contour_x", "contour_y"}.issubset(source_columns)
+        input_df = _as_pandas_copy(tracks_or_contours_df) if source_is_contour_table else None
+    else:
+        input_preview = _as_pandas_copy(tracks_or_contours_df)
+        source_is_contour_table = {"contour_x", "contour_y"}.issubset(
+            input_preview.columns
+        )
+        input_df = input_preview
+
+    if source_is_contour_table:
+        contour_df = input_df.copy()
+        if selection_method == "random":
+            contour_df = contour_df.sample(
+                frac=1, random_state=contour_kwargs.get("random_state", 42)
+            ).reset_index(drop=True)
+        elif selection_method in {"most_tracks", "most_points"}:
+            sort_col = "n_tracks" if selection_method == "most_tracks" else "n_source_points"
+            if sort_col in contour_df.columns:
+                contour_df = contour_df.sort_values(sort_col, ascending=False)
+        elif selection_method is not None:
+            raise ValueError(
+                "selection_method must be None, 'most_tracks', 'most_points', or 'random'"
+            )
+        contour_df = contour_df.head(int(n_cells))
+    else:
+        contour_df = compute_cell_contours_dataframe(
+            tracks_or_contours_df,
+            group_col=group_col,
+            coordinate_units=coordinate_units,
+            metadata_cols=metadata_cols,
+            selection_method=selection_method,
+            n_cells=n_cells,
+            track_id_col=track_id_col,
+            return_backend="pandas",
+            **contour_kwargs,
+        )
+        selected_cells_for_tracks = (
+            contour_df[group_col].tolist()
+            if group_col in contour_df.columns
+            else []
+        )
+        if (show_tracks or show_raw_projection) and selected_cells_for_tracks:
+            if isinstance(tracks_or_contours_df, pl.DataFrame):
+                selected_tracks = tracks_or_contours_df.filter(
+                    pl.col(group_col).is_in(selected_cells_for_tracks)
+                )
+                if frame_range is not None and frame_col in selected_tracks.columns:
+                    frame_start, frame_end = map(int, frame_range)
+                    selected_tracks = selected_tracks.filter(
+                        (pl.col(frame_col) >= frame_start)
+                        & (pl.col(frame_col) <= frame_end)
+                    )
+                if (
+                    max_tracks_per_cell is not None
+                    and track_id_col in selected_tracks.columns
+                ):
+                    track_counts = selected_tracks.group_by(
+                        [group_col, track_id_col]
+                    ).agg(pl.len().alias("_n_track_points"))
+                    top_tracks = (
+                        track_counts.with_columns(
+                            pl.col("_n_track_points")
+                            .rank("ordinal", descending=True)
+                            .over(group_col)
+                            .alias("_track_rank")
+                        )
+                        .filter(pl.col("_track_rank") <= int(max_tracks_per_cell))
+                        .select([group_col, track_id_col])
+                    )
+                    selected_tracks = selected_tracks.join(
+                        top_tracks, on=[group_col, track_id_col], how="inner"
+                    )
+                selected_track_df = selected_tracks.to_pandas()
+            else:
+                selected_track_df = input_df[
+                    input_df[group_col].isin(selected_cells_for_tracks)
+                ].copy()
+                if frame_range is not None and frame_col in selected_track_df.columns:
+                    frame_start, frame_end = map(int, frame_range)
+                    selected_track_df = selected_track_df[
+                        (selected_track_df[frame_col] >= frame_start)
+                        & (selected_track_df[frame_col] <= frame_end)
+                    ]
+                if (
+                    max_tracks_per_cell is not None
+                    and track_id_col in selected_track_df.columns
+                ):
+                    selected_track_df["_n_track_points"] = selected_track_df.groupby(
+                        [group_col, track_id_col]
+                    )[track_id_col].transform("size")
+                    ranks = (
+                        selected_track_df[[group_col, track_id_col, "_n_track_points"]]
+                        .drop_duplicates()
+                        .sort_values([group_col, "_n_track_points"], ascending=False)
+                    )
+                    ranks["_track_rank"] = ranks.groupby(group_col).cumcount() + 1
+                    keep_tracks = ranks[
+                        ranks["_track_rank"] <= int(max_tracks_per_cell)
+                    ][[group_col, track_id_col]]
+                    selected_track_df = selected_track_df.merge(
+                        keep_tracks, on=[group_col, track_id_col], how="inner"
+                    )
+                    selected_track_df = selected_track_df.drop(
+                        columns=["_n_track_points"], errors="ignore"
+                    )
+
+    if contour_df.empty:
+        raise ValueError("No contours available for gallery")
+
+    contour_df = contour_df.copy()
+    contour_df["_gallery_number"] = np.arange(
+        int(panel_number_start),
+        int(panel_number_start) + len(contour_df),
+    )
+
+    n = len(contour_df)
+    n_cols = max(1, int(n_cols))
+    n_rows = int(math.ceil(n / n_cols))
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(figsize_per_cell[0] * n_cols, figsize_per_cell[1] * n_rows),
+        squeeze=False,
+        dpi=dpi,
+    )
+
+    for ax in axes.ravel():
+        ax.axis("off")
+
+    for idx, (_, row) in enumerate(contour_df.iterrows()):
+        ax = axes.ravel()[idx]
+        contour = np.column_stack(
+            [
+                np.asarray(row["contour_x"], dtype=float),
+                np.asarray(row["contour_y"], dtype=float),
+            ]
+        )
+        cell_tracks = None
+        if selected_track_df is not None and group_col in selected_track_df.columns:
+            cell_tracks = selected_track_df[selected_track_df[group_col] == row[group_col]]
+
+        if show_raw_projection and cell_tracks is not None and not cell_tracks.empty:
+            if raw_projection_frame_range is not None:
+                raw_frame_start, raw_frame_end = map(int, raw_projection_frame_range)
+            elif frame_range is not None:
+                raw_frame_start, raw_frame_end = map(int, frame_range)
+            elif frame_col in cell_tracks.columns:
+                raw_frame_start = int(cell_tracks[frame_col].min())
+                raw_frame_end = int(cell_tracks[frame_col].max())
+            else:
+                raw_frame_start = raw_frame_end = None
+
+            if raw_frame_start is not None and raw_frame_end is not None:
+                raw_movie_path = _resolve_raw_movie_path(
+                    cell_tracks,
+                    master_dir=raw_master_dir,
+                )
+                raw_frame_indices = np.arange(raw_frame_start, raw_frame_end + 1)
+                if raw_max_frames is not None and len(raw_frame_indices) > int(raw_max_frames):
+                    raw_frame_indices = np.linspace(
+                        raw_frame_start,
+                        raw_frame_end,
+                        int(raw_max_frames),
+                        dtype=int,
+                    )
+                raw_stack = _load_raw_frame_indices(raw_movie_path, raw_frame_indices)
+                if raw_stack.ndim == 2:
+                    raw_image = raw_stack
+                elif raw_projection == "max":
+                    raw_image = np.nanmax(raw_stack, axis=0)
+                elif raw_projection == "sum":
+                    raw_image = np.nansum(raw_stack, axis=0)
+                elif raw_projection == "mean":
+                    raw_image = np.nanmean(raw_stack, axis=0)
+                else:
+                    raise ValueError("raw_projection must be 'max', 'sum', or 'mean'")
+                raw_image = _normalize_raw_image(
+                    raw_image,
+                    contrast_limits=raw_contrast_limits,
+                    invert_image=invert_raw,
+                )
+                ax.imshow(
+                    raw_image,
+                    cmap=_coerce_lut_colormap(
+                        raw_lut, target="matplotlib", fallback=raw_cmap
+                    ),
+                    origin="upper",
+                    alpha=raw_alpha,
+                    zorder=0,
+                )
+
+        if show_tracks and selected_track_df is not None and group_col in selected_track_df.columns:
+            x_col = "x" if coordinate_units == "pixels" and "x" in cell_tracks.columns else "x_um"
+            y_col = "y" if coordinate_units == "pixels" and "y" in cell_tracks.columns else "y_um"
+            if {x_col, y_col, track_id_col}.issubset(cell_tracks.columns):
+                resolved_track_color_mode = track_color_mode
+                if resolved_track_color_mode is None:
+                    resolved_track_color_mode = (
+                        "by_column"
+                        if track_color_by is not None and track_color_by in cell_tracks.columns
+                        else "by_track"
+                    )
+                if resolved_track_color_mode == "single":
+                    track_colors = None
+                elif (
+                    resolved_track_color_mode == "by_column"
+                    and track_color_by in cell_tracks.columns
+                ):
+                    track_colors = _track_color_map(
+                        cell_tracks,
+                        track_id_col,
+                        track_color_by,
+                        track_colorway,
+                    )
+                elif resolved_track_color_mode == "by_track":
+                    track_colors = _track_color_map(
+                        cell_tracks,
+                        track_id_col,
+                        track_id_col,
+                        track_colorway,
+                    )
+                else:
+                    raise ValueError(
+                        "track_color_mode must be 'single', 'by_track', or "
+                        "'by_column' with a valid track_color_by column"
+                    )
+                sort_col = frame_col if frame_col in cell_tracks.columns else x_col
+                segments = []
+                colors = []
+                for track_id, track in cell_tracks.sort_values(sort_col).groupby(track_id_col):
+                    if len(track) < 2:
+                        continue
+                    segments.append(track[[x_col, y_col]].to_numpy())
+                    colors.append(track_colors.get(track_id, track_color) if track_colors else track_color)
+                if segments:
+                    ax.add_collection(
+                        LineCollection(
+                            segments,
+                            colors=colors,
+                            linewidths=track_line_width,
+                            alpha=track_alpha,
+                            zorder=1,
+                        )
+                    )
+        ax.plot(
+            contour[:, 0],
+            contour[:, 1],
+            color=contour_color,
+            lw=contour_line_width,
+            linestyle=contour_line_style,
+            zorder=2,
+        )
+        if show_points and {"source_x", "source_y"}.issubset(contour_df.columns):
+            ax.scatter(
+                row["source_x"],
+                row["source_y"],
+                s=point_size,
+                alpha=point_alpha,
+                color=contour_color,
+            )
+        ax.set_aspect("equal", adjustable="box")
+        ax.invert_yaxis()
+        ax.axis("off")
+
+        if show_panel_numbers:
+            title = str(row["_gallery_number"])
+        elif title_col is not None and title_col in contour_df.columns:
+            title = f"{row[title_col]}"
+        elif group_col in contour_df.columns:
+            title = str(row[group_col])
+        else:
+            title = f"cell {idx + 1}"
+        ax.set_title(title, fontsize=title_fontsize)
+        if title_metadata_cols and not show_panel_numbers:
+            metadata_lines = [
+                f"{col}: {row[col]}"
+                for col in title_metadata_cols
+                if col in contour_df.columns
+            ]
+            if metadata_lines:
+                ax.text(
+                    0.5,
+                    -0.02,
+                    "\n".join(metadata_lines),
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="top",
+                    fontsize=title_metadata_fontsize,
+                    clip_on=False,
+                )
+
+    plt.tight_layout()
+    if save_path is not None:
+        os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+        fig.savefig(save_path, dpi=dpi, bbox_inches="tight", transparent=True)
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    selected_cells = (
+        contour_df[group_col].tolist() if group_col in contour_df.columns else list(range(n))
+    )
+    lookup_cols = ["_gallery_number"]
+    for col in ["foldername", group_col]:
+        if col in contour_df.columns and col not in lookup_cols:
+            lookup_cols.append(col)
+    cell_lookup_df = contour_df[lookup_cols].rename(
+        columns={"_gallery_number": "gallery_number"}
+    )
+    return {
+        "fig": fig,
+        "axes": axes,
+        "contour_df": contour_df,
+        "selected_cells": selected_cells,
+        "cell_lookup_df": cell_lookup_df,
+    }
+
+
+def _normalize_raw_image(image, contrast_limits=None, invert_image=False):
+    image = image.astype(float, copy=False)
+    if contrast_limits is None:
+        lower = np.nanmin(image)
+        upper = np.nanmax(image)
+    else:
+        lower, upper = contrast_limits
+    if upper <= lower:
+        norm = np.zeros_like(image, dtype=float)
+    else:
+        norm = np.clip((image - lower) / (upper - lower), 0, 1)
+    if invert_image:
+        norm = 1 - norm
+    return norm
+
+
+def plot_raw_projection_with_contours(
+    single_cell_df,
+    *,
+    raw_movie_path=None,
+    master_dir=None,
+    frame_range=None,
+    projection="sum",
+    contour_methods=("radial", "legacy_outer_envelope"),
+    coordinate_units="pixels",
+    raw_contrast_limits=None,
+    invert_raw=False,
+    raw_cmap="gray",
+    raw_lut=None,
+    contour_colors=None,
+    edge_angle_bins=180,
+    edge_padding=0.05,
+    edge_smoothing=0.1,
+    minimal_bridge_point_radius=2.0,
+    minimal_bridge_width=1.5,
+    minimal_bridge_mask_padding=12,
+    figsize=(4, 4),
+    dpi=200,
+    save_path=None,
+    show_plot=True,
+):
+    """
+    Plot a raw-frame projection with one or more contour methods overlaid.
+
+    This is a QC helper for asking whether the computed contour encloses the
+    visible cell/movie field well. ``projection='sum'`` is usually best for seeing
+    all raw signal over the clip.
+    """
+    raw_movie_path = raw_movie_path or _resolve_raw_movie_path(
+        single_cell_df, master_dir=master_dir
+    )
+    image = load_image(raw_movie_path)
+    if frame_range is not None:
+        frame_start, frame_end = map(int, frame_range)
+        image = image[frame_start : frame_end + 1]
+
+    if projection == "sum":
+        raw = image.sum(axis=0)
+    elif projection == "max":
+        raw = image.max(axis=0)
+    elif projection == "mean":
+        raw = image.mean(axis=0)
+    else:
+        raise ValueError("projection must be 'sum', 'max', or 'mean'")
+
+    raw = _normalize_raw_image(
+        raw, contrast_limits=raw_contrast_limits, invert_image=invert_raw
+    )
+
+    if contour_colors is None:
+        contour_colors = {
+            "radial": "cyan",
+            "legacy_outer_envelope": "magenta",
+        }
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    ax.imshow(
+        raw,
+        cmap=_coerce_lut_colormap(raw_lut, target="matplotlib", fallback=raw_cmap),
+        origin="upper",
+    )
+
+    contours = {}
+    for method in contour_methods:
+        contour = compute_fixed_cell_contour(
+            single_cell_df,
+            coordinate_units=coordinate_units,
+            contour_method=method,
+            edge_angle_bins=edge_angle_bins,
+            edge_padding=edge_padding,
+            edge_smoothing=edge_smoothing,
+            minimal_bridge_point_radius=minimal_bridge_point_radius,
+            minimal_bridge_width=minimal_bridge_width,
+            minimal_bridge_mask_padding=minimal_bridge_mask_padding,
+        )
+        contours[method] = contour
+        ax.plot(
+            contour[:, 0],
+            contour[:, 1],
+            color=contour_colors.get(method, "yellow")
+            if isinstance(contour_colors, dict)
+            else None,
+            lw=1.2,
+            label=method,
+        )
+
+    ax.set_aspect("equal", adjustable="box")
+    ax.axis("off")
+    ax.legend(loc="upper right", fontsize=7)
+
+    if save_path is not None:
+        os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+        fig.savefig(save_path, dpi=dpi, bbox_inches="tight", transparent=True)
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return {
+        "fig": fig,
+        "ax": ax,
+        "raw_movie_path": raw_movie_path,
+        "projection": projection,
+        "contours": contours,
+    }
+
+
+def plot_tracks_with_contours_qc(
+    single_cell_df,
+    tracks_to_plot_df=None,
+    *,
+    frame_range=None,
+    contour_methods=("radial", "legacy_outer_envelope"),
+    coordinate_units="pixels",
+    x_col=None,
+    y_col=None,
+    track_id_col="unique_id",
+    frame_col="frame",
+    track_color_mode=None,
+    track_color="0.45",
+    color_by=None,
+    colorway="tab20",
+    track_line_width=0.35,
+    track_alpha=0.35,
+    contour_colors=None,
+    contour_line_width=1.2,
+    contour_line_style="-",
+    edge_angle_bins=180,
+    edge_padding=0.05,
+    edge_smoothing=0.1,
+    minimal_bridge_point_radius=2.0,
+    minimal_bridge_width=1.5,
+    minimal_bridge_mask_padding=12,
+    figsize=(4, 4),
+    dpi=200,
+    save_path=None,
+    show_plot=True,
+):
+    """
+    Plot tracks only, with contour methods overlaid for QC.
+
+    This gives a raw-free check of whether the contour encloses the full spatial
+    footprint of the tracked particles.
+    """
+    source_df = tracks_to_plot_df if tracks_to_plot_df is not None else single_cell_df
+    df = _as_pandas_copy(source_df)
+    contour_source = _as_pandas_copy(single_cell_df)
+
+    if x_col is None:
+        x_col = "x" if coordinate_units == "pixels" else "x_um"
+    if y_col is None:
+        y_col = "y" if coordinate_units == "pixels" else "y_um"
+    for col in [x_col, y_col, track_id_col, frame_col]:
+        if col not in df.columns:
+            raise ValueError(f"Column {col!r} not found")
+
+    if frame_range is not None:
+        frame_start, frame_end = map(int, frame_range)
+        df = df[(df[frame_col] >= frame_start) & (df[frame_col] <= frame_end)]
+    if df.empty:
+        raise ValueError("No tracks available for contour QC")
+
+    if contour_colors is None:
+        contour_colors = {
+            "radial": "cyan",
+            "legacy_outer_envelope": "magenta",
+        }
+
+    resolved_track_color_mode = track_color_mode
+    if resolved_track_color_mode is None:
+        resolved_track_color_mode = (
+            "by_column" if color_by is not None and color_by in df.columns else "single"
+        )
+
+    if resolved_track_color_mode == "single":
+        track_colors = None
+    elif resolved_track_color_mode == "by_column" and color_by in df.columns:
+        track_colors = _track_color_map(df, track_id_col, color_by, colorway)
+    elif resolved_track_color_mode == "by_track":
+        track_colors = _track_color_map(df, track_id_col, track_id_col, colorway)
+    else:
+        raise ValueError(
+            "track_color_mode must be 'single', 'by_track', or 'by_column' "
+            "with a valid color_by column"
+        )
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    segments = []
+    colors = []
+    for track_id, track in df.sort_values(frame_col).groupby(track_id_col):
+        if len(track) < 2:
+            continue
+        segments.append(track[[x_col, y_col]].to_numpy())
+        colors.append(track_colors.get(track_id, track_color) if track_colors else track_color)
+    if segments:
+        ax.add_collection(
+            LineCollection(
+                segments,
+                colors=colors,
+                linewidths=track_line_width,
+                alpha=track_alpha,
+            )
+        )
+
+    contours = {}
+    for method in contour_methods:
+        contour = compute_fixed_cell_contour(
+            contour_source,
+            coordinate_units=coordinate_units,
+            x_col=x_col if x_col in contour_source.columns else None,
+            y_col=y_col if y_col in contour_source.columns else None,
+            contour_method=method,
+            edge_angle_bins=edge_angle_bins,
+            edge_padding=edge_padding,
+            edge_smoothing=edge_smoothing,
+            minimal_bridge_point_radius=minimal_bridge_point_radius,
+            minimal_bridge_width=minimal_bridge_width,
+            minimal_bridge_mask_padding=minimal_bridge_mask_padding,
+        )
+        contours[method] = contour
+        ax.plot(
+            contour[:, 0],
+            contour[:, 1],
+            color=contour_colors.get(method, "yellow")
+            if isinstance(contour_colors, dict)
+            else None,
+            lw=contour_line_width,
+            linestyle=contour_line_style,
+            label=method,
+        )
+
+    ax.set_aspect("equal", adjustable="box")
+    if coordinate_units == "pixels":
+        ax.invert_yaxis()
+    ax.axis("off")
+    ax.legend(loc="upper right", fontsize=7)
+
+    if save_path is not None:
+        os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+        fig.savefig(save_path, dpi=dpi, bbox_inches="tight", transparent=True)
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return {
+        "fig": fig,
+        "ax": ax,
+        "contours": contours,
+        "n_tracks": int(df[track_id_col].nunique()),
+        "frame_range": frame_range,
+    }
+
+
+def make_raw_track_napari_movie(
+    single_cell_df,
+    tracks_to_plot_df,
+    *,
+    frame_range,
+    master_dir=None,
+    contour_df=None,
+    raw_movie_path=None,
+    track_id_col="unique_id",
+    frame_col="frame",
+    x_col="x",
+    y_col="y",
+    color_by="unique_id",
+    tail_length=60,
+    tail_width=2,
+    contour_color="cyan",
+    contour_width=2,
+    raw_contrast_limits=None,
+    invert_raw=False,
+    raw_colormap="gray",
+    raw_lut=None,
+    raw_frame_offset=0,
+    spatial_transform="identity",
+    save_path=None,
+    fps=100,
+    steps=None,
+    run_napari=True,
+    close_after_save=False,
+    background="dark",
+    show_time_label=True,
+    frame_interval=config.TIME_BETWEEN_FRAMES,
+    time_label_position=(10, 10),
+    time_label_size=14,
+    time_label_color="white",
+    show_scale_bar=True,
+    scale_bar_length_um=5.0,
+    pixel_size_um=config.PIXELSIZE_MICRONS,
+    scale_bar_position="lower_right",
+    scale_bar_margin_px=12,
+    scale_bar_line_width=4,
+    scale_bar_color="white",
+    scale_bar_label=None,
+    scale_bar_label_size=12,
+):
+    """
+    Show/save a napari movie of raw cell frames, selected tracks, and a fixed contour.
+    """
+    cell_pdf = _as_pandas_copy(single_cell_df)
+    tracks = _as_pandas_copy(tracks_to_plot_df)
+    for col in [track_id_col, frame_col, x_col, y_col]:
+        if col not in tracks.columns:
+            raise ValueError(f"Column {col!r} not found in tracks_to_plot_df")
+
+    frame_start, frame_end = map(int, frame_range)
+    tracks = tracks[
+        (tracks[frame_col] >= frame_start) & (tracks[frame_col] <= frame_end)
+    ].copy()
+    if tracks.empty:
+        raise ValueError("No selected tracks are present in frame_range")
+
+    raw_movie_path = raw_movie_path or _resolve_raw_movie_path(cell_pdf, master_dir=master_dir)
+    raw_frame_start = frame_start + int(raw_frame_offset)
+    raw_frame_end = frame_end + int(raw_frame_offset)
+    if raw_frame_start < 0:
+        raise ValueError("raw_frame_offset makes the first requested raw frame negative")
+    image = _load_raw_frame_range(raw_movie_path, raw_frame_start, raw_frame_end)
+    if invert_raw:
+        image = np.nanmax(image) - image
+
+    track_ids = list(pd.unique(tracks[track_id_col]))
+    track_id_map = {track_id: i for i, track_id in enumerate(track_ids)}
+    tracks["_napari_track_id"] = tracks[track_id_col].map(track_id_map)
+    tracks["_relative_frame"] = tracks[frame_col].astype(int) - frame_start
+    height, width = image.shape[-2:]
+    transformed_x, transformed_y = _transform_xy_for_raw_alignment(
+        tracks[x_col].to_numpy(),
+        tracks[y_col].to_numpy(),
+        width,
+        height,
+        spatial_transform,
+    )
+    tracks["_display_x"] = transformed_x
+    tracks["_display_y"] = transformed_y
+    tracks_new_df = tracks[["_napari_track_id", "_relative_frame", "_display_y", "_display_x"]].copy()
+    tracks_new_df.columns = ["track_id", "frame", "y", "x"]
+
+    features_dict = {track_id_col: tracks[track_id_col].to_numpy()}
+    color_feature = track_id_col
+    if color_by in tracks.columns:
+        color_feature = color_by
+        if pd.api.types.is_numeric_dtype(tracks[color_by]):
+            features_dict[color_by] = tracks[color_by].to_numpy()
+        else:
+            categories = {v: i for i, v in enumerate(pd.unique(tracks[color_by]))}
+            mapped_col = f"{color_by}_numeric"
+            tracks[mapped_col] = tracks[color_by].map(categories)
+            features_dict[mapped_col] = tracks[mapped_col].to_numpy()
+            color_feature = mapped_col
+
+    viewer = napari.Viewer()
+    viewer.theme = "light" if background == "light" else "dark"
+    viewer.dims.axis_labels = ("time", "y", "x")
+    viewer.add_image(
+        image,
+        name="Raw movie",
+        contrast_limits=raw_contrast_limits,
+        colormap=_coerce_lut_colormap(raw_lut, target="napari", fallback=raw_colormap),
+    )
+
+    viewer.add_tracks(
+        tracks_new_df.to_numpy(),
+        features=features_dict,
+        name="Selected tracks",
+        color_by=color_feature,
+        tail_length=tail_length,
+        tail_width=tail_width,
+    )
+
+    contour_source = contour_df if contour_df is not None else single_cell_df
+    contour = get_contour_array(contour_source, coordinate_units="pixels")
+    contour_x, contour_y = _transform_xy_for_raw_alignment(
+        contour[:, 0],
+        contour[:, 1],
+        width,
+        height,
+        spatial_transform,
+    )
+    contour_yx = np.column_stack([contour_y, contour_x])
+    viewer.add_shapes(
+        [contour_yx],
+        shape_type="polygon",
+        name="Fixed cell contour",
+        edge_color=contour_color,
+        face_color="transparent",
+        edge_width=contour_width,
+    )
+
+    if show_scale_bar and scale_bar_length_um is not None and pixel_size_um:
+        scale_bar_length_px = float(scale_bar_length_um) / float(pixel_size_um)
+        margin = float(scale_bar_margin_px)
+        if scale_bar_position == "lower_left":
+            x0 = margin
+            x1 = x0 + scale_bar_length_px
+            y = height - margin
+        elif scale_bar_position == "upper_left":
+            x0 = margin
+            x1 = x0 + scale_bar_length_px
+            y = margin
+        elif scale_bar_position == "upper_right":
+            x1 = width - margin
+            x0 = x1 - scale_bar_length_px
+            y = margin
+        else:
+            x1 = width - margin
+            x0 = x1 - scale_bar_length_px
+            y = height - margin
+        viewer.add_shapes(
+            [np.array([[y, x0], [y, x1]], dtype=float)],
+            shape_type="line",
+            name="Scale bar",
+            edge_color=scale_bar_color,
+            edge_width=scale_bar_line_width,
+        )
+        label = scale_bar_label or f"{scale_bar_length_um:g} um"
+        viewer.add_points(
+            np.array([[y - 10, (x0 + x1) / 2]], dtype=float),
+            name="Scale bar label",
+            size=0.1,
+            face_color=scale_bar_color,
+            opacity=1.0,
+            text={
+                "string": [label],
+                "size": scale_bar_label_size,
+                "color": scale_bar_color,
+                "anchor": "center",
+            },
+        )
+
+    if show_time_label:
+        relative_frames = np.arange(frame_end - frame_start + 1, dtype=int)
+        time_points = np.column_stack(
+            [
+                relative_frames,
+                np.full_like(relative_frames, float(time_label_position[0]), dtype=float),
+                np.full_like(relative_frames, float(time_label_position[1]), dtype=float),
+            ]
+        )
+        time_labels = [
+            f"{(frame_start + int(frame)) * float(frame_interval):.2f} s"
+            for frame in relative_frames
+        ]
+        viewer.add_points(
+            time_points,
+            name="Time label",
+            size=0.1,
+            face_color=time_label_color,
+            opacity=1.0,
+            text={
+                "string": time_labels,
+                "size": time_label_size,
+                "color": time_label_color,
+                "anchor": "upper_left",
+            },
+        )
+
+    if save_path is not None:
+        os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+        save_movie(
+            viewer,
+            tracks_new_df,
+            save_path=save_path,
+            steps=steps,
+            fps=fps,
+        )
+        if close_after_save and not run_napari:
+            viewer.close()
+
+    if run_napari:
+        napari.run()
+
+    return {
+        "viewer": viewer,
+        "raw_movie_path": raw_movie_path,
+        "frame_range": (frame_start, frame_end),
+        "raw_frame_range": (raw_frame_start, raw_frame_end),
+        "spatial_transform": spatial_transform,
+        "n_tracks": len(track_ids),
+        "contour": contour,
+    }
+
+
+def _track_color_map(df, track_id_col, color_by, colorway):
+    track_ids = list(pd.unique(df[track_id_col]))
+    if color_by in df.columns and color_by != track_id_col:
+        values = df.groupby(track_id_col)[color_by].first()
+    else:
+        values = pd.Series(track_ids, index=track_ids)
+
+    if pd.api.types.is_numeric_dtype(values):
+        vmin, vmax = float(values.min()), float(values.max())
+        norm = Normalize(vmin=vmin, vmax=vmax if vmax > vmin else vmin + 1)
+        cmap = ListedColormap(colorway) if isinstance(colorway, (list, tuple)) else plt.get_cmap(colorway)
+        return {track_id: cmap(norm(values.loc[track_id])) for track_id in track_ids}
+
+    categories = list(pd.unique(values))
+    if isinstance(colorway, (list, tuple)):
+        cmap = ListedColormap(colorway)
+    else:
+        cmap = plt.get_cmap(colorway, max(len(categories), 1))
+    category_colors = {cat: cmap(i) for i, cat in enumerate(categories)}
+    return {track_id: category_colors[values.loc[track_id]] for track_id in track_ids}
+
+
+def _load_raw_frame_indices(raw_movie_path, frame_indices):
+    """
+    Load only requested frames for TIFF stacks when possible.
+
+    Falls back to the project ``load_image`` helper for formats/readers that do
+    not support partial TIFF reads.
+    """
+    frame_indices = np.asarray(frame_indices, dtype=int)
+    if frame_indices.size == 0:
+        raise ValueError("No frame indices requested")
+    try:
+        import tifffile
+
+        with tifffile.TiffFile(raw_movie_path) as tif:
+            image = tif.asarray(key=frame_indices.tolist())
+    except Exception:
+        full_image = load_image(raw_movie_path)
+        image = full_image[frame_indices]
+
+    image = np.asarray(image)
+    if image.ndim == 2 and frame_indices.size > 1:
+        image = image[np.newaxis, ...]
+    return image
+
+
+def _load_raw_frame_range(raw_movie_path, frame_start, frame_end):
+    """
+    Load only the requested contiguous frame range for TIFF stacks when possible.
+    """
+    return _load_raw_frame_indices(
+        raw_movie_path,
+        np.arange(int(frame_start), int(frame_end) + 1),
+    )
+
+
+def save_raw_track_timelapse_stills(
+    single_cell_df,
+    tracks_to_plot_df,
+    *,
+    frame_range,
+    output_dir,
+    master_dir=None,
+    contour_df=None,
+    raw_movie_path=None,
+    raw_mode="final_frame",
+    still_step_frames=60,
+    track_history="cumulative",
+    track_id_col="unique_id",
+    frame_col="frame",
+    x_col="x",
+    y_col="y",
+    track_color_mode="by_track",
+    track_color="yellow",
+    color_by="unique_id",
+    colorway="tab20",
+    contour_color="cyan",
+    contour_line_width=1.0,
+    track_line_width=0.8,
+    head_size=8,
+    raw_cmap="gray",
+    raw_lut=None,
+    raw_frame_offset=0,
+    spatial_transform="identity",
+    contrast_limits=None,
+    invert_image=False,
+    figsize=(3, 3),
+    dpi=200,
+    output_format="png",
+    output_prefix=None,
+    show_time_label=True,
+    frame_interval=config.TIME_BETWEEN_FRAMES,
+    show_scale_bar=True,
+    scale_bar_length_um=5.0,
+    pixel_size_um=config.PIXELSIZE_MICRONS,
+    scale_bar_position="lower_right",
+    scale_bar_margin_px=12,
+    scale_bar_line_width=3,
+    scale_bar_color="white",
+    scale_bar_label=None,
+    scale_bar_fontsize=8,
+):
+    """
+    Save publication-style PNG stills from raw cell frames and selected tracks.
+
+    ``raw_mode='sum_window'`` sums the raw frames in each output window. 
+    ``raw_mode='final_frame'`` uses only the last raw frame of each output window.
+    Tracks can be cumulative from the start of ``frame_range`` or limited to the
+    current window via ``track_history='window'``.
+    """
+    if raw_mode not in {"final_frame", "sum_window"}:
+        raise ValueError("raw_mode must be 'final_frame' or 'sum_window'")
+    if track_history not in {"cumulative", "window"}:
+        raise ValueError("track_history must be 'cumulative' or 'window'")
+    output_format = str(output_format).lower().lstrip(".")
+    if output_format not in {"png", "svg"}:
+        raise ValueError("output_format must be 'png' or 'svg'")
+    if track_color_mode not in {"single", "by_track", "by_column"}:
+        raise ValueError("track_color_mode must be 'single', 'by_track', or 'by_column'")
+
+    tracks = _as_pandas_copy(tracks_to_plot_df)
+    for col in [track_id_col, frame_col, x_col, y_col]:
+        if col not in tracks.columns:
+            raise ValueError(f"Column {col!r} not found in tracks_to_plot_df")
+
+    frame_start, frame_end = map(int, frame_range)
+    raw_movie_path = raw_movie_path or _resolve_raw_movie_path(
+        single_cell_df, master_dir=master_dir
+    )
+    image = load_image(raw_movie_path)
+    height, width = image.shape[-2:]
+
+    os.makedirs(output_dir, exist_ok=True)
+    if output_prefix is None:
+        filename = _single_value_from_df(_as_pandas_copy(single_cell_df), "filename", "cell")
+        output_prefix = str(filename).replace("_tracked", "")
+
+    if still_step_frames is None:
+        windows = [(frame, frame) for frame in range(frame_start, frame_end + 1)]
+    else:
+        still_step_frames = int(still_step_frames)
+        if still_step_frames <= 0:
+            raise ValueError("still_step_frames must be positive or None")
+        windows = []
+        current = frame_start
+        while current <= frame_end:
+            window_end = min(frame_end, current + still_step_frames - 1)
+            windows.append((current, window_end))
+            current = window_end + 1
+
+    tracks = tracks[
+        (tracks[frame_col] >= frame_start) & (tracks[frame_col] <= frame_end)
+    ].copy()
+    if tracks.empty:
+        raise ValueError("No selected tracks are present in frame_range")
+
+    if track_color_mode == "single":
+        color_map = {track_id: track_color for track_id in pd.unique(tracks[track_id_col])}
+    elif track_color_mode == "by_column":
+        if color_by not in tracks.columns:
+            raise ValueError(f"Column {color_by!r} not found for track_color_mode='by_column'")
+        color_map = _track_color_map(tracks, track_id_col, color_by, colorway)
+    else:
+        color_map = _track_color_map(tracks, track_id_col, track_id_col, colorway)
+    contour_source = contour_df if contour_df is not None else single_cell_df
+    contour = get_contour_array(contour_source, coordinate_units="pixels")
+
+    output_paths = []
+    for i, (window_start, window_end) in enumerate(windows):
+        if raw_mode == "sum_window":
+            raw_start = window_start + int(raw_frame_offset)
+            raw_end = window_end + int(raw_frame_offset)
+            if raw_start < 0:
+                raise ValueError("raw_frame_offset makes a requested raw frame negative")
+            raw = image[raw_start : raw_end + 1].sum(axis=0)
+        else:
+            raw_index = window_end + int(raw_frame_offset)
+            if raw_index < 0:
+                raise ValueError("raw_frame_offset makes a requested raw frame negative")
+            raw = image[raw_index]
+        raw = _normalize_raw_image(raw, contrast_limits=contrast_limits, invert_image=invert_image)
+
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        ax.imshow(
+            raw,
+            cmap=_coerce_lut_colormap(raw_lut, target="matplotlib", fallback=raw_cmap),
+            origin="upper",
+        )
+        contour_x, contour_y = _transform_xy_for_raw_alignment(
+            contour[:, 0],
+            contour[:, 1],
+            width,
+            height,
+            spatial_transform,
+        )
+        ax.plot(
+            contour_x,
+            contour_y,
+            color=contour_color,
+            lw=contour_line_width,
+            alpha=0.95,
+        )
+
+        if track_history == "cumulative":
+            plot_start = frame_start
+        else:
+            plot_start = window_start
+        visible_tracks = tracks[
+            (tracks[frame_col] >= plot_start) & (tracks[frame_col] <= window_end)
+        ]
+
+        for track_id, track in visible_tracks.sort_values(frame_col).groupby(track_id_col):
+            if len(track) >= 2:
+                tx, ty = _transform_xy_for_raw_alignment(
+                    track[x_col].to_numpy(),
+                    track[y_col].to_numpy(),
+                    width,
+                    height,
+                    spatial_transform,
+                )
+                ax.plot(
+                    tx,
+                    ty,
+                    color=color_map.get(track_id, "yellow"),
+                    lw=track_line_width,
+                    alpha=0.9,
+                )
+            current = track[track[frame_col] <= window_end].tail(1)
+            if not current.empty:
+                cx, cy = _transform_xy_for_raw_alignment(
+                    current[x_col].to_numpy(),
+                    current[y_col].to_numpy(),
+                    width,
+                    height,
+                    spatial_transform,
+                )
+                ax.scatter(
+                    cx,
+                    cy,
+                    color=color_map.get(track_id, "yellow"),
+                    s=head_size,
+                    edgecolors="none",
+                    alpha=1.0,
+                )
+
+        ax.set_xlim(0, width)
+        ax.set_ylim(height, 0)
+        ax.set_aspect("equal", adjustable="box")
+        ax.axis("off")
+
+        if show_time_label:
+            t0 = window_start * frame_interval
+            t1 = window_end * frame_interval
+            ax.text(
+                0.02,
+                0.04,
+                f"{t0:.2f}-{t1:.2f} s",
+                transform=ax.transAxes,
+                color="white" if not invert_image else "black",
+                fontsize=8,
+                ha="left",
+                va="bottom",
+            )
+
+        if show_scale_bar and scale_bar_length_um is not None and pixel_size_um:
+            scale_bar_length_px = float(scale_bar_length_um) / float(pixel_size_um)
+            margin = float(scale_bar_margin_px)
+            if scale_bar_position == "lower_left":
+                x0 = margin
+                x1 = x0 + scale_bar_length_px
+                y = height - margin
+                text_y = y - 6
+                va = "bottom"
+            elif scale_bar_position == "upper_left":
+                x0 = margin
+                x1 = x0 + scale_bar_length_px
+                y = margin
+                text_y = y + 6
+                va = "top"
+            elif scale_bar_position == "upper_right":
+                x1 = width - margin
+                x0 = x1 - scale_bar_length_px
+                y = margin
+                text_y = y + 6
+                va = "top"
+            else:
+                x1 = width - margin
+                x0 = x1 - scale_bar_length_px
+                y = height - margin
+                text_y = y - 6
+                va = "bottom"
+            ax.plot(
+                [x0, x1],
+                [y, y],
+                color=scale_bar_color,
+                lw=scale_bar_line_width,
+                solid_capstyle="butt",
+            )
+            ax.text(
+                (x0 + x1) / 2,
+                text_y,
+                scale_bar_label or f"{scale_bar_length_um:g} um",
+                color=scale_bar_color,
+                fontsize=scale_bar_fontsize,
+                ha="center",
+                va=va,
+            )
+
+        out_path = os.path.join(
+            output_dir,
+            f"{output_prefix}_{raw_mode}_{i:03d}_frames_{window_start:05d}_{window_end:05d}.{output_format}",
+        )
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0, format=output_format)
+        plt.close(fig)
+        output_paths.append(out_path)
+
+    return {
+        "output_paths": output_paths,
+        "raw_movie_path": raw_movie_path,
+        "frame_range": (frame_start, frame_end),
+        "n_stills": len(output_paths),
+        "raw_mode": raw_mode,
+        "track_history": track_history,
+        "output_format": output_format,
+        "contour": contour,
+        "raw_frame_offset": raw_frame_offset,
+        "spatial_transform": spatial_transform,
+    }
+
+
+def _transform_xy_for_raw_alignment(x, y, width, height, transform="identity"):
+    """Transform x/y display coordinates for raw-image alignment diagnostics."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if transform in {None, "identity"}:
+        return x, y
+    if transform == "flip_x":
+        return width - 1 - x, y
+    if transform == "flip_y":
+        return x, height - 1 - y
+    if transform == "flip_xy":
+        return width - 1 - x, height - 1 - y
+    if transform == "transpose":
+        return y, x
+    if transform == "transpose_flip_x":
+        return height - 1 - y, x
+    if transform == "transpose_flip_y":
+        return y, width - 1 - x
+    if transform == "transpose_flip_xy":
+        return height - 1 - y, width - 1 - x
+    raise ValueError(
+        "transform must be one of identity, flip_x, flip_y, flip_xy, "
+        "transpose, transpose_flip_x, transpose_flip_y, transpose_flip_xy"
+    )
+
+
+def plot_raw_track_alignment_diagnostics(
+    single_cell_df,
+    tracks_to_plot_df,
+    *,
+    contour_df=None,
+    frame=None,
+    frame_range=None,
+    raw_frame_offset=0,
+    projection_half_window=0,
+    master_dir=None,
+    raw_movie_path=None,
+    x_col="x",
+    y_col="y",
+    track_id_col="unique_id",
+    frame_col="frame",
+    transforms=("identity", "flip_x", "flip_y", "flip_xy", "transpose", "transpose_flip_xy"),
+    raw_cmap="gray",
+    raw_lut=None,
+    contrast_limits=None,
+    invert_raw=False,
+    point_size=8,
+    track_line_width=0.8,
+    contour_line_width=1.4,
+    figsize_per_panel=(3, 3),
+    dpi=140,
+):
+    """
+    Plot raw frame/projection with selected tracks under several spatial transforms.
+
+    Use this to diagnose whether track coordinates line up with the raw movie, and
+    whether a raw frame offset is needed. Track frame numbers are not modified;
+    ``raw_frame_offset`` only changes which raw frame is displayed underneath.
+    """
+    cell_pdf = _as_pandas_copy(single_cell_df)
+    tracks = _as_pandas_copy(tracks_to_plot_df)
+    for col in [x_col, y_col, frame_col, track_id_col]:
+        if col not in tracks.columns:
+            raise ValueError(f"Column {col!r} not found in tracks_to_plot_df")
+
+    if frame is None:
+        if frame_range is not None:
+            frame = int(round((int(frame_range[0]) + int(frame_range[1])) / 2))
+        else:
+            frame = int(round(float(tracks[frame_col].median())))
+    frame = int(frame)
+    raw_center_frame = int(frame + raw_frame_offset)
+    raw_frame_start = max(0, raw_center_frame - int(projection_half_window))
+    raw_frame_end = max(raw_frame_start, raw_center_frame + int(projection_half_window))
+
+    raw_movie_path = raw_movie_path or _resolve_raw_movie_path(cell_pdf, master_dir=master_dir)
+    raw_stack = _load_raw_frame_indices(raw_movie_path, np.arange(raw_frame_start, raw_frame_end + 1))
+    if raw_stack.ndim == 2:
+        raw_image = raw_stack
+    elif projection_half_window > 0:
+        raw_image = np.nanmax(raw_stack, axis=0)
+    else:
+        raw_image = raw_stack[0]
+    if invert_raw:
+        raw_image = np.nanmax(raw_image) - raw_image
+    raw_image = _normalize_raw_image(
+        raw_image, contrast_limits=contrast_limits, invert_image=False
+    )
+    height, width = raw_image.shape[-2:]
+
+    if frame_range is not None:
+        frame_start, frame_end = map(int, frame_range)
+        track_history = tracks[
+            (tracks[frame_col] >= frame_start) & (tracks[frame_col] <= frame)
+        ].copy()
+    else:
+        track_history = tracks[tracks[frame_col] <= frame].copy()
+    current_points = tracks[tracks[frame_col] == frame].copy()
+    if current_points.empty:
+        current_points = (
+            tracks[tracks[frame_col] <= frame]
+            .sort_values(frame_col)
+            .groupby(track_id_col)
+            .tail(1)
+        )
+
+    contour = None
+    if contour_df is not None:
+        contour = get_contour_array(contour_df, coordinate_units="pixels")
+
+    transforms = list(transforms)
+    n_cols = min(3, max(1, len(transforms)))
+    n_rows = int(math.ceil(len(transforms) / n_cols))
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(figsize_per_panel[0] * n_cols, figsize_per_panel[1] * n_rows),
+        squeeze=False,
+        dpi=dpi,
+    )
+    cmap = _coerce_lut_colormap(raw_lut, target="matplotlib", fallback=raw_cmap)
+
+    for ax, transform in zip(axes.ravel(), transforms):
+        ax.imshow(raw_image, cmap=cmap, origin="upper")
+        for _, track in track_history.sort_values(frame_col).groupby(track_id_col):
+            if len(track) < 2:
+                continue
+            tx, ty = _transform_xy_for_raw_alignment(
+                track[x_col].to_numpy(), track[y_col].to_numpy(), width, height, transform
+            )
+            ax.plot(tx, ty, color="orange", lw=track_line_width, alpha=0.75)
+        if not current_points.empty:
+            px, py = _transform_xy_for_raw_alignment(
+                current_points[x_col].to_numpy(),
+                current_points[y_col].to_numpy(),
+                width,
+                height,
+                transform,
+            )
+            ax.scatter(px, py, s=point_size, color="cyan", edgecolors="none", alpha=0.9)
+        if contour is not None:
+            cx, cy = _transform_xy_for_raw_alignment(
+                contour[:, 0], contour[:, 1], width, height, transform
+            )
+            ax.plot(cx, cy, color="red", lw=contour_line_width, ls="--", alpha=0.9)
+        ax.set_xlim(0, width)
+        ax.set_ylim(height, 0)
+        ax.set_aspect("equal", adjustable="box")
+        ax.axis("off")
+        ax.set_title(transform, fontsize=8)
+
+    for ax in axes.ravel()[len(transforms):]:
+        ax.axis("off")
+
+    title = (
+        f"track frame={frame}, raw frame={raw_center_frame}, "
+        f"raw projection={raw_frame_start}-{raw_frame_end}"
+    )
+    fig.suptitle(title, fontsize=9)
+    plt.tight_layout()
+    return {
+        "fig": fig,
+        "axes": axes,
+        "raw_movie_path": raw_movie_path,
+        "track_frame": frame,
+        "raw_center_frame": raw_center_frame,
+        "raw_frame_range": (raw_frame_start, raw_frame_end),
+        "image_shape": raw_image.shape,
+        "track_xy_range": {
+            "x_min": float(tracks[x_col].min()),
+            "x_max": float(tracks[x_col].max()),
+            "y_min": float(tracks[y_col].min()),
+            "y_max": float(tracks[y_col].max()),
+        },
+    }
+
+
+def _sample_local_raw_values(image, x, y, *, radius=1):
+    """Sample max raw intensity in a small square around each x/y point."""
+    image = np.asarray(image, dtype=float)
+    height, width = image.shape[-2:]
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    valid = np.isfinite(x) & np.isfinite(y)
+    xi = np.round(x[valid]).astype(int)
+    yi = np.round(y[valid]).astype(int)
+    in_bounds = (xi >= 0) & (xi < width) & (yi >= 0) & (yi < height)
+    xi = xi[in_bounds]
+    yi = yi[in_bounds]
+    values = []
+    radius = int(max(0, radius))
+    for px, py in zip(xi, yi):
+        y0 = max(0, py - radius)
+        y1 = min(height, py + radius + 1)
+        x0 = max(0, px - radius)
+        x1 = min(width, px + radius + 1)
+        values.append(float(np.nanmax(image[y0:y1, x0:x1])))
+    return np.asarray(values, dtype=float), int(np.count_nonzero(in_bounds)), int(len(valid))
+
+
+def quantify_raw_track_alignment(
+    single_cell_df,
+    tracks_to_plot_df,
+    *,
+    frame_range,
+    raw_frame_offsets=(0,),
+    transforms=("identity", "flip_x", "flip_y", "flip_xy"),
+    master_dir=None,
+    raw_movie_path=None,
+    x_col="x",
+    y_col="y",
+    track_id_col="unique_id",
+    frame_col="frame",
+    sample_n_frames=12,
+    max_points_per_frame=200,
+    local_radius_px=1,
+    random_multiplier=5,
+    random_state=42,
+    invert_raw=False,
+    return_backend="polars",
+):
+    """
+    Score raw/track alignment by raw intensity under track points.
+
+    The best transform is the one where track positions land on brighter raw
+    pixels than random in-frame positions most consistently.
+    """
+    cell_pdf = _as_pandas_copy(single_cell_df)
+    tracks = _as_pandas_copy(tracks_to_plot_df)
+    for col in [x_col, y_col, frame_col, track_id_col]:
+        if col not in tracks.columns:
+            raise ValueError(f"Column {col!r} not found in tracks_to_plot_df")
+
+    frame_start, frame_end = map(int, frame_range)
+    available_frames = np.array(
+        sorted(
+            tracks[
+                (tracks[frame_col] >= frame_start) & (tracks[frame_col] <= frame_end)
+            ][frame_col]
+            .dropna()
+            .astype(int)
+            .unique()
+        ),
+        dtype=int,
+    )
+    if available_frames.size == 0:
+        raise ValueError("No selected tracks are present in frame_range")
+    if sample_n_frames is not None and available_frames.size > int(sample_n_frames):
+        sample_idx = np.linspace(
+            0, available_frames.size - 1, int(sample_n_frames), dtype=int
+        )
+        sampled_frames = available_frames[sample_idx]
+    else:
+        sampled_frames = available_frames
+
+    raw_movie_path = raw_movie_path or _resolve_raw_movie_path(cell_pdf, master_dir=master_dir)
+    rng = np.random.default_rng(random_state)
+    rows = []
+
+    for raw_frame_offset in raw_frame_offsets:
+        raw_frames = sampled_frames + int(raw_frame_offset)
+        if np.any(raw_frames < 0):
+            continue
+        raw_stack = _load_raw_frame_indices(raw_movie_path, raw_frames)
+        if raw_stack.ndim == 2:
+            raw_stack = raw_stack[np.newaxis, ...]
+
+        for transform in transforms:
+            point_values_all = []
+            random_values_all = []
+            total_in_bounds = 0
+            total_points = 0
+
+            for track_frame, raw_image in zip(sampled_frames, raw_stack):
+                raw_image = np.asarray(raw_image, dtype=float)
+                if invert_raw:
+                    raw_image = np.nanmax(raw_image) - raw_image
+                raw_min = np.nanpercentile(raw_image, 1)
+                raw_max = np.nanpercentile(raw_image, 99.8)
+                if raw_max > raw_min:
+                    raw_norm = np.clip((raw_image - raw_min) / (raw_max - raw_min), 0, 1)
+                else:
+                    raw_norm = raw_image
+                height, width = raw_norm.shape[-2:]
+
+                frame_points = tracks[tracks[frame_col].astype(int) == int(track_frame)]
+                if frame_points.empty:
+                    continue
+                if (
+                    max_points_per_frame is not None
+                    and len(frame_points) > int(max_points_per_frame)
+                ):
+                    frame_points = frame_points.sample(
+                        n=int(max_points_per_frame), random_state=random_state
+                    )
+
+                x_t, y_t = _transform_xy_for_raw_alignment(
+                    frame_points[x_col].to_numpy(),
+                    frame_points[y_col].to_numpy(),
+                    width,
+                    height,
+                    transform,
+                )
+                point_values, n_in_bounds, n_total = _sample_local_raw_values(
+                    raw_norm, x_t, y_t, radius=local_radius_px
+                )
+                total_in_bounds += n_in_bounds
+                total_points += n_total
+                if point_values.size == 0:
+                    continue
+                point_values_all.append(point_values)
+
+                n_random = max(1, int(point_values.size * int(random_multiplier)))
+                random_x = rng.integers(0, width, size=n_random)
+                random_y = rng.integers(0, height, size=n_random)
+                random_values, _, _ = _sample_local_raw_values(
+                    raw_norm, random_x, random_y, radius=local_radius_px
+                )
+                random_values_all.append(random_values)
+
+            if point_values_all:
+                point_values = np.concatenate(point_values_all)
+                random_values = np.concatenate(random_values_all)
+                point_mean = float(np.nanmean(point_values))
+                random_mean = float(np.nanmean(random_values))
+                random_std = float(np.nanstd(random_values))
+                random_p95 = float(np.nanpercentile(random_values, 95))
+                percentile = float(
+                    np.mean(point_values[:, None] > random_values[None, :])
+                )
+                fraction_above_random_p95 = float(np.mean(point_values > random_p95))
+                z = (
+                    (point_mean - random_mean) / random_std
+                    if random_std > 0
+                    else np.nan
+                )
+                score = float(point_mean - random_mean)
+                enrichment = float(point_mean / (random_mean + 1e-12))
+                n_points = int(point_values.size)
+            else:
+                point_mean = random_mean = random_std = random_p95 = np.nan
+                percentile = fraction_above_random_p95 = z = np.nan
+                score = enrichment = np.nan
+                n_points = 0
+
+            rows.append(
+                {
+                    "transform": transform,
+                    "raw_frame_offset": int(raw_frame_offset),
+                    "score": score,
+                    "enrichment": enrichment,
+                    "point_mean": point_mean,
+                    "random_mean": random_mean,
+                    "point_percentile_vs_random": percentile,
+                    "fraction_above_random_p95": fraction_above_random_p95,
+                    "point_minus_random_z": z,
+                    "in_bounds_fraction": (
+                        float(total_in_bounds / total_points) if total_points else np.nan
+                    ),
+                    "n_frames": int(len(sampled_frames)),
+                    "n_points": n_points,
+                    "track_frame_min": int(np.min(sampled_frames)),
+                    "track_frame_max": int(np.max(sampled_frames)),
+                    "raw_frame_min": int(np.min(raw_frames)),
+                    "raw_frame_max": int(np.max(raw_frames)),
+                    "image_width": int(raw_stack.shape[-1]),
+                    "image_height": int(raw_stack.shape[-2]),
+                    "raw_movie_path": raw_movie_path,
+                }
+            )
+
+    result = pd.DataFrame(rows).sort_values(
+        ["score", "point_minus_random_z", "in_bounds_fraction"],
+        ascending=[False, False, False],
+    )
+    if return_backend == "pandas":
+        return result
+    if return_backend == "polars":
+        return pl.from_pandas(result)
+    raise ValueError("return_backend must be 'polars' or 'pandas'")
+
+
+def _crop_image_around_center(image, center_x, center_y, crop_width, crop_height, fill_value=0):
+    """Crop image around center, padding outside the image with fill_value."""
+    image = np.asarray(image)
+    crop_width = int(max(1, round(crop_width)))
+    crop_height = int(max(1, round(crop_height)))
+    x0 = int(round(float(center_x) - crop_width / 2))
+    y0 = int(round(float(center_y) - crop_height / 2))
+    x1 = x0 + crop_width
+    y1 = y0 + crop_height
+
+    out = np.full((crop_height, crop_width), fill_value, dtype=image.dtype)
+    src_x0 = max(0, x0)
+    src_y0 = max(0, y0)
+    src_x1 = min(image.shape[1], x1)
+    src_y1 = min(image.shape[0], y1)
+    if src_x1 > src_x0 and src_y1 > src_y0:
+        dst_x0 = src_x0 - x0
+        dst_y0 = src_y0 - y0
+        out[
+            dst_y0 : dst_y0 + (src_y1 - src_y0),
+            dst_x0 : dst_x0 + (src_x1 - src_x0),
+        ] = image[src_y0:src_y1, src_x0:src_x1]
+    return out, x0, y0
+
+
+def _select_track_ids_for_follow_view(
+    tracks,
+    *,
+    track_id_col="unique_id",
+    frame_col="frame",
+    selection_mode="specified",
+    track_ids=None,
+    population_col=None,
+    populations=None,
+    n_tracks=1,
+    random_state=42,
+):
+    """Select track IDs for follow/center single-molecule rendering."""
+    if selection_mode == "specified":
+        if track_ids is None:
+            raise ValueError("track_ids is required when selection_mode='specified'")
+        return list(track_ids)
+
+    summary_source = tracks
+    if selection_mode == "population":
+        if population_col is None:
+            raise ValueError("population_col is required when selection_mode='population'")
+        if population_col not in tracks.columns:
+            raise ValueError(f"Column {population_col!r} not found")
+        if populations is None:
+            raise ValueError("populations is required when selection_mode='population'")
+        populations = [populations] if isinstance(populations, str) else list(populations)
+        summary_source = tracks[tracks[population_col].isin(populations)].copy()
+    elif selection_mode not in {"random", "all"}:
+        raise ValueError("selection_mode must be 'specified', 'random', 'population', or 'all'")
+
+    if summary_source.empty:
+        raise ValueError("No tracks available after follow-view selection filters")
+
+    summary = (
+        summary_source.groupby(track_id_col)[frame_col]
+        .agg(["count", "min", "max"])
+        .reset_index()
+    )
+    summary["track_length_frames"] = summary["max"] - summary["min"] + 1
+    summary = summary.sort_values(["track_length_frames", "count"], ascending=False)
+
+    if selection_mode == "all":
+        return summary[track_id_col].tolist()
+    if selection_mode == "random":
+        return (
+            summary.sample(
+                n=min(int(n_tracks), len(summary)), random_state=random_state
+            )[track_id_col]
+            .tolist()
+        )
+    return summary.head(int(n_tracks))[track_id_col].tolist()
+
+
+def render_follow_track_views(
+    single_cell_df,
+    tracks_df,
+    *,
+    output_dir,
+    frame_range,
+    master_dir=None,
+    raw_movie_path=None,
+    render_outputs=("png",),
+    view_mode="follow",
+    track_selection_mode="specified",
+    track_ids=None,
+    population_col=None,
+    populations=None,
+    n_tracks=1,
+    random_state=42,
+    track_id_col="unique_id",
+    frame_col="frame",
+    x_col="x",
+    y_col="y",
+    spatial_transform="identity",
+    raw_frame_offset=0,
+    crop_size_px=None,
+    min_crop_size_px=64,
+    crop_padding_px=12,
+    frame_step=1,
+    raw_mode="final_frame",
+    output_format="png",
+    dpi=200,
+    fps=20,
+    raw_cmap="gray",
+    raw_lut=None,
+    contrast_limits=None,
+    invert_raw=False,
+    track_history="cumulative",
+    history_length_frames=None,
+    track_color="orange",
+    track_line_width=1.0,
+    head_color="cyan",
+    head_size=10,
+    show_time_label=True,
+    frame_interval=config.TIME_BETWEEN_FRAMES,
+    show_scale_bar=True,
+    scale_bar_length_um=2.0,
+    pixel_size_um=config.PIXELSIZE_MICRONS,
+    scale_bar_position="lower_right",
+    scale_bar_margin_px=8,
+    scale_bar_line_width=2,
+    scale_bar_color="white",
+    scale_bar_label=None,
+    scale_bar_fontsize=7,
+    napari_tail_length=60,
+    close_after_save=True,
+):
+    """
+    Render per-track views that either follow a molecule or use one fixed crop.
+
+    ``view_mode='follow'`` keeps the selected molecule centered in each output
+    frame. ``view_mode='center'`` uses one fixed crop centered on the selected
+    track centroid, padded around the track extent.
+
+    ``render_outputs`` can include ``"png"`` and/or ``"napari"``. For SVG stills,
+    set ``output_format='svg'``; the raw image remains raster inside the SVG while
+    overlays remain vector.
+    """
+    if view_mode not in {"follow", "center"}:
+        raise ValueError("view_mode must be 'follow' or 'center'")
+    render_outputs = [render_outputs] if isinstance(render_outputs, str) else list(render_outputs)
+    for output in render_outputs:
+        if output not in {"png", "napari"}:
+            raise ValueError("render_outputs entries must be 'png' or 'napari'")
+    output_format = str(output_format).lower().lstrip(".")
+    if output_format not in {"png", "svg"}:
+        raise ValueError("output_format must be 'png' or 'svg'")
+    if raw_mode not in {"final_frame", "sum_window"}:
+        raise ValueError("raw_mode must be 'final_frame' or 'sum_window'")
+
+    cell_pdf = _as_pandas_copy(single_cell_df)
+    tracks = _as_pandas_copy(tracks_df)
+    for col in [track_id_col, frame_col, x_col, y_col]:
+        if col not in tracks.columns:
+            raise ValueError(f"Column {col!r} not found in tracks_df")
+
+    frame_start, frame_end = map(int, frame_range)
+    tracks = tracks[
+        (tracks[frame_col] >= frame_start) & (tracks[frame_col] <= frame_end)
+    ].copy()
+    if tracks.empty:
+        raise ValueError("No tracks available in frame_range")
+
+    raw_movie_path = raw_movie_path or _resolve_raw_movie_path(cell_pdf, master_dir=master_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    resolved_track_color = track_color
+    if isinstance(track_color, (list, tuple)):
+        resolved_track_color = track_color[0] if len(track_color) else "orange"
+    elif isinstance(track_color, str) and not is_color_like(track_color):
+        try:
+            resolved_track_color = plt.get_cmap(track_color)(0.15)
+        except Exception:
+            resolved_track_color = "orange"
+
+    selected_ids = _select_track_ids_for_follow_view(
+        tracks,
+        track_id_col=track_id_col,
+        frame_col=frame_col,
+        selection_mode=track_selection_mode,
+        track_ids=track_ids,
+        population_col=population_col,
+        populations=populations,
+        n_tracks=n_tracks,
+        random_state=random_state,
+    )
+
+    output_records = []
+    cmap = _coerce_lut_colormap(raw_lut, target="matplotlib", fallback=raw_cmap)
+    frame_step = max(1, int(frame_step))
+
+    for track_id in selected_ids:
+        track = tracks[tracks[track_id_col] == track_id].sort_values(frame_col).copy()
+        if track.empty:
+            continue
+
+        track_frames = track[frame_col].astype(int).to_numpy()
+        display_frames = np.arange(
+            max(frame_start, int(track_frames.min())),
+            min(frame_end, int(track_frames.max())) + 1,
+            frame_step,
+            dtype=int,
+        )
+        if display_frames.size == 0:
+            continue
+
+        raw_frames_needed = np.unique(display_frames + int(raw_frame_offset))
+        if np.any(raw_frames_needed < 0):
+            raise ValueError("raw_frame_offset makes a requested raw frame negative")
+        raw_stack = _load_raw_frame_indices(raw_movie_path, raw_frames_needed)
+        if raw_stack.ndim == 2:
+            raw_stack = raw_stack[np.newaxis, ...]
+        raw_by_frame = {int(frame): raw_stack[i] for i, frame in enumerate(raw_frames_needed)}
+        height, width = raw_stack.shape[-2:]
+
+        tx, ty = _transform_xy_for_raw_alignment(
+            track[x_col].to_numpy(),
+            track[y_col].to_numpy(),
+            width,
+            height,
+            spatial_transform,
+        )
+        track = track.assign(_display_x=tx, _display_y=ty)
+        interp_x = np.interp(display_frames, track_frames, tx)
+        interp_y = np.interp(display_frames, track_frames, ty)
+
+        if crop_size_px is None:
+            track_width = float(np.nanmax(tx) - np.nanmin(tx))
+            track_height = float(np.nanmax(ty) - np.nanmin(ty))
+            auto_width = max(min_crop_size_px, int(np.ceil(track_width + 2 * crop_padding_px)))
+            auto_height = max(min_crop_size_px, int(np.ceil(track_height + 2 * crop_padding_px)))
+        elif isinstance(crop_size_px, (list, tuple)):
+            auto_width, auto_height = map(int, crop_size_px)
+        else:
+            auto_width = auto_height = int(crop_size_px)
+
+        if view_mode == "center":
+            fixed_center_x = float(np.nanmean(tx))
+            fixed_center_y = float(np.nanmean(ty))
+            centers_x = np.full_like(display_frames, fixed_center_x, dtype=float)
+            centers_y = np.full_like(display_frames, fixed_center_y, dtype=float)
+        else:
+            centers_x = interp_x
+            centers_y = interp_y
+
+        track_label = str(track_id).replace(os.sep, "_").replace(" ", "_")
+        track_dir = output_dir / f"track_{track_label}_{view_mode}"
+        png_dir = track_dir / f"{output_format}_frames"
+        if "png" in render_outputs:
+            png_dir.mkdir(parents=True, exist_ok=True)
+
+        cropped_stack = []
+        napari_rows = []
+        origins = {}
+        for idx, frame in enumerate(display_frames):
+            raw_frame = int(frame + int(raw_frame_offset))
+            raw = np.asarray(raw_by_frame[raw_frame])
+            if raw_mode == "sum_window":
+                # Sum from previous displayed frame to this frame for streak-style raw view.
+                prior_frame = display_frames[max(0, idx - 1)]
+                sum_frames = np.arange(prior_frame, frame + 1) + int(raw_frame_offset)
+                sum_stack = _load_raw_frame_indices(raw_movie_path, sum_frames)
+                raw = np.nansum(sum_stack, axis=0) if sum_stack.ndim == 3 else sum_stack
+            if invert_raw:
+                raw = np.nanmax(raw) - raw
+            raw_norm = _normalize_raw_image(
+                raw, contrast_limits=contrast_limits, invert_image=False
+            )
+            crop, origin_x, origin_y = _crop_image_around_center(
+                raw_norm,
+                centers_x[idx],
+                centers_y[idx],
+                auto_width,
+                auto_height,
+                fill_value=float(np.nanmin(raw_norm)),
+            )
+            cropped_stack.append(crop)
+            origins[int(frame)] = (origin_x, origin_y)
+
+            if track_history == "window" and history_length_frames is not None:
+                history_start = max(frame_start, int(frame - history_length_frames))
+            elif track_history == "window":
+                history_start = max(frame_start, int(display_frames[max(0, idx - 1)]))
+            elif history_length_frames is not None:
+                history_start = max(frame_start, int(frame - history_length_frames))
+            else:
+                history_start = frame_start
+
+            visible = track[
+                (track[frame_col] >= history_start) & (track[frame_col] <= frame)
+            ].copy()
+            if "png" in render_outputs:
+                fig, ax = plt.subplots(figsize=(3, 3), dpi=dpi)
+                ax.imshow(crop, cmap=cmap, origin="upper")
+                if len(visible) >= 2:
+                    ax.plot(
+                        visible["_display_x"] - origin_x,
+                        visible["_display_y"] - origin_y,
+                        color=resolved_track_color,
+                        lw=track_line_width,
+                        alpha=0.95,
+                    )
+                current = visible.tail(1)
+                if not current.empty:
+                    ax.scatter(
+                        current["_display_x"] - origin_x,
+                        current["_display_y"] - origin_y,
+                        color=head_color,
+                        s=head_size,
+                        edgecolors="none",
+                        zorder=3,
+                    )
+                ax.set_xlim(0, auto_width)
+                ax.set_ylim(auto_height, 0)
+                ax.set_aspect("equal", adjustable="box")
+                ax.axis("off")
+                if show_time_label:
+                    ax.text(
+                        0.02,
+                        0.04,
+                        f"{frame * frame_interval:.2f} s",
+                        transform=ax.transAxes,
+                        color=scale_bar_color,
+                        fontsize=scale_bar_fontsize,
+                        ha="left",
+                        va="bottom",
+                    )
+                if show_scale_bar and scale_bar_length_um is not None and pixel_size_um:
+                    bar_len_px = float(scale_bar_length_um) / float(pixel_size_um)
+                    margin = float(scale_bar_margin_px)
+                    if scale_bar_position == "lower_left":
+                        x0 = margin
+                        x1 = x0 + bar_len_px
+                        y = auto_height - margin
+                        text_y = y - 5
+                        va = "bottom"
+                    elif scale_bar_position == "upper_left":
+                        x0 = margin
+                        x1 = x0 + bar_len_px
+                        y = margin
+                        text_y = y + 5
+                        va = "top"
+                    elif scale_bar_position == "upper_right":
+                        x1 = auto_width - margin
+                        x0 = x1 - bar_len_px
+                        y = margin
+                        text_y = y + 5
+                        va = "top"
+                    else:
+                        x1 = auto_width - margin
+                        x0 = x1 - bar_len_px
+                        y = auto_height - margin
+                        text_y = y - 5
+                        va = "bottom"
+                    ax.plot([x0, x1], [y, y], color=scale_bar_color, lw=scale_bar_line_width)
+                    ax.text(
+                        (x0 + x1) / 2,
+                        text_y,
+                        scale_bar_label or f"{scale_bar_length_um:g} um",
+                        color=scale_bar_color,
+                        fontsize=scale_bar_fontsize,
+                        ha="center",
+                        va=va,
+                    )
+                out_path = png_dir / f"track_{track_label}_{view_mode}_{idx:04d}_frame_{frame:05d}.{output_format}"
+                fig.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0, format=output_format)
+                plt.close(fig)
+
+            # Napari stores each point in the crop coordinates of its own frame.
+            frame_points = track[track[frame_col] == frame]
+            for _, row in frame_points.iterrows():
+                napari_rows.append(
+                    [
+                        0,
+                        int(np.where(display_frames == frame)[0][0]),
+                        float(row["_display_y"] - origin_y),
+                        float(row["_display_x"] - origin_x),
+                    ]
+                )
+
+        movie_path = None
+        viewer = None
+        if "napari" in render_outputs:
+            viewer = napari.Viewer()
+            viewer.add_image(
+                np.asarray(cropped_stack),
+                name=f"Raw follow view {track_id}",
+                colormap=_coerce_lut_colormap(raw_lut, target="napari", fallback=raw_cmap),
+                contrast_limits=None,
+            )
+            if napari_rows:
+                napari_tracks = pd.DataFrame(napari_rows, columns=["track_id", "frame", "y", "x"])
+                viewer.add_tracks(
+                    napari_tracks.to_numpy(),
+                    name=f"Track {track_id}",
+                    tail_length=napari_tail_length,
+                    tail_width=max(1, int(round(track_line_width))),
+                )
+                movie_path = track_dir / f"track_{track_label}_{view_mode}.mp4"
+                save_movie(
+                    viewer,
+                    napari_tracks,
+                    save_path=str(movie_path),
+                    steps=max(1, len(display_frames) - 1),
+                    fps=fps,
+                )
+            if close_after_save:
+                viewer.close()
+
+        output_records.append(
+            {
+                "track_id": track_id,
+                "view_mode": view_mode,
+                "n_frames": int(len(display_frames)),
+                "frame_start": int(display_frames.min()),
+                "frame_end": int(display_frames.max()),
+                "crop_width": int(auto_width),
+                "crop_height": int(auto_height),
+                "png_dir": str(png_dir) if "png" in render_outputs else None,
+                "movie_path": str(movie_path) if movie_path is not None else None,
+            }
+        )
+
+    return {
+        "selected_track_ids": selected_ids,
+        "outputs": output_records,
+        "raw_movie_path": raw_movie_path,
+        "frame_range": (frame_start, frame_end),
+    }
 
 
 def gallery_of_tracks(
@@ -12704,7 +19332,8 @@ def plot_xy_heatmap(
                         edgecolor=edge_rgba,  # RGBA with edge_alpha baked in
                         facecolor=fill_rgba,  # RGBA with fill_alpha baked in (or 'none')
                         linestyle=gate_linestyle,
-                        label=gate_name
+                        label=gate_name,
+                        clip_on=True,
                     )
                     # Don't set alpha parameter - it would multiply with the baked-in alphas!
                     ax_obj.add_patch(rect)
@@ -12785,7 +19414,8 @@ def plot_xy_heatmap(
                         edgecolor=edge_rgba,  # RGBA with edge_alpha baked in
                         facecolor=fill_rgba,  # RGBA with fill_alpha baked in (or 'none')
                         linestyle=gate_linestyle,
-                        label=gate_name
+                        label=gate_name,
+                        clip_on=True,
                     )
                     # Don't set alpha parameter - it would multiply with the baked-in alphas!
                     ax_obj.add_patch(polygon)
@@ -15216,6 +21846,1408 @@ def plot_transition_counts_comparison(
         print(f"✅ Saved transition counts comparison to: {full_path}")
     
     return fig, ax
+
+
+# ============================================================================
+# TYPE/LOCATION FEATURE HEATMAPS
+# ============================================================================
+
+
+def plot_single_vs_mixed_transformer_state_pie(
+    df,
+    state_col="transformer_behavior_state",
+    window_col="window_uid",
+    group_cols=None,
+    single_states=("bound", "exploratory", "confined", "transport"),
+    keep_states=None,
+    single_label="Single state",
+    mixed_label="Mixed state",
+    unresolved_label="Unresolved",
+    unresolved_prefix="unresolved_",
+    figsize=(2.6, 2.6),
+    colors=("white", "0.75", "0.45"),
+    wedgeprops=None,
+    text_color="black",
+    font_size=9,
+    title="Window state purity",
+    save_path=None,
+    export_format="svg",
+    dpi=300,
+    transparent_background=False,
+    show=True,
+):
+    """
+    Quantify and plot single-state, mixed-state, and unresolved windows.
+
+    Each window_uid contributes one count. A window is "single" if its
+    transformer_behavior_state label is one of ``single_states`` (for example
+    bound, exploratory, confined, or transport). Labels beginning with
+    ``unresolved_prefix`` are counted as unresolved. All remaining labels are
+    counted as mixed state. Additional group columns, such as mol, are retained
+    in the returned window-level table for grouped plots.
+    """
+    if not isinstance(df, pl.DataFrame):
+        df = pl.from_pandas(df)
+
+    group_cols = list(group_cols or [])
+    required_cols = [window_col, state_col] + group_cols
+    missing = [col for col in required_cols if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    single_states = list(single_states)
+    keep_states = list(keep_states) if keep_states is not None else None
+    out = df.filter(
+        pl.col(window_col).is_not_null()
+        & pl.col(state_col).is_not_null()
+    )
+    if keep_states is not None:
+        out = out.filter(pl.col(state_col).is_in(keep_states))
+
+    group_by_cols = [window_col] + group_cols
+    window_summary = (
+        out.group_by(group_by_cols)
+        .agg(
+            pl.col(state_col).n_unique().alias("n_states"),
+            pl.col(state_col).unique().sort().alias("states_present"),
+            pl.len().alias("n_rows"),
+        )
+        .with_columns(
+            pl.when(
+                (pl.col("n_states") == 1)
+                & (pl.col("states_present").list.first().is_in(single_states))
+            )
+            .then(pl.lit(single_label))
+            .when(
+                (pl.col("n_states") == 1)
+                & (
+                    pl.col("states_present")
+                    .list.first()
+                    .cast(pl.Utf8)
+                    .str.starts_with(unresolved_prefix)
+                )
+            )
+            .then(pl.lit(unresolved_label))
+            .otherwise(pl.lit(mixed_label))
+            .alias("single_mixed_population")
+        )
+    )
+
+    summary = (
+        window_summary.group_by("single_mixed_population")
+        .agg(pl.len().alias("n_windows"))
+        .with_columns(
+            (pl.col("n_windows") / pl.col("n_windows").sum() * 100).alias("percent")
+        )
+        .sort("single_mixed_population")
+    )
+
+    order = [single_label, mixed_label, unresolved_label]
+    summary_rows = {
+        row["single_mixed_population"]: row
+        for row in summary.to_dicts()
+    }
+    counts = [summary_rows.get(label, {}).get("n_windows", 0) for label in order]
+    percents = [summary_rows.get(label, {}).get("percent", 0.0) for label in order]
+    colors = list(colors)
+    if len(colors) < len(order):
+        colors.extend(["0.85"] * (len(order) - len(colors)))
+    colors = colors[: len(order)]
+
+    wedgeprops = wedgeprops or {
+        "edgecolor": "black",
+        "linewidth": 1.2,
+    }
+
+    fig, ax = plt.subplots(figsize=figsize)
+    labels = [
+        f"{label}\n{percent:.1f}%\n(n={count})"
+        for label, percent, count in zip(order, percents, counts)
+    ]
+    ax.pie(
+        counts,
+        labels=labels,
+        colors=colors,
+        startangle=90,
+        counterclock=False,
+        wedgeprops=wedgeprops,
+        textprops={"color": text_color, "fontsize": font_size},
+    )
+    ax.set_title(title, fontsize=font_size + 1, color=text_color, pad=8)
+    ax.axis("equal")
+
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        ax.patch.set_alpha(0)
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        save_path = Path(save_path)
+        if save_path.suffix:
+            out_path = save_path
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            save_path.mkdir(parents=True, exist_ok=True)
+            out_path = save_path / f"single_vs_mixed_transformer_state_pie.{export_format}"
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight", transparent=transparent_background)
+        print(f"Saved: {out_path}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return window_summary, summary, fig, ax
+
+
+def plot_cortical_ventral_percent_difference_heatmaps(
+    df,
+    feature="diffusion_coefficient",
+    molecule_col="mol",
+    molecules=None,
+    type_col="type",
+    location_col="location",
+    cortical_value="cort",
+    ventral_value="vent",
+    location_order=("CB", "NN", "GC"),
+    location_labels=None,
+    filters=None,
+    per_cell_col="filename",
+    per_cell_agg="median",
+    summary_agg="median",
+    percent_baseline="ventral",
+    figsize=(3.4, 1.6),
+    cmap="vlag",
+    center_zero=True,
+    shared_color_scale=False,
+    annot=True,
+    save_dir=None,
+    filename_prefix=None,
+    export_format="svg",
+    dpi=300,
+    transparent_background=True,
+    show=True,
+):
+    """
+    Plot one cortical-vs-ventral percent-difference heatmap per molecule.
+
+    The input dataframe should be the unfiltered/windowed dataframe. This helper
+    applies its own optional filters, summarizes per cell first, then summarizes
+    across cells before computing cortical-vs-ventral percent differences within
+    each location.
+    """
+    if not isinstance(df, pl.DataFrame):
+        df = pl.from_pandas(df)
+
+    filters = filters or {}
+    location_labels = list(location_labels) if location_labels is not None else list(location_order)
+
+    if len(location_labels) != len(location_order):
+        raise ValueError("location_labels must have the same length as location_order.")
+
+    if per_cell_agg not in {"median", "mean"}:
+        raise ValueError("per_cell_agg must be 'median' or 'mean'.")
+    if summary_agg not in {"median", "mean"}:
+        raise ValueError("summary_agg must be 'median' or 'mean'.")
+    if percent_baseline not in {"ventral", "cortical", "mean"}:
+        raise ValueError("percent_baseline must be 'ventral', 'cortical', or 'mean'.")
+
+    required_cols = [per_cell_col, molecule_col, type_col, location_col, feature]
+    missing = [col for col in required_cols if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    out = df
+    for col, values in filters.items():
+        if values is None or col not in out.columns:
+            continue
+        if isinstance(values, (list, tuple, set)):
+            out = out.filter(pl.col(col).is_in(list(values)))
+        else:
+            out = out.filter(pl.col(col) == values)
+
+    if molecules is None:
+        molecules = (
+            out.select(pl.col(molecule_col).drop_nulls().unique().sort())
+            .to_series()
+            .to_list()
+        )
+    else:
+        molecules = list(molecules)
+
+    out = out.filter(
+        pl.col(molecule_col).is_in(molecules)
+        & pl.col(type_col).is_in([cortical_value, ventral_value])
+        & pl.col(location_col).is_in(list(location_order))
+        & pl.col(feature).is_not_null()
+    )
+
+    agg_expr = (
+        pl.col(feature).median().alias(feature)
+        if per_cell_agg == "median"
+        else pl.col(feature).mean().alias(feature)
+    )
+    per_cell = (
+        out.group_by([per_cell_col, molecule_col, type_col, location_col])
+        .agg(agg_expr)
+    )
+
+    summary_expr = (
+        pl.col(feature).median().alias("value")
+        if summary_agg == "median"
+        else pl.col(feature).mean().alias("value")
+    )
+    summary = (
+        per_cell.group_by([molecule_col, type_col, location_col])
+        .agg(
+            summary_expr,
+            pl.col(per_cell_col).n_unique().alias("n_cells"),
+        )
+    )
+
+    rows = []
+    molecule_values = {}
+    molecule_counts = {}
+    for molecule in molecules:
+        values = np.full((1, len(location_order)), np.nan, dtype=float)
+        counts = np.zeros((2, len(location_order)), dtype=int)
+
+        for j, location in enumerate(location_order):
+            cort_hit = summary.filter(
+                (pl.col(molecule_col) == molecule)
+                & (pl.col(type_col) == cortical_value)
+                & (pl.col(location_col) == location)
+            )
+            vent_hit = summary.filter(
+                (pl.col(molecule_col) == molecule)
+                & (pl.col(type_col) == ventral_value)
+                & (pl.col(location_col) == location)
+            )
+
+            cort_value = np.nan
+            vent_value = np.nan
+            n_cort = 0
+            n_vent = 0
+            if cort_hit.height:
+                cort_value = float(cort_hit.select("value").item())
+                n_cort = int(cort_hit.select("n_cells").item())
+            if vent_hit.height:
+                vent_value = float(vent_hit.select("value").item())
+                n_vent = int(vent_hit.select("n_cells").item())
+
+            if np.isfinite(cort_value) and np.isfinite(vent_value):
+                if percent_baseline == "ventral":
+                    baseline = vent_value
+                elif percent_baseline == "cortical":
+                    baseline = cort_value
+                else:
+                    baseline = (cort_value + vent_value) / 2
+
+                if baseline != 0:
+                    values[0, j] = 100 * (cort_value - vent_value) / baseline
+
+            counts[0, j] = n_cort
+            counts[1, j] = n_vent
+            rows.append(
+                {
+                    molecule_col: molecule,
+                    location_col: location,
+                    "cortical_value": cort_value,
+                    "ventral_value": vent_value,
+                    "percent_difference": values[0, j],
+                    "n_cortical_cells": n_cort,
+                    "n_ventral_cells": n_vent,
+                }
+            )
+
+        molecule_values[molecule] = values
+        molecule_counts[molecule] = counts
+
+    result_summary = pl.DataFrame(rows)
+
+    if shared_color_scale:
+        finite_chunks = [
+            vals[np.isfinite(vals)]
+            for vals in molecule_values.values()
+            if np.isfinite(vals).any()
+        ]
+        if finite_chunks:
+            finite_values = np.concatenate(finite_chunks)
+            shared_abs = np.nanmax(np.abs(finite_values))
+            shared_vmin, shared_vmax = (
+                (-shared_abs, shared_abs)
+                if center_zero
+                else (np.nanmin(finite_values), np.nanmax(finite_values))
+            )
+        else:
+            shared_vmin = shared_vmax = None
+    else:
+        shared_vmin = shared_vmax = None
+
+    figs = {}
+    axes = {}
+    if save_dir is not None:
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+    for molecule in molecules:
+        plot_values = molecule_values[molecule]
+        finite = plot_values[np.isfinite(plot_values)]
+        if shared_color_scale:
+            vmin, vmax = shared_vmin, shared_vmax
+        elif finite.size and center_zero:
+            vmax = np.nanmax(np.abs(finite))
+            vmin = -vmax
+        elif finite.size:
+            vmin, vmax = np.nanmin(finite), np.nanmax(finite)
+        else:
+            vmin = vmax = None
+
+        plot_cmap = cmap
+        if isinstance(cmap, str) and cmap not in plt.colormaps():
+            plot_cmap = sns.color_palette(cmap, as_cmap=True)
+
+        fig, ax = plt.subplots(figsize=figsize)
+        im = ax.imshow(plot_values, cmap=plot_cmap, vmin=vmin, vmax=vmax, aspect="auto")
+
+        ax.set_xticks(np.arange(len(location_labels)))
+        ax.set_xticklabels(location_labels, fontsize=9)
+        ax.set_yticks([0])
+        ax.set_yticklabels([str(molecule)], fontsize=9)
+
+        if annot:
+            counts = molecule_counts[molecule]
+            for j in range(plot_values.shape[1]):
+                val = plot_values[0, j]
+                if np.isnan(val):
+                    label = f"NA\nc={counts[0, j]}, v={counts[1, j]}"
+                else:
+                    label = f"{val:.1f}%\nc={counts[0, j]}, v={counts[1, j]}"
+                ax.text(j, 0, label, ha="center", va="center", fontsize=8)
+
+        ax.set_xticks(np.arange(-0.5, len(location_order), 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, 1, 1), minor=True)
+        ax.grid(which="minor", color="white", linestyle="-", linewidth=1)
+        ax.tick_params(which="minor", bottom=False, left=False)
+        ax.set_title(f"{molecule}: cortical vs ventral {feature}", fontsize=9, pad=8)
+
+        cbar = fig.colorbar(im, ax=ax)
+        baseline_label = {
+            "ventral": "ventral",
+            "cortical": "cortical",
+            "mean": "cortical/ventral mean",
+        }[percent_baseline]
+        cbar.set_label(f"% difference vs {baseline_label}")
+
+        plt.tight_layout()
+
+        if transparent_background:
+            fig.patch.set_alpha(0)
+            ax.patch.set_alpha(0)
+
+        if save_dir is not None:
+            safe_molecule = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(molecule)).strip("_")
+            prefix = filename_prefix or f"cortical_ventral_pctdiff_{feature}"
+            out_path = save_dir / f"{prefix}_{safe_molecule}.{export_format}"
+            fig.savefig(out_path, dpi=dpi, bbox_inches="tight", transparent=transparent_background)
+            print(f"Saved: {out_path}")
+
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)
+
+        figs[molecule] = fig
+        axes[molecule] = ax
+
+    return result_summary, molecule_values, molecule_counts, figs, axes
+
+
+def plot_cortical_ventral_region_profiles(
+    df,
+    feature="diffusion_coefficient",
+    molecule_col="mol",
+    molecules=None,
+    type_col="type",
+    location_col="location",
+    cortical_value="cort",
+    ventral_value="vent",
+    type_labels=None,
+    location_order=("CB", "NN", "GC"),
+    location_labels=None,
+    filters=None,
+    per_cell_col="filename",
+    per_cell_agg="median",
+    summary_unit="cell",
+    summary_unit_col=None,
+    summary_agg="median",
+    show_error=False,
+    error_stat="sem",
+    error_alpha=0.18,
+    normalize=None,
+    normalization_reference="CB",
+    figsize=None,
+    palette=None,
+    linestyles=None,
+    axis_color="black",
+    marker="o",
+    linewidth=1.8,
+    markersize=5,
+    sharey=False,
+    ylim=None,
+    save_dir=None,
+    filename_prefix=None,
+    export_format="svg",
+    dpi=300,
+    transparent_background=True,
+    show=True,
+):
+    """
+    Plot cortical and ventral regional profiles for each molecule.
+
+    This is intended for showing whether cortical and ventral neurons have the
+    same CB/NN/GC trend even when their absolute median feature values differ.
+    By default values are summarized per cell first, then across cells. Set
+    summary_unit="window" to summarize and shade error across window_uid values.
+    """
+    if not isinstance(df, pl.DataFrame):
+        df = pl.from_pandas(df)
+
+    filters = filters or {}
+    type_labels = type_labels or {
+        cortical_value: "Cortical",
+        ventral_value: "Ventral",
+    }
+    location_order = list(location_order)
+    location_labels = list(location_labels) if location_labels is not None else location_order
+    type_order = [cortical_value, ventral_value]
+
+    if len(location_labels) != len(location_order):
+        raise ValueError("location_labels must have the same length as location_order.")
+    if per_cell_agg not in {"median", "mean"}:
+        raise ValueError("per_cell_agg must be 'median' or 'mean'.")
+    if summary_agg not in {"median", "mean"}:
+        raise ValueError("summary_agg must be 'median' or 'mean'.")
+    if summary_unit not in {"cell", "filename", "window", "window_uid"}:
+        raise ValueError("summary_unit must be 'cell', 'filename', 'window', or 'window_uid'.")
+    if error_stat not in {"sem", "std", "ci95"}:
+        raise ValueError("error_stat must be 'sem', 'std', or 'ci95'.")
+    if normalize not in {None, "reference_location", "mean"}:
+        raise ValueError("normalize must be None, 'reference_location', or 'mean'.")
+    if normalize == "reference_location" and normalization_reference not in location_order:
+        raise ValueError("normalization_reference must be in location_order.")
+
+    if summary_unit_col is None:
+        summary_unit_col = per_cell_col if summary_unit in {"cell", "filename"} else "window_uid"
+
+    required_cols = [summary_unit_col, molecule_col, type_col, location_col, feature]
+    missing = [col for col in required_cols if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    out = df
+    for col, values in filters.items():
+        if values is None or col not in out.columns:
+            continue
+        if isinstance(values, (list, tuple, set)):
+            out = out.filter(pl.col(col).is_in(list(values)))
+        else:
+            out = out.filter(pl.col(col) == values)
+
+    if molecules is None:
+        molecules = (
+            out.select(pl.col(molecule_col).drop_nulls().unique().sort())
+            .to_series()
+            .to_list()
+        )
+    else:
+        molecules = list(molecules)
+
+    out = out.filter(
+        pl.col(molecule_col).is_in(molecules)
+        & pl.col(type_col).is_in(type_order)
+        & pl.col(location_col).is_in(location_order)
+        & pl.col(feature).is_not_null()
+    )
+
+    agg_expr = (
+        pl.col(feature).median().alias(feature)
+        if per_cell_agg == "median"
+        else pl.col(feature).mean().alias(feature)
+    )
+    per_unit = (
+        out.group_by([summary_unit_col, molecule_col, type_col, location_col])
+        .agg(agg_expr)
+    )
+
+    summary_expr = (
+        pl.col(feature).median().alias("value")
+        if summary_agg == "median"
+        else pl.col(feature).mean().alias("value")
+    )
+    summary = (
+        per_unit.group_by([molecule_col, type_col, location_col])
+        .agg(
+            summary_expr,
+            pl.col(feature).std().alias("std_value"),
+            pl.col(summary_unit_col).n_unique().alias("n_units"),
+        )
+    )
+
+    rows = []
+    for molecule in molecules:
+        for type_value in type_order:
+            values = []
+            errors = []
+            counts = []
+            for location in location_order:
+                hit = summary.filter(
+                    (pl.col(molecule_col) == molecule)
+                    & (pl.col(type_col) == type_value)
+                    & (pl.col(location_col) == location)
+                )
+                if hit.height:
+                    values.append(float(hit.select("value").item()))
+                    n_units = int(hit.select("n_units").item())
+                    std_value = hit.select("std_value").item()
+                    if std_value is None or not np.isfinite(std_value):
+                        error_value = np.nan
+                    elif error_stat == "std":
+                        error_value = float(std_value)
+                    elif error_stat == "ci95":
+                        error_value = 1.96 * float(std_value) / np.sqrt(n_units)
+                    else:
+                        error_value = float(std_value) / np.sqrt(n_units)
+                    errors.append(error_value)
+                    counts.append(n_units)
+                else:
+                    values.append(np.nan)
+                    errors.append(np.nan)
+                    counts.append(0)
+
+            values_arr = np.array(values, dtype=float)
+            errors_arr = np.array(errors, dtype=float)
+            if normalize == "reference_location":
+                ref_idx = location_order.index(normalization_reference)
+                denominator = values_arr[ref_idx]
+            elif normalize == "mean":
+                denominator = np.nanmean(values_arr)
+            else:
+                denominator = np.nan
+
+            if normalize is None:
+                plot_values = values_arr
+                plot_errors = errors_arr
+            elif np.isfinite(denominator) and denominator != 0:
+                plot_values = values_arr / denominator
+                plot_errors = errors_arr / abs(denominator)
+            else:
+                plot_values = np.full_like(values_arr, np.nan)
+                plot_errors = np.full_like(errors_arr, np.nan)
+
+            for location, raw_value, raw_error, plot_value, plot_error, n_units in zip(
+                location_order,
+                values_arr,
+                errors_arr,
+                plot_values,
+                plot_errors,
+                counts,
+            ):
+                rows.append(
+                    {
+                        molecule_col: molecule,
+                        type_col: type_value,
+                        location_col: location,
+                        "value": raw_value,
+                        "error": raw_error,
+                        "plot_value": plot_value,
+                        "plot_error": plot_error,
+                        "n_units": n_units,
+                        "n_cells": n_units,
+                        "summary_unit": summary_unit,
+                        "summary_unit_col": summary_unit_col,
+                        "normalization_denominator": denominator,
+                    }
+                )
+
+    result_summary = pl.DataFrame(rows)
+
+    if figsize is None:
+        figsize = (3.0 * max(1, len(molecules)), 2.6)
+    if palette is None:
+        palette = {
+            cortical_value: "black",
+            ventral_value: "black",
+        }
+    if linestyles is None:
+        linestyles = {
+            cortical_value: "--",
+            ventral_value: "-",
+        }
+
+    fig, axes = plt.subplots(
+        1,
+        max(1, len(molecules)),
+        figsize=figsize,
+        sharey=sharey,
+        squeeze=False,
+    )
+    axes = axes.ravel()
+    x = np.arange(len(location_order))
+
+    for ax, molecule in zip(axes, molecules):
+        for type_value in type_order:
+            type_rows = {
+                row[location_col]: row
+                for row in rows
+                if row[molecule_col] == molecule and row[type_col] == type_value
+            }
+            y = [
+                type_rows[location]["plot_value"] if location in type_rows else np.nan
+                for location in location_order
+            ]
+            yerr = [
+                type_rows[location]["plot_error"] if location in type_rows else np.nan
+                for location in location_order
+            ]
+            label = type_labels.get(type_value, str(type_value))
+            color = palette.get(type_value, None)
+            linestyle = linestyles.get(type_value, "-")
+            if show_error:
+                y_arr = np.array(y, dtype=float)
+                yerr_arr = np.array(yerr, dtype=float)
+                valid = np.isfinite(y_arr) & np.isfinite(yerr_arr)
+                if valid.any():
+                    ax.fill_between(
+                        x,
+                        y_arr - yerr_arr,
+                        y_arr + yerr_arr,
+                        where=valid,
+                        interpolate=True,
+                        color=color,
+                        alpha=error_alpha,
+                        linewidth=0,
+                    )
+            ax.plot(
+                x,
+                y,
+                marker=marker,
+                linewidth=linewidth,
+                markersize=markersize,
+                label=label,
+                color=color,
+                linestyle=linestyle,
+            )
+
+        ax.set_title(str(molecule), fontsize=10, pad=8, color=axis_color)
+        ax.set_xticks(x)
+        ax.set_xticklabels(location_labels, fontsize=9, color=axis_color)
+        ax.tick_params(axis="both", colors=axis_color, labelcolor=axis_color)
+        if ylim is not None:
+            ax.set_ylim(ylim)
+        ax.grid(True, axis="y", alpha=0.25, color="0.75")
+        ax.spines["left"].set_color(axis_color)
+        ax.spines["bottom"].set_color(axis_color)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    for ax in axes[len(molecules):]:
+        ax.axis("off")
+
+    if normalize == "reference_location":
+        y_label = f"{summary_agg.title()} {feature} / {normalization_reference}"
+        filename_suffix = f"{summary_unit_col}_normalized_to_{normalization_reference}"
+    elif normalize == "mean":
+        y_label = f"{summary_agg.title()} {feature} / line mean"
+        filename_suffix = f"{summary_unit_col}_normalized_to_mean"
+    else:
+        y_label = f"{summary_agg.title()} {feature}"
+        filename_suffix = f"{summary_unit_col}_raw"
+    if show_error:
+        filename_suffix = f"{filename_suffix}_{error_stat}"
+
+    axes[0].set_ylabel(y_label, fontsize=10, color=axis_color)
+    legend = axes[0].legend(frameon=False, fontsize=9)
+    for text in legend.get_texts():
+        text.set_color(axis_color)
+    fig.suptitle(
+        "Regional profiles: cortical vs ventral",
+        fontsize=11,
+        y=1.03,
+        color=axis_color,
+    )
+    plt.tight_layout()
+
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        for ax in axes:
+            ax.patch.set_alpha(0)
+
+    if save_dir is not None:
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        prefix = filename_prefix or f"cortical_ventral_region_profiles_{feature}"
+        out_path = save_dir / f"{prefix}_{filename_suffix}.{export_format}"
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight", transparent=transparent_background)
+        print(f"Saved: {out_path}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return result_summary, fig, axes
+
+
+def plot_cortical_ventral_genotype_profiles(
+    df,
+    feature="diffusion_coefficient",
+    genotype_mode="direct",
+    genotype_sets=None,
+    genotype_labels=None,
+    molecules=None,
+    filters=None,
+    molecule_col="mol",
+    type_col="type",
+    genotype_col="geno",
+    per_cell_col="filename",
+    cortical_value="cort",
+    ventral_value="vent",
+    type_labels=None,
+    per_cell_agg="median",
+    summary_agg="median",
+    show_error=False,
+    error_stat="sem",
+    normalize=None,
+    normalization_reference="20H20S",
+    figsize=(7, 3),
+    ylim=(0, 1),
+    palette=None,
+    linestyles=None,
+    marker="o",
+    linewidth=1.8,
+    markersize=5,
+    save_dir=None,
+    filename_prefix=None,
+    export_format="svg",
+    dpi=300,
+    transparent_background=True,
+    show=True,
+):
+    """
+    Plot cortical and ventral profiles with genotype on the x axis.
+
+    Values are summarized per filename first, then summarized across filenames.
+    Use genotype_mode="direct" for 20H20S/56H20S/77H20S/150H20S or
+    genotype_mode="indirect" for 20H20S/20H56S/20H77S/20H150S.
+    """
+    if not isinstance(df, pl.DataFrame):
+        df = pl.from_pandas(df)
+
+    genotype_sets = genotype_sets or {
+        "direct": ["20H20S", "56H20S", "77H20S", "150H20S"],
+        "indirect": ["20H20S", "20H56S", "20H77S", "20H150S"],
+    }
+    genotype_labels = genotype_labels or genotype_sets
+    filters = filters or {}
+    type_order = [cortical_value, ventral_value]
+    type_labels = type_labels or {
+        cortical_value: "Cortical",
+        ventral_value: "Ventral",
+    }
+    palette = palette or {
+        cortical_value: "black",
+        ventral_value: "black",
+    }
+    linestyles = linestyles or {
+        cortical_value: "--",
+        ventral_value: "-",
+    }
+
+    if genotype_mode not in genotype_sets:
+        raise ValueError(f"genotype_mode must be one of {list(genotype_sets)}.")
+    if per_cell_agg not in {"median", "mean"}:
+        raise ValueError("per_cell_agg must be 'median' or 'mean'.")
+    if summary_agg not in {"median", "mean"}:
+        raise ValueError("summary_agg must be 'median' or 'mean'.")
+    if error_stat not in {"sem", "std", "ci95"}:
+        raise ValueError("error_stat must be 'sem', 'std', or 'ci95'.")
+    if normalize not in {None, "reference_geno", "mean"}:
+        raise ValueError("normalize must be None, 'reference_geno', or 'mean'.")
+
+    genotype_order = list(genotype_sets[genotype_mode])
+    x_labels = list(genotype_labels.get(genotype_mode, genotype_order))
+    if len(x_labels) != len(genotype_order):
+        raise ValueError("genotype_labels for this mode must match genotype_sets length.")
+    if normalize == "reference_geno" and normalization_reference not in genotype_order:
+        raise ValueError("normalization_reference must be in the selected genotype order.")
+
+    required_cols = [per_cell_col, molecule_col, type_col, genotype_col, feature]
+    missing = [col for col in required_cols if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    out = df
+    for col, values in filters.items():
+        if values is None or col not in out.columns:
+            continue
+        if isinstance(values, (list, tuple, set)):
+            out = out.filter(pl.col(col).is_in(list(values)))
+        else:
+            out = out.filter(pl.col(col) == values)
+
+    if molecules is None:
+        molecules = (
+            out.select(pl.col(molecule_col).drop_nulls().unique().sort())
+            .to_series()
+            .to_list()
+        )
+    else:
+        molecules = list(molecules)
+
+    out = out.filter(
+        pl.col(molecule_col).is_in(molecules)
+        & pl.col(type_col).is_in(type_order)
+        & pl.col(genotype_col).is_in(genotype_order)
+        & pl.col(feature).is_not_null()
+    )
+
+    agg_expr = (
+        pl.col(feature).median().alias(feature)
+        if per_cell_agg == "median"
+        else pl.col(feature).mean().alias(feature)
+    )
+    per_cell = out.group_by([per_cell_col, molecule_col, type_col, genotype_col]).agg(agg_expr)
+
+    summary_expr = (
+        pl.col(feature).median().alias("value")
+        if summary_agg == "median"
+        else pl.col(feature).mean().alias("value")
+    )
+    summary = (
+        per_cell.group_by([molecule_col, type_col, genotype_col])
+        .agg(
+            summary_expr,
+            pl.col(feature).std().alias("std_value"),
+            pl.col(per_cell_col).n_unique().alias("n_cells"),
+        )
+    )
+
+    rows = []
+    for molecule in molecules:
+        for type_value in type_order:
+            values = []
+            errors = []
+            counts = []
+            for genotype in genotype_order:
+                hit = summary.filter(
+                    (pl.col(molecule_col) == molecule)
+                    & (pl.col(type_col) == type_value)
+                    & (pl.col(genotype_col) == genotype)
+                )
+                if hit.height:
+                    value = float(hit.select("value").item())
+                    n_cells = int(hit.select("n_cells").item())
+                    std_value = hit.select("std_value").item()
+                    if std_value is None or not np.isfinite(std_value):
+                        error_value = np.nan
+                    elif error_stat == "std":
+                        error_value = float(std_value)
+                    elif error_stat == "ci95":
+                        error_value = 1.96 * float(std_value) / np.sqrt(n_cells)
+                    else:
+                        error_value = float(std_value) / np.sqrt(n_cells)
+                else:
+                    value = np.nan
+                    error_value = np.nan
+                    n_cells = 0
+                values.append(value)
+                errors.append(error_value)
+                counts.append(n_cells)
+
+            values_arr = np.array(values, dtype=float)
+            errors_arr = np.array(errors, dtype=float)
+            if normalize == "reference_geno":
+                denominator = values_arr[genotype_order.index(normalization_reference)]
+            elif normalize == "mean":
+                denominator = np.nanmean(values_arr)
+            else:
+                denominator = np.nan
+
+            if normalize is None:
+                plot_values = values_arr
+                plot_errors = errors_arr
+            elif np.isfinite(denominator) and denominator != 0:
+                plot_values = values_arr / denominator
+                plot_errors = errors_arr / abs(denominator)
+            else:
+                plot_values = np.full_like(values_arr, np.nan)
+                plot_errors = np.full_like(errors_arr, np.nan)
+
+            for genotype, genotype_label, raw_value, raw_error, plot_value, plot_error, n_cells in zip(
+                genotype_order,
+                x_labels,
+                values_arr,
+                errors_arr,
+                plot_values,
+                plot_errors,
+                counts,
+            ):
+                rows.append(
+                    {
+                        molecule_col: molecule,
+                        type_col: type_value,
+                        genotype_col: genotype,
+                        "genotype_label": genotype_label,
+                        "value": raw_value,
+                        "error": raw_error,
+                        "plot_value": plot_value,
+                        "plot_error": plot_error,
+                        "n_cells": n_cells,
+                        "normalization_denominator": denominator,
+                        "genotype_mode": genotype_mode,
+                    }
+                )
+
+    result_summary = pl.DataFrame(rows)
+    fig, axes = plt.subplots(
+        1,
+        max(1, len(molecules)),
+        figsize=figsize,
+        squeeze=False,
+        sharey=True,
+    )
+    axes = axes.ravel()
+    x = np.arange(len(genotype_order))
+
+    for ax, molecule in zip(axes, molecules):
+        for type_value in type_order:
+            type_rows = {
+                row[genotype_col]: row
+                for row in rows
+                if row[molecule_col] == molecule and row[type_col] == type_value
+            }
+            y = [
+                type_rows[genotype]["plot_value"] if genotype in type_rows else np.nan
+                for genotype in genotype_order
+            ]
+            yerr = [
+                type_rows[genotype]["plot_error"] if genotype in type_rows else np.nan
+                for genotype in genotype_order
+            ]
+            color = palette.get(type_value, "black")
+            ax.plot(
+                x,
+                y,
+                marker=marker,
+                linewidth=linewidth,
+                markersize=markersize,
+                label=type_labels.get(type_value, str(type_value)),
+                color=color,
+                linestyle=linestyles.get(type_value, "-"),
+            )
+            if show_error:
+                y_arr = np.array(y, dtype=float)
+                yerr_arr = np.array(yerr, dtype=float)
+                valid = np.isfinite(y_arr) & np.isfinite(yerr_arr)
+                if valid.any():
+                    ax.fill_between(
+                        x,
+                        y_arr - yerr_arr,
+                        y_arr + yerr_arr,
+                        where=valid,
+                        interpolate=True,
+                        color=color,
+                        alpha=0.18,
+                        linewidth=0,
+                    )
+
+        ax.set_title(str(molecule), fontsize=10, pad=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(x_labels, fontsize=9, rotation=45, ha="right")
+        ax.grid(True, axis="y", alpha=0.25, color="0.75")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        if ylim is not None:
+            ax.set_ylim(ylim)
+
+    ylabel = f"{summary_agg.title()} {feature}"
+    filename_suffix = "raw"
+    if normalize == "reference_geno":
+        ylabel = f"{summary_agg.title()} {feature} / {normalization_reference}"
+        filename_suffix = f"normalized_to_{normalization_reference}"
+    elif normalize == "mean":
+        ylabel = f"{summary_agg.title()} {feature} / line mean"
+        filename_suffix = "normalized_to_mean"
+    if show_error:
+        filename_suffix = f"{filename_suffix}_{error_stat}"
+
+    axes[0].set_ylabel(ylabel, fontsize=10)
+    axes[0].legend(frameon=False, fontsize=9)
+    fig.suptitle(f"Cortical vs ventral by genotype ({genotype_mode})", fontsize=11, y=1.03)
+    fig.tight_layout()
+
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        for ax in axes:
+            ax.patch.set_alpha(0)
+
+    if save_dir is not None:
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        prefix = filename_prefix or f"cortical_ventral_genotype_profiles_{feature}_{genotype_mode}"
+        out_path = save_dir / f"{prefix}_{filename_suffix}.{export_format}"
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight", transparent=transparent_background)
+        print(f"Saved: {out_path}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return result_summary, fig, axes
+
+
+def plot_population_percentage_by_genotype_sets(
+    df,
+    population="bound",
+    population_col="transformer_behavior_state",
+    genotype_col="geno",
+    type_col="type",
+    per_unit_col="filename",
+    window_uid_col="window_uid",
+    genotype_sets=None,
+    genotype_labels=None,
+    genotype_modes=("direct", "indirect"),
+    filters=None,
+    cortical_value="cort",
+    ventral_value="vent",
+    type_labels=None,
+    per_unit_first=True,
+    summary_agg="median",
+    show_points=False,
+    show_error=True,
+    error_stat="ci95",
+    error_alpha=0.18,
+    normalize=None,
+    normalization_reference="20H20S",
+    figsize=(7, 3),
+    ylim=(0, 100),
+    population_color=None,
+    type_palette=None,
+    linestyles=None,
+    marker=None,
+    linewidth=1.8,
+    markersize=5,
+    point_color="black",
+    axis_color="black",
+    save_dir=None,
+    filename_prefix=None,
+    export_format="svg",
+    dpi=300,
+    transparent_background=True,
+    show=True,
+):
+    """
+    Compare the percentage of one population across direct/indirect genotype sets.
+
+    By default the percentage is calculated per filename first, then the median
+    percentage across filenames is plotted for each genotype.
+    """
+    if not isinstance(df, pl.DataFrame):
+        df = pl.from_pandas(df)
+
+    genotype_sets = genotype_sets or {
+        "direct": ["20H20S", "56H20S", "77H20S", "150H20S"],
+        "indirect": ["20H20S", "20H56S", "20H77S", "20H150S"],
+    }
+    genotype_labels = genotype_labels or genotype_sets
+    genotype_modes = list(genotype_modes)
+    filters = filters or {}
+
+    if summary_agg not in {"median", "mean"}:
+        raise ValueError("summary_agg must be 'median' or 'mean'.")
+    if error_stat not in {"sem", "std", "ci95"}:
+        raise ValueError("error_stat must be 'sem', 'std', or 'ci95'.")
+    if normalize not in {None, "reference_geno", "mean"}:
+        raise ValueError("normalize must be None, 'reference_geno', or 'mean'.")
+    unknown_modes = [mode for mode in genotype_modes if mode not in genotype_sets]
+    if unknown_modes:
+        raise ValueError(f"Unknown genotype modes: {unknown_modes}")
+
+    type_order = [cortical_value, ventral_value]
+    type_labels = type_labels or {
+        cortical_value: "Cortical",
+        ventral_value: "Ventral",
+    }
+    if population_color is None:
+        population_color = "#1b9e77"
+    type_palette = type_palette or {
+        cortical_value: population_color,
+        ventral_value: population_color,
+    }
+    linestyles = linestyles or {
+        cortical_value: "--",
+        ventral_value: "-",
+    }
+
+    required_cols = [population_col, genotype_col, type_col, per_unit_col, window_uid_col]
+    missing = [col for col in required_cols if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    out = df
+    for col, values in filters.items():
+        if values is None or col not in out.columns:
+            continue
+        if isinstance(values, (list, tuple, set)):
+            out = out.filter(pl.col(col).is_in(list(values)))
+        else:
+            out = out.filter(pl.col(col) == values)
+
+    all_genotypes = []
+    for mode in genotype_modes:
+        all_genotypes.extend(genotype_sets[mode])
+    all_genotypes = list(dict.fromkeys(all_genotypes))
+
+    out = (
+        out.filter(pl.col(genotype_col).is_in(all_genotypes) & pl.col(type_col).is_in(type_order))
+        .unique(subset=[per_unit_col, window_uid_col], keep="first", maintain_order=True)
+        .with_columns((pl.col(population_col) == population).cast(pl.Float64).alias("_is_target_population"))
+    )
+
+    if per_unit_first:
+        unit_percentages = (
+            out.group_by([per_unit_col, genotype_col, type_col])
+            .agg(
+                (100 * pl.col("_is_target_population").mean()).alias("percentage"),
+                pl.col(window_uid_col).n_unique().alias("n_window_uid"),
+            )
+        )
+    else:
+        unit_percentages = (
+            out.group_by([window_uid_col, genotype_col, type_col])
+            .agg(
+                (100 * pl.col("_is_target_population").mean()).alias("percentage"),
+                pl.lit(1).alias("n_window_uid"),
+            )
+            .rename({window_uid_col: per_unit_col})
+        )
+
+    summary_expr = (
+        pl.col("percentage").median().alias("percentage")
+        if summary_agg == "median"
+        else pl.col("percentage").mean().alias("percentage")
+    )
+    summary = (
+        unit_percentages.group_by([genotype_col, type_col])
+        .agg(
+            summary_expr,
+            pl.col("percentage").std().alias("std_percentage"),
+            pl.col(per_unit_col).n_unique().alias("n_units"),
+            pl.col("n_window_uid").sum().alias("n_window_uid"),
+        )
+    )
+
+    rows = []
+    for mode in genotype_modes:
+        genotype_order = list(genotype_sets[mode])
+        labels = list(genotype_labels.get(mode, genotype_order))
+        if normalize == "reference_geno" and normalization_reference not in genotype_order:
+            raise ValueError("normalization_reference must be in each selected genotype order.")
+        for type_value in type_order:
+            for genotype, label in zip(genotype_order, labels):
+                hit = summary.filter((pl.col(genotype_col) == genotype) & (pl.col(type_col) == type_value))
+                if hit.height:
+                    value = float(hit.select("percentage").item())
+                    n_units = int(hit.select("n_units").item())
+                    n_window_uid = int(hit.select("n_window_uid").item())
+                    std_value = hit.select("std_percentage").item()
+                    if std_value is None or not np.isfinite(std_value):
+                        error_value = np.nan
+                    elif error_stat == "std":
+                        error_value = float(std_value)
+                    elif error_stat == "ci95":
+                        error_value = 1.96 * float(std_value) / np.sqrt(n_units)
+                    else:
+                        error_value = float(std_value) / np.sqrt(n_units)
+                else:
+                    value = np.nan
+                    error_value = np.nan
+                    n_units = 0
+                    n_window_uid = 0
+                rows.append(
+                    {
+                        "genotype_mode": mode,
+                        type_col: type_value,
+                        genotype_col: genotype,
+                        "genotype_label": label,
+                        "population": population,
+                        "percentage": value,
+                        "error": error_value,
+                        "plot_percentage": value,
+                        "plot_error": error_value,
+                        "n_units": n_units,
+                        "n_window_uid": n_window_uid,
+                        "per_unit_col": per_unit_col,
+                        "summary_agg": summary_agg,
+                        "normalization_denominator": np.nan,
+                    }
+                )
+
+    for mode in genotype_modes:
+        genotype_order = list(genotype_sets[mode])
+        for type_value in type_order:
+            mode_indices = [
+                idx
+                for idx, row in enumerate(rows)
+                if row["genotype_mode"] == mode and row[type_col] == type_value
+            ]
+            values = np.array([rows[idx]["percentage"] for idx in mode_indices], dtype=float)
+            errors = np.array([rows[idx]["error"] for idx in mode_indices], dtype=float)
+            if normalize == "reference_geno":
+                denominator = values[genotype_order.index(normalization_reference)]
+            elif normalize == "mean":
+                denominator = np.nanmean(values)
+            else:
+                denominator = np.nan
+
+            if normalize is None:
+                plot_values = values
+                plot_errors = errors
+            elif np.isfinite(denominator) and denominator != 0:
+                plot_values = values / denominator
+                plot_errors = errors / abs(denominator)
+            else:
+                plot_values = np.full_like(values, np.nan)
+                plot_errors = np.full_like(errors, np.nan)
+
+            for idx, plot_value, plot_error in zip(mode_indices, plot_values, plot_errors):
+                rows[idx]["plot_percentage"] = plot_value
+                rows[idx]["plot_error"] = plot_error
+                rows[idx]["normalization_denominator"] = denominator
+
+    result_summary = pl.DataFrame(rows)
+
+    fig, axes = plt.subplots(
+        1,
+        max(1, len(genotype_modes)),
+        figsize=figsize,
+        squeeze=False,
+        sharey=True,
+    )
+    axes = axes.ravel()
+
+    for ax, mode in zip(axes, genotype_modes):
+        mode_pdf_all = result_summary.filter(pl.col("genotype_mode") == mode).to_pandas()
+        genotype_order = list(genotype_sets[mode])
+        x = np.arange(len(genotype_order))
+        for type_value in type_order:
+            mode_pdf = mode_pdf_all[mode_pdf_all[type_col] == type_value].copy()
+            mode_pdf[genotype_col] = pd.Categorical(
+                mode_pdf[genotype_col],
+                categories=genotype_order,
+                ordered=True,
+            )
+            mode_pdf = mode_pdf.sort_values(genotype_col)
+            y = mode_pdf["plot_percentage"].to_numpy(dtype=float)
+            yerr = mode_pdf["plot_error"].to_numpy(dtype=float)
+            color = type_palette.get(type_value, population_color)
+
+            ax.plot(
+                x,
+                y,
+                color=color,
+                marker=marker,
+                linewidth=linewidth,
+                markersize=markersize,
+                linestyle=linestyles.get(type_value, "-"),
+                label=type_labels.get(type_value, str(type_value)),
+            )
+            if show_error:
+                valid = np.isfinite(y) & np.isfinite(yerr)
+                if valid.any():
+                    ax.fill_between(
+                        x,
+                        y - yerr,
+                        y + yerr,
+                        where=valid,
+                        interpolate=True,
+                        color=color,
+                        alpha=error_alpha,
+                        linewidth=0,
+                    )
+        if show_points:
+            points_pdf = unit_percentages.filter(
+                pl.col(genotype_col).is_in(list(genotype_sets[mode]))
+            ).to_pandas()
+            for type_value in type_order:
+                type_points = points_pdf[points_pdf[type_col] == type_value]
+                for xi, genotype in enumerate(genotype_order):
+                    vals = type_points.loc[type_points[genotype_col] == genotype, "percentage"].to_numpy(dtype=float)
+                    if len(vals):
+                        jitter = np.linspace(-0.12, 0.12, len(vals)) if len(vals) > 1 else np.array([0.0])
+                        ax.scatter(
+                            np.full(len(vals), xi) + jitter,
+                            vals,
+                            color=point_color,
+                            s=10,
+                            alpha=0.65,
+                            zorder=3,
+                        )
+
+        ax.set_title(mode, fontsize=10, color=axis_color)
+        ax.set_xticks(x)
+        ax.set_xticklabels(genotype_labels.get(mode, genotype_order), rotation=45, ha="right", color=axis_color)
+        ax.tick_params(axis="both", colors=axis_color, labelcolor=axis_color)
+        ax.grid(True, axis="y", alpha=0.25, color="0.75")
+        ax.spines["left"].set_color(axis_color)
+        ax.spines["bottom"].set_color(axis_color)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        if ylim is not None:
+            ax.set_ylim(ylim)
+
+    if normalize == "reference_geno":
+        y_label = f"{summary_agg.title()} {population} (%) / {normalization_reference}"
+        filename_suffix = f"normalized_to_{normalization_reference}"
+    elif normalize == "mean":
+        y_label = f"{summary_agg.title()} {population} (%) / line mean"
+        filename_suffix = "normalized_to_mean"
+    else:
+        y_label = f"{summary_agg.title()} {population} (%)"
+        filename_suffix = "raw"
+    if show_error:
+        filename_suffix = f"{filename_suffix}_{error_stat}"
+
+    axes[0].set_ylabel(y_label, fontsize=10, color=axis_color)
+    legend = axes[0].legend(frameon=False, fontsize=9)
+    for text in legend.get_texts():
+        text.set_color(axis_color)
+    fig.suptitle(f"{population} population percentage by genotype", fontsize=11, y=1.03, color=axis_color)
+    fig.tight_layout()
+
+    if transparent_background:
+        fig.patch.set_alpha(0)
+        for ax in axes:
+            ax.patch.set_alpha(0)
+
+    if save_dir is not None:
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        safe_population = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(population))
+        prefix = filename_prefix or f"population_percentage_{safe_population}_by_genotype_sets"
+        out_path = save_dir / f"{prefix}_{filename_suffix}.{export_format}"
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight", transparent=transparent_background)
+        print(f"Saved: {out_path}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return result_summary, unit_percentages, fig, axes
 
 
 # ============================================================================
@@ -21255,4 +29287,1653 @@ def interactive_umap_lasso_clustering(
         "labels": out_labels,
         "xy_umap": xy,
         "umap_reducer": umap_reducer,
+    }
+
+
+
+# =============================================================================
+# Switch-probability visualizations: pie + arc arrows, word graph + arrows
+# =============================================================================
+
+def _as_pandas_df(df_like):
+    """Return a pandas DataFrame copy from pandas or polars input."""
+    if isinstance(df_like, pl.DataFrame):
+        return df_like.to_pandas()
+    return df_like.copy()
+
+
+def state_composition_fractions_from_sequences(
+    superwindow_df,
+    state_order,
+    state_sequence_col="state_sequence",
+    group_col=None,
+):
+    """
+    Fraction of window-states occupied by each state, optionally within groups.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: [group_col or "_group"], state, n_windows, fraction
+    """
+    df = _as_pandas_df(superwindow_df)
+    state_order = list(state_order)
+    group_name = group_col if group_col is not None else "_group"
+    if group_col is None:
+        work = df.copy()
+        work[group_name] = "all"
+    else:
+        work = df.copy()
+
+    rows = []
+    for group_value, sub in work.groupby(group_name, dropna=False):
+        counts = {s: 0 for s in state_order}
+        total = 0
+        for seq in sub[state_sequence_col]:
+            for state in list(seq):
+                state = str(state)
+                if state in counts:
+                    counts[state] += 1
+                    total += 1
+        for state in state_order:
+            n = counts[state]
+            rows.append(
+                {
+                    group_name: group_value,
+                    "state": state,
+                    "n_windows": n,
+                    "fraction": (n / total) if total > 0 else 0.0,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _transition_prob_lookup(transition_df, group_col, group_value, probability_col="transition_probability"):
+    """Build {(from_state, to_state): probability} for one group."""
+    sub = transition_df.loc[transition_df[group_col] == group_value]
+    lookup = {}
+    for _, row in sub.iterrows():
+        lookup[(str(row["from_state"]), str(row["to_state"]))] = float(row[probability_col])
+    return lookup
+
+
+def _scale_arrow_style(prob, max_prob, min_lw=0.4, max_lw=4.5, min_ms=6.0, max_ms=18.0):
+    """Map probability to linewidth and FancyArrowPatch mutation_scale."""
+    if max_prob <= 0 or not np.isfinite(prob) or prob <= 0:
+        return 0.0, 0.0
+    t = float(np.clip(prob / max_prob, 0.0, 1.0))
+    # Slightly emphasize mid/high probs for readability.
+    t = t ** 0.75
+    lw = min_lw + t * (max_lw - min_lw)
+    ms = min_ms + t * (max_ms - min_ms)
+    return lw, ms
+
+
+def _draw_arc_arrow(
+    ax,
+    theta_center_deg,
+    direction,
+    radius,
+    arc_halfwidth_deg,
+    color,
+    linewidth,
+    mutation_scale,
+    zorder=5,
+):
+    """
+    Draw a curved arrow along a circular arc, centered at theta_center_deg.
+
+    direction : +1 for counterclockwise travel, -1 for clockwise.
+    """
+    from matplotlib.patches import FancyArrowPatch
+    from matplotlib.path import Path as MplPath
+
+    if linewidth <= 0 or mutation_scale <= 0:
+        return None
+
+    theta0 = np.deg2rad(theta_center_deg - direction * arc_halfwidth_deg)
+    theta1 = np.deg2rad(theta_center_deg + direction * arc_halfwidth_deg)
+    thetas = np.linspace(theta0, theta1, 40)
+    xs = radius * np.cos(thetas)
+    ys = radius * np.sin(thetas)
+
+    verts = np.column_stack([xs, ys])
+    codes = [MplPath.MOVETO] + [MplPath.LINETO] * (len(verts) - 1)
+    path = MplPath(verts, codes)
+    arrow = FancyArrowPatch(
+        path=path,
+        arrowstyle="-|>",
+        mutation_scale=mutation_scale,
+        linewidth=linewidth,
+        color=color,
+        alpha=0.9,
+        zorder=zorder,
+    )
+    try:
+        arrow.set_capstyle("round")
+        arrow.set_joinstyle("round")
+    except Exception:
+        pass
+    ax.add_patch(arrow)
+    return arrow
+
+
+def plot_switch_probability_pie_arrows(
+    superwindow_df,
+    transition_df,
+    group_col="superwindow_cluster_name",
+    state_order=None,
+    group_order=None,
+    state_colors=None,
+    probability_col="transition_probability",
+    state_sequence_col="state_sequence",
+    min_arrow_prob=0.01,
+    figsize=None,
+    save_path=None,
+    transparent=True,
+    title="State composition with switch arrows",
+    line_color="black",
+    show_prob_labels=True,
+):
+    """
+    One pie panel per group/cluster: wedge sizes = state composition;
+    at each pie boundary, two opposing curved arrows sized by P(switch).
+
+    Adjacent wedges follow ``state_order``. Arrow A->B uses P(B|A) and B->A uses P(A|B).
+    Self-transitions are not drawn as arrows (they are reflected in wedge size).
+    """
+    sw = _as_pandas_df(superwindow_df)
+    tr = _as_pandas_df(transition_df)
+    state_order = list(state_order or sorted(set(tr["from_state"].astype(str)) | set(tr["to_state"].astype(str))))
+    group_order = list(
+        group_order
+        or pd.Series(tr[group_col].dropna().unique()).sort_values()
+    )
+    state_colors = dict(state_colors or {})
+
+    comp = state_composition_fractions_from_sequences(
+        sw,
+        state_order=state_order,
+        state_sequence_col=state_sequence_col,
+        group_col=group_col,
+    )
+
+    n = max(1, len(group_order))
+    ncols = min(4, n)
+    nrows = int(np.ceil(n / ncols))
+    if figsize is None:
+        figsize = (4.6 * ncols, 4.8 * nrows)
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+
+    for ax, group_value in zip(axes.ravel(), group_order):
+        frac_sub = comp.loc[comp[group_col] == group_value].set_index("state").reindex(state_order)
+        sizes = frac_sub["fraction"].fillna(0.0).to_numpy(dtype=float)
+        if float(sizes.sum()) <= 0:
+            sizes = np.ones(len(state_order), dtype=float) / len(state_order)
+        colors = [state_colors.get(s, "lightgray") for s in state_order]
+
+        wedges, _ = ax.pie(
+            sizes,
+            colors=colors,
+            startangle=90,
+            counterclock=True,
+            wedgeprops={"linewidth": 1.2, "edgecolor": line_color, "alpha": 0.92},
+        )
+        ax.set_title(str(group_value), color=line_color, fontsize=10, pad=10)
+
+        probs = _transition_prob_lookup(tr, group_col, group_value, probability_col)
+        off_diag = [
+            probs.get((a, b), 0.0)
+            for a in state_order
+            for b in state_order
+            if a != b
+        ]
+        max_prob = max(off_diag) if off_diag else 0.0
+
+        for i, state_a in enumerate(state_order):
+            state_b = state_order[(i + 1) % len(state_order)]
+            boundary_deg = float(wedges[i].theta2)
+            p_ab = probs.get((state_a, state_b), 0.0)
+            p_ba = probs.get((state_b, state_a), 0.0)
+
+            r_outer = 1.18
+            arc_hw = 12.0
+
+            if p_ab >= min_arrow_prob:
+                lw, ms = _scale_arrow_style(p_ab, max_prob)
+                _draw_arc_arrow(
+                    ax,
+                    theta_center_deg=boundary_deg,
+                    direction=+1,
+                    radius=r_outer,
+                    arc_halfwidth_deg=arc_hw,
+                    color=state_colors.get(state_a, line_color),
+                    linewidth=lw,
+                    mutation_scale=ms,
+                )
+                if show_prob_labels:
+                    lab_ang = np.deg2rad(boundary_deg + 8)
+                    ax.text(
+                        1.38 * np.cos(lab_ang),
+                        1.38 * np.sin(lab_ang),
+                        f"{p_ab:.2f}",
+                        ha="center",
+                        va="center",
+                        fontsize=7,
+                        color=line_color,
+                    )
+
+            if p_ba >= min_arrow_prob:
+                lw, ms = _scale_arrow_style(p_ba, max_prob)
+                _draw_arc_arrow(
+                    ax,
+                    theta_center_deg=boundary_deg,
+                    direction=-1,
+                    radius=r_outer + 0.12,
+                    arc_halfwidth_deg=arc_hw,
+                    color=state_colors.get(state_b, line_color),
+                    linewidth=lw,
+                    mutation_scale=ms,
+                )
+                if show_prob_labels:
+                    lab_ang = np.deg2rad(boundary_deg - 8)
+                    ax.text(
+                        1.55 * np.cos(lab_ang),
+                        1.55 * np.sin(lab_ang),
+                        f"{p_ba:.2f}",
+                        ha="center",
+                        va="center",
+                        fontsize=7,
+                        color=line_color,
+                    )
+
+        ax.set_xlim(-1.75, 1.75)
+        ax.set_ylim(-1.75, 1.75)
+        ax.set_aspect("equal")
+
+        legend_bits = [f"{s}: {100 * sizes[j]:.0f}%" for j, s in enumerate(state_order)]
+        ax.text(
+            0.0,
+            -1.68,
+            "  |  ".join(legend_bits),
+            ha="center",
+            va="top",
+            fontsize=7,
+            color=line_color,
+            wrap=True,
+        )
+
+    for ax in axes.ravel()[len(group_order) :]:
+        ax.axis("off")
+
+    if title:
+        fig.suptitle(title, color=line_color, fontsize=12, y=1.02)
+    fig.tight_layout()
+    if save_path is not None:
+        fig.savefig(save_path, format=Path(save_path).suffix.lstrip(".") or "svg", transparent=transparent, bbox_inches="tight")
+    return fig, axes
+
+
+def plot_switch_probability_word_arrows(
+    transition_df,
+    group_col="superwindow_cluster_name",
+    state_order=None,
+    group_order=None,
+    state_colors=None,
+    probability_col="transition_probability",
+    min_arrow_prob=0.01,
+    figsize=None,
+    save_path=None,
+    transparent=True,
+    title="State switch network",
+    line_color="black",
+    show_prob_labels=True,
+    layout_radius=1.35,
+    arrow_pair_offset=0.18,
+    arrow_curve_rad=0.28,
+):
+    """
+    One panel per group: state names laid out on a circle, with curved arrows
+    between every pair of distinct states. Arrow size proportional to switch probability.
+
+    Bidirectional pairs follow the *same* absolute curved path family (parallel
+    lanes). ``arrow_pair_offset`` is the full separation between the two lanes;
+    ``arrow_curve_rad`` is the shared arc3 curvature magnitude.
+    """
+    from matplotlib.patches import FancyArrowPatch
+
+    tr = _as_pandas_df(transition_df)
+    state_order = list(state_order or sorted(set(tr["from_state"].astype(str)) | set(tr["to_state"].astype(str))))
+    group_order = list(group_order or pd.Series(tr[group_col].dropna().unique()).sort_values())
+    state_colors = dict(state_colors or {})
+    n_states = len(state_order)
+
+    angles = np.linspace(np.pi / 2, np.pi / 2 + 2 * np.pi, n_states, endpoint=False)
+    positions = {
+        state: (layout_radius * np.cos(ang), layout_radius * np.sin(ang))
+        for state, ang in zip(state_order, angles)
+    }
+
+    n = max(1, len(group_order))
+    ncols = min(4, n)
+    nrows = int(np.ceil(n / ncols))
+    if figsize is None:
+        figsize = (5.0 * ncols, 5.0 * nrows)
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+
+    for ax, group_value in zip(axes.ravel(), group_order):
+        probs = _transition_prob_lookup(tr, group_col, group_value, probability_col)
+        off_diag = [
+            probs.get((a, b), 0.0)
+            for a in state_order
+            for b in state_order
+            if a != b
+        ]
+        max_prob = max(off_diag) if off_diag else 0.0
+
+        ax.set_xlim(-2.25, 2.25)
+        ax.set_ylim(-2.25, 2.25)
+        ax.set_aspect("equal")
+        ax.axis("off")
+        ax.set_title(str(group_value), color=line_color, fontsize=10, pad=8)
+
+        for i, a in enumerate(state_order):
+            for j, b in enumerate(state_order):
+                if a == b:
+                    continue
+                p = probs.get((a, b), 0.0)
+                if p < min_arrow_prob:
+                    continue
+                lw, ms = _scale_arrow_style(p, max_prob)
+
+                # Canonical chord low-index -> high-index defines shared geometry.
+                i_lo, i_hi = (i, j) if i < j else (j, i)
+                x_lo, y_lo = positions[state_order[i_lo]]
+                x_hi, y_hi = positions[state_order[i_hi]]
+                vx_c, vy_c = x_hi - x_lo, y_hi - y_lo
+                norm_c = max(np.hypot(vx_c, vy_c), 1e-9)
+                px, py = -vy_c / norm_c, vx_c / norm_c  # absolute perpendicular
+
+                # Parallel lanes: same absolute curve, split on either side.
+                # FancyArrowPatch rad is relative to travel direction, so the
+                # reverse arrow needs opposite rad to keep the same absolute bulge.
+                going_lo_to_hi = i < j
+                lane = -0.5 if going_lo_to_hi else 0.5
+                ox = lane * float(arrow_pair_offset) * px
+                oy = lane * float(arrow_pair_offset) * py
+                rad = float(arrow_curve_rad) if going_lo_to_hi else -float(arrow_curve_rad)
+
+                x0, y0 = positions[a]
+                x1, y1 = positions[b]
+                shrink = 0.26
+                vx, vy = x1 - x0, y1 - y0
+                norm = max(np.hypot(vx, vy), 1e-9)
+                ux, uy = vx / norm, vy / norm
+                sx0, sy0 = x0 + shrink * ux + ox, y0 + shrink * uy + oy
+                sx1, sy1 = x1 - shrink * ux + ox, y1 - shrink * uy + oy
+
+                arrow = FancyArrowPatch(
+                    (sx0, sy0),
+                    (sx1, sy1),
+                    connectionstyle=f"arc3,rad={rad}",
+                    arrowstyle="-|>",
+                    mutation_scale=ms,
+                    linewidth=lw,
+                    color=state_colors.get(a, line_color),
+                    alpha=0.88,
+                    zorder=2,
+                )
+                ax.add_patch(arrow)
+                if show_prob_labels:
+                    mx = 0.5 * (sx0 + sx1) + lane * 0.55 * float(arrow_pair_offset) * px
+                    my = 0.5 * (sy0 + sy1) + lane * 0.55 * float(arrow_pair_offset) * py
+                    ax.text(
+                        mx,
+                        my,
+                        f"{p:.2f}",
+                        ha="center",
+                        va="center",
+                        fontsize=7,
+                        color=line_color,
+                        zorder=4,
+                        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.65, "pad": 0.6},
+                    )
+
+        for state in state_order:
+            x, y = positions[state]
+            ax.text(
+                x,
+                y,
+                str(state),
+                ha="center",
+                va="center",
+                fontsize=10,
+                fontweight="bold",
+                color=line_color,
+                zorder=5,
+                bbox={
+                    "boxstyle": "round,pad=0.35",
+                    "facecolor": state_colors.get(state, "lightgray"),
+                    "edgecolor": line_color,
+                    "linewidth": 1.0,
+                    "alpha": 0.95,
+                },
+            )
+
+    for ax in axes.ravel()[len(group_order) :]:
+        ax.axis("off")
+
+    if title:
+        fig.suptitle(title, color=line_color, fontsize=12, y=1.02)
+    fig.tight_layout()
+    if save_path is not None:
+        fig.savefig(save_path, format=Path(save_path).suffix.lstrip(".") or "svg", transparent=transparent, bbox_inches="tight")
+    return fig, axes
+
+
+def plot_switch_probability_visual_suite(
+    superwindow_df,
+    transition_df,
+    group_col="superwindow_cluster_name",
+    state_order=None,
+    group_order=None,
+    state_colors=None,
+    probability_col="transition_probability",
+    state_sequence_col="state_sequence",
+    save_dir=None,
+    tag="switch_suite",
+    transparent=True,
+    line_color="black",
+    show_heatmap=True,
+    heatmap_fn=None,
+):
+    """
+    Convenience wrapper: pie-arrow plot + word-arrow plot (+ optional heatmap).
+    """
+    save_dir = Path(save_dir) if save_dir is not None else None
+    pie_path = (save_dir / f"switch_pie_arrows_{tag}.svg") if save_dir else None
+    word_path = (save_dir / f"switch_word_arrows_{tag}.svg") if save_dir else None
+    heat_path = (save_dir / f"switch_heatmap_{tag}.svg") if save_dir else None
+
+    fig_pie, axes_pie = plot_switch_probability_pie_arrows(
+        superwindow_df=superwindow_df,
+        transition_df=transition_df,
+        group_col=group_col,
+        state_order=state_order,
+        group_order=group_order,
+        state_colors=state_colors,
+        probability_col=probability_col,
+        state_sequence_col=state_sequence_col,
+        save_path=pie_path,
+        transparent=transparent,
+        line_color=line_color,
+        title="State composition with boundary switch arrows",
+    )
+    fig_word, axes_word = plot_switch_probability_word_arrows(
+        transition_df=transition_df,
+        group_col=group_col,
+        state_order=state_order,
+        group_order=group_order,
+        state_colors=state_colors,
+        probability_col=probability_col,
+        save_path=word_path,
+        transparent=transparent,
+        line_color=line_color,
+        title="State switch network (arrow size ~ probability)",
+    )
+
+    fig_heat, axes_heat = None, None
+    if show_heatmap:
+        if heatmap_fn is not None:
+            fig_heat, axes_heat = heatmap_fn(
+                transition_df,
+                cluster_col=group_col,
+                state_order=state_order,
+                cluster_order=group_order,
+                probability_col=probability_col,
+                save_path=heat_path,
+                transparent=transparent,
+            )
+        else:
+            import seaborn as sns
+
+            tr = _as_pandas_df(transition_df)
+            state_order_local = list(
+                state_order or sorted(set(tr["from_state"].astype(str)) | set(tr["to_state"].astype(str)))
+            )
+            group_order_local = list(group_order or pd.Series(tr[group_col].dropna().unique()).sort_values())
+            ncols = min(4, max(1, len(group_order_local)))
+            nrows = int(np.ceil(len(group_order_local) / ncols))
+            fig_heat, axes_heat = plt.subplots(nrows, ncols, figsize=(3.8 * ncols, 3.5 * nrows), squeeze=False)
+            for ax, group_value in zip(axes_heat.ravel(), group_order_local):
+                sub = tr.loc[tr[group_col] == group_value]
+                mat = (
+                    sub.pivot_table(index="from_state", columns="to_state", values=probability_col, aggfunc="mean")
+                    .reindex(index=state_order_local, columns=state_order_local)
+                    .fillna(0)
+                )
+                sns.heatmap(
+                    mat,
+                    vmin=0,
+                    vmax=1,
+                    cmap="viridis",
+                    annot=True,
+                    fmt=".2f",
+                    square=True,
+                    linewidths=0.5,
+                    linecolor="white",
+                    cbar_kws={"label": "P(next | current)"},
+                    ax=ax,
+                )
+                for i in range(len(state_order_local)):
+                    ax.add_patch(plt.Rectangle((i, i), 1, 1, fill=False, edgecolor="black", linewidth=2))
+                ax.set_title(str(group_value))
+                ax.set_xlabel("to state")
+                ax.set_ylabel("from state")
+            for ax in axes_heat.ravel()[len(group_order_local) :]:
+                ax.axis("off")
+            fig_heat.tight_layout()
+            if heat_path is not None:
+                fig_heat.savefig(heat_path, format="svg", transparent=transparent, bbox_inches="tight")
+
+    return {
+        "fig_pie": fig_pie,
+        "axes_pie": axes_pie,
+        "fig_word": fig_word,
+        "axes_word": axes_word,
+        "fig_heat": fig_heat,
+        "axes_heat": axes_heat,
+        "paths": {"pie": pie_path, "word": word_path, "heat": heat_path},
+    }
+
+
+# =============================================================================
+# State-change superwindow / whole-track PNG movies
+# =============================================================================
+
+GOLD_RGB = (1.0, 0.84, 0.15)
+STATE_MOVIE_FLASH_MODES = ("lut_whiten", "head_pulse", "track_gold")
+STATE_MOVIE_VIEW_MODES = ("superwindow", "whole_track")
+STATE_MOVIE_FOV_MODES = ("track_crop", "particle", "full")
+STATE_COL_CANDIDATES = (
+    "superwindow_window_state_for_visualization",
+    "transformer_behaviour_state",
+    "transformer_behavior_state",
+    "superwindow_resolved_state",
+    "amalgam_behaviour_state",
+    "final_population",
+)
+TRACK_ID_CANDIDATES = ("unique_id", "original_track_id", "track_id", "particle")
+
+
+def _first_present_column(columns, candidates, kind="column"):
+    cols = set(columns)
+    for name in candidates:
+        if name in cols:
+            return name
+    raise KeyError(f"No {kind} column found. Tried {list(candidates)}")
+
+
+def _as_rgba_tuple(color, alpha=1.0):
+    rgba = mpl.colors.to_rgba(color, alpha=alpha)
+    return tuple(float(v) for v in rgba)
+
+
+def _pulse_envelope(n_frames, kind="triangle"):
+    n = max(1, int(n_frames))
+    if n == 1:
+        return np.array([1.0], dtype=float)
+    x = np.linspace(0.0, 1.0, n)
+    if kind == "cosine":
+        return 0.5 - 0.5 * np.cos(2.0 * np.pi * x)
+    return 1.0 - np.abs(2.0 * x - 1.0)
+
+
+def _whiten_cmap(cmap, amount, name="lut_flash"):
+    amount = float(np.clip(amount, 0.0, 1.0))
+    if amount <= 0:
+        return cmap
+    if isinstance(cmap, str):
+        cmap = plt.get_cmap(cmap)
+    colors = np.asarray(cmap(np.linspace(0.0, 1.0, 256)), dtype=float)
+    colors[:, :3] = colors[:, :3] * (1.0 - amount) + amount
+    return LinearSegmentedColormap.from_list(name, colors)
+
+
+def _sequence_state_stats(states):
+    states = [str(s) for s in list(states) if pd.notna(s)]
+    n = len(states)
+    if n == 0:
+        return {
+            "n_steps": 0,
+            "n_distinct_states": 0,
+            "n_switches": 0,
+            "state_set": "",
+            "entropy": 0.0,
+            "mix_score": 0.0,
+            "dominant_state": None,
+            "dominant_fraction": 0.0,
+        }
+    seen = []
+    for state in states:
+        if state not in seen:
+            seen.append(state)
+    n_switches = int(sum(states[i] != states[i - 1] for i in range(1, n)))
+    counts = pd.Series(states).value_counts(normalize=True)
+    probs = counts.to_numpy(dtype=float)
+    entropy = float(-(probs * np.log(probs + 1e-12)).sum())
+    stats = {
+        "n_steps": n,
+        "n_distinct_states": len(seen),
+        "n_switches": n_switches,
+        "state_set": ",".join(seen),
+        "entropy": entropy,
+        "mix_score": float(n_switches) * (1.0 + entropy),
+        "dominant_state": str(counts.idxmax()),
+        "dominant_fraction": float(counts.max()),
+    }
+    for state, frac in counts.items():
+        stats[f"frac_{state}"] = float(frac)
+    return stats
+
+
+def _copy_unit_metadata(row, columns):
+    return {col: row[col] for col in columns if col in row.index}
+
+
+def summarize_state_units_for_movie(
+    superwindow_df=None,
+    instant_df=None,
+    *,
+    view_mode="superwindow",
+    state_col=None,
+    track_id_col=None,
+    frame_col="frame",
+    state_sequence_col="state_sequence",
+    metadata_cols=None,
+):
+    """
+    Per-superwindow or per-track state composition table for movie filtering.
+
+    ``view_mode='superwindow'`` scores each ``state_sequence``.
+    ``view_mode='whole_track'`` scores each track after de-duplicating frames.
+    """
+    view_mode = str(view_mode).strip().lower()
+    if view_mode not in STATE_MOVIE_VIEW_MODES:
+        raise ValueError(f"view_mode must be one of {STATE_MOVIE_VIEW_MODES}")
+
+    default_meta = [
+        "filename",
+        "condition",
+        "foldername",
+        "geno",
+        "mol",
+        "group",
+        "location",
+        "type",
+        "superwindow_length",
+        "original_track_id",
+        "unique_id",
+    ]
+    metadata_cols = list(metadata_cols or default_meta)
+    rows = []
+
+    if view_mode == "superwindow":
+        if superwindow_df is None:
+            raise ValueError("superwindow_df is required for view_mode='superwindow'")
+        sw = _as_pandas_copy(superwindow_df)
+        if state_sequence_col not in sw.columns:
+            raise KeyError(f"{state_sequence_col!r} not found in superwindow_df")
+        if "superwindow_id" not in sw.columns:
+            raise KeyError("superwindow_df must contain 'superwindow_id'")
+        for _, row in sw.iterrows():
+            stats = _sequence_state_stats(row[state_sequence_col])
+            item = {
+                "unit_id": row["superwindow_id"],
+                "view_mode": view_mode,
+                "track_id": row.get("original_track_id", row.get("unique_id")),
+            }
+            item.update(_copy_unit_metadata(row, metadata_cols))
+            item.update(stats)
+            rows.append(item)
+        return pd.DataFrame(rows)
+
+    if instant_df is None:
+        raise ValueError("instant_df is required for view_mode='whole_track'")
+    instant = _as_pandas_copy(instant_df)
+    track_id_col = track_id_col or _first_present_column(instant.columns, TRACK_ID_CANDIDATES, "track id")
+    state_col = state_col or _first_present_column(instant.columns, STATE_COL_CANDIDATES, "state")
+    if frame_col not in instant.columns:
+        raise KeyError(f"{frame_col!r} not found in instant_df")
+    for track_id, sub in instant.groupby(track_id_col, sort=False):
+        sub = sub.sort_values(frame_col).drop_duplicates(frame_col, keep="last")
+        stats = _sequence_state_stats(sub[state_col])
+        first = sub.iloc[0]
+        item = {
+            "unit_id": track_id,
+            "view_mode": view_mode,
+            "track_id": track_id,
+            "n_frames": int(len(sub)),
+        }
+        item.update(_copy_unit_metadata(first, metadata_cols))
+        item.update(stats)
+        rows.append(item)
+    return pd.DataFrame(rows)
+
+
+def filter_state_units_for_movie(
+    summary_df,
+    *,
+    target_state=None,
+    min_target_fraction=0.0,
+    max_target_fraction=1.0,
+    require_states=None,
+    exclude_states=None,
+    min_n_distinct_states=1,
+    max_n_distinct_states=None,
+    min_n_switches=0,
+    max_n_switches=None,
+    min_steps=None,
+    group_col=None,
+    group_values=None,
+    length=None,
+    length_col="superwindow_length",
+    prefer="most_switches",
+    n_select=1,
+    random_state=0,
+    exclude_ids=None,
+):
+    """
+    Filter and rank the table from ``summarize_state_units_for_movie``.
+
+    ``prefer`` is one of: ``most_switches``, ``most_mixed``, ``most_of_state``,
+    ``longest``, ``fewest_switches``, ``random``.
+    """
+    df = _as_pandas_copy(summary_df)
+    if df.empty:
+        raise ValueError("summary_df is empty")
+    if exclude_ids:
+        skip = {str(x) for x in list(exclude_ids)}
+        df = df.loc[~df["unit_id"].astype(str).isin(skip)].copy()
+        if df.empty:
+            raise ValueError("No units left after exclude_ids")
+
+    if group_col is not None and group_values is not None:
+        if group_col not in df.columns:
+            raise KeyError(f"{group_col!r} not found in summary table")
+        keep = {str(v) for v in list(group_values)}
+        df = df.loc[df[group_col].astype(str).isin(keep)].copy()
+
+    if length is not None and length_col in df.columns:
+        df = df.loc[df[length_col].astype(float) == float(length)].copy()
+
+    if min_steps is not None:
+        step_col = "n_frames" if "n_frames" in df.columns and df["n_frames"].notna().any() else "n_steps"
+        df = df.loc[df[step_col] >= int(min_steps)].copy()
+
+    require_states = [] if require_states is None else [str(s) for s in list(require_states)]
+    exclude_states = [] if exclude_states is None else [str(s) for s in list(exclude_states)]
+
+    def _state_set(value):
+        if pd.isna(value) or value is None:
+            return set()
+        return {part for part in str(value).split(",") if part}
+
+    if require_states:
+        df = df.loc[df["state_set"].map(lambda s: set(require_states).issubset(_state_set(s)))].copy()
+    if exclude_states:
+        df = df.loc[df["state_set"].map(lambda s: _state_set(s).isdisjoint(exclude_states))].copy()
+
+    df = df.loc[
+        (df["n_distinct_states"] >= int(min_n_distinct_states))
+        & (df["n_switches"] >= int(min_n_switches))
+    ].copy()
+    if max_n_distinct_states is not None:
+        df = df.loc[df["n_distinct_states"] <= int(max_n_distinct_states)].copy()
+    if max_n_switches is not None:
+        df = df.loc[df["n_switches"] <= int(max_n_switches)].copy()
+
+    if target_state is not None:
+        frac_col = f"frac_{target_state}"
+        if frac_col not in df.columns:
+            df[frac_col] = 0.0
+        df[frac_col] = df[frac_col].fillna(0.0)
+        df = df.loc[
+            (df[frac_col] >= float(min_target_fraction))
+            & (df[frac_col] <= float(max_target_fraction))
+        ].copy()
+
+    if df.empty:
+        raise ValueError("No units survived the state-composition filters")
+
+    prefer = str(prefer).strip().lower()
+    rng = np.random.default_rng(int(random_state))
+    if prefer == "most_switches":
+        df = df.sort_values(["n_switches", "mix_score", "n_steps"], ascending=False)
+    elif prefer == "most_mixed":
+        df = df.sort_values(["mix_score", "n_distinct_states", "n_switches"], ascending=False)
+    elif prefer == "most_of_state":
+        if target_state is None:
+            raise ValueError("prefer='most_of_state' requires target_state")
+        df = df.sort_values([f"frac_{target_state}", "n_steps"], ascending=False)
+    elif prefer == "longest":
+        length_sort = "n_frames" if "n_frames" in df.columns else "n_steps"
+        df = df.sort_values([length_sort, "n_switches"], ascending=False)
+    elif prefer == "fewest_switches":
+        df = df.sort_values(["n_switches", "n_distinct_states", "n_steps"], ascending=[True, True, False])
+    elif prefer == "random":
+        df = df.sample(frac=1.0, random_state=int(random_state)).reset_index(drop=True)
+    else:
+        raise ValueError(
+            "prefer must be one of: most_switches, most_mixed, most_of_state, "
+            "longest, fewest_switches, random"
+        )
+
+    selected = df.head(int(n_select)).copy() if prefer != "random" else df.iloc[
+        rng.choice(len(df), size=min(int(n_select), len(df)), replace=False)
+    ].copy()
+    return {
+        "summary_df": df.reset_index(drop=True),
+        "selected_df": selected.reset_index(drop=True),
+        "selected_ids": selected["unit_id"].tolist(),
+    }
+
+
+def _map_superwindow_instant(superwindow_df, instant_df, unit_id, pixel_size_um=None, visual_state_col=None):
+    from . import superwindow_workflow as sptsw
+
+    visual_state_col = visual_state_col or "superwindow_window_state_for_visualization"
+    window_state_map = sptsw.build_window_state_map_from_superwindows(
+        superwindow_df,
+        [unit_id],
+        visual_state_col=visual_state_col,
+    )
+    mapped = sptsw.map_window_states_to_instant(
+        instant_df,
+        window_state_map,
+        visual_state_col=visual_state_col,
+        pixel_size_um=pixel_size_um,
+    )
+    return mapped, visual_state_col
+
+
+def _build_frame_track(
+    instant_df,
+    *,
+    view_mode,
+    unit_id,
+    superwindow_df=None,
+    state_col=None,
+    track_id_col=None,
+    frame_col="frame",
+    x_col=None,
+    y_col=None,
+    pixel_size_um=None,
+    overlap_policy="later_window",
+):
+    """Return one row per movie frame with pixel xy and a state label."""
+    if view_mode == "superwindow":
+        mapped, visual_state_col = _map_superwindow_instant(
+            superwindow_df,
+            instant_df,
+            unit_id,
+            pixel_size_um=pixel_size_um,
+            visual_state_col=state_col,
+        )
+        state_col = visual_state_col
+        track = mapped.copy()
+        sort_cols = [c for c in ["position_in_superwindow", frame_col] if c in track.columns]
+        track = track.sort_values(sort_cols)
+        keep = "last" if overlap_policy == "later_window" else "first"
+        track = track.drop_duplicates(frame_col, keep=keep).sort_values(frame_col)
+    else:
+        instant = _as_pandas_copy(instant_df)
+        track_id_col = track_id_col or _first_present_column(instant.columns, TRACK_ID_CANDIDATES, "track id")
+        state_col = state_col or _first_present_column(instant.columns, STATE_COL_CANDIDATES, "state")
+        track = instant.loc[instant[track_id_col].astype(str) == str(unit_id)].copy()
+        if track.empty:
+            raise ValueError(f"unit_id {unit_id!r} not found in instant_df[{track_id_col}]")
+        track = track.sort_values(frame_col).drop_duplicates(frame_col, keep="last")
+
+    if x_col is None:
+        x_col = "x" if "x" in track.columns else "x_um"
+    if y_col is None:
+        y_col = "y" if "y" in track.columns else "y_um"
+    for col in [x_col, y_col, frame_col, state_col]:
+        if col not in track.columns:
+            raise KeyError(f"{col!r} not found after building the frame track")
+
+    track = track.sort_values(frame_col).reset_index(drop=True)
+    x = track[x_col].to_numpy(dtype=float)
+    y = track[y_col].to_numpy(dtype=float)
+    if x_col.endswith("_um") or y_col.endswith("_um"):
+        px = float(pixel_size_um if pixel_size_um is not None else getattr(config, "PIXELSIZE_MICRONS", 0.065))
+        x = x / px
+        y = y / px
+    out = pd.DataFrame(
+        {
+            "frame": track[frame_col].astype(int).to_numpy(),
+            "x": x,
+            "y": y,
+            "state": track[state_col].astype(str).to_numpy(),
+        }
+    )
+    if "time_s" in track.columns:
+        out["time_s"] = track["time_s"].to_numpy(dtype=float)
+    change = np.zeros(len(out), dtype=bool)
+    if len(out) > 1:
+        change[1:] = out["state"].to_numpy()[1:] != out["state"].to_numpy()[:-1]
+    out["is_state_change"] = change
+    out["from_state"] = out["state"].shift(1)
+    out.loc[out["is_state_change"], "change_label"] = (
+        out.loc[out["is_state_change"], "from_state"].astype(str)
+        + " → "
+        + out.loc[out["is_state_change"], "state"].astype(str)
+    )
+    meta_cols = [
+        c
+        for c in ("filename", "condition", "foldername", "geno", "unique_id", "original_track_id", "superwindow_id")
+        if c in track.columns
+    ]
+    return out, track.iloc[0][meta_cols] if meta_cols else pd.Series(dtype=object), state_col
+
+
+def _expand_flash_timeline(track_df, flash_hold_frames=6, envelope="triangle"):
+    weights = _pulse_envelope(flash_hold_frames, kind=envelope)
+    rows = []
+    output_i = 0
+    for source_index, row in track_df.iterrows():
+        n_hold = int(flash_hold_frames) if bool(row["is_state_change"]) else 1
+        local_weights = weights if n_hold > 1 else np.array([0.0])
+        for hold_i in range(n_hold):
+            item = row.to_dict()
+            item["source_index"] = int(source_index)
+            item["output_index"] = output_i
+            item["flash_weight"] = float(local_weights[hold_i] if n_hold > 1 else 0.0)
+            item["is_flash_hold"] = n_hold > 1
+            rows.append(item)
+            output_i += 1
+    return pd.DataFrame(rows)
+
+
+def _smooth_track_coordinates(track_df, smooth=0.0):
+    """Gaussian-smooth x/y in place (same rows, states unchanged). ``smooth`` is sigma in points."""
+    out = track_df.copy()
+    sigma = float(smooth)
+    if sigma <= 0 or len(out) < 3:
+        return out
+    from scipy.ndimage import gaussian_filter1d
+
+    out["x"] = gaussian_filter1d(out["x"].to_numpy(dtype=float), sigma=sigma, mode="nearest")
+    out["y"] = gaussian_filter1d(out["y"].to_numpy(dtype=float), sigma=sigma, mode="nearest")
+    return out
+
+
+def _apply_view_zoom(x0, x1, y0, y1, zoom, image_shape=None):
+    """``zoom>1`` zooms in (smaller FOV). ``zoom<1`` zooms out."""
+    zoom = max(float(zoom), 0.05)
+    xc = 0.5 * (float(x0) + float(x1))
+    yc = 0.5 * (float(y0) + float(y1))
+    half_w = 0.5 * (float(x1) - float(x0)) / zoom
+    half_h = 0.5 * (float(y1) - float(y0)) / zoom
+    half = max(half_w, half_h, 4.0)
+    x0, x1 = xc - half, xc + half
+    y0, y1 = yc - half, yc + half
+    if image_shape is not None:
+        height, width = image_shape[-2:]
+        x0 = max(0.0, x0)
+        y0 = max(0.0, y0)
+        x1 = min(float(width), x1)
+        y1 = min(float(height), y1)
+    return int(np.floor(x0)), int(np.ceil(x1)), int(np.floor(y0)), int(np.ceil(y1))
+
+
+def _track_crop_bounds(x, y, *, pad_px=12, image_shape=None, square=True):
+    x0 = float(np.nanmin(x)) - pad_px
+    x1 = float(np.nanmax(x)) + pad_px
+    y0 = float(np.nanmin(y)) - pad_px
+    y1 = float(np.nanmax(y)) + pad_px
+    if square:
+        width = max(x1 - x0, y1 - y0, 8.0)
+        xc = 0.5 * (x0 + x1)
+        yc = 0.5 * (y0 + y1)
+        x0, x1 = xc - width / 2.0, xc + width / 2.0
+        y0, y1 = yc - width / 2.0, yc + width / 2.0
+    if image_shape is not None:
+        height, width = image_shape[-2:]
+        x0 = max(0.0, x0)
+        y0 = max(0.0, y0)
+        x1 = min(float(width), x1)
+        y1 = min(float(height), y1)
+    return int(np.floor(x0)), int(np.ceil(x1)), int(np.floor(y0)), int(np.ceil(y1))
+
+
+def _particle_crop_bounds(x, y, box_size, image_shape=None):
+    half = int(box_size) // 2
+    xc = int(round(float(x)))
+    yc = int(round(float(y)))
+    x0, x1 = xc - half, xc - half + int(box_size)
+    y0, y1 = yc - half, yc - half + int(box_size)
+    if image_shape is not None:
+        height, width = image_shape[-2:]
+        if x0 < 0:
+            x1 -= x0
+            x0 = 0
+        if y0 < 0:
+            y1 -= y0
+            y0 = 0
+        if x1 > width:
+            x0 = max(0, x0 - (x1 - width))
+            x1 = width
+        if y1 > height:
+            y0 = max(0, y0 - (y1 - height))
+            y1 = height
+    return x0, x1, y0, y1
+
+
+def _safe_raw_movie_path(meta_row, master_dir=None, raw_movie_path=None):
+    if raw_movie_path:
+        return str(raw_movie_path)
+    meta_df = meta_row.to_frame().T if isinstance(meta_row, pd.Series) else _as_pandas_copy(meta_row)
+    candidates = []
+    foldername = _single_value_from_df(meta_df, "foldername")
+    for candidate_master in (foldername, master_dir):
+        if not candidate_master:
+            continue
+        try:
+            path = _resolve_raw_movie_path(meta_df, master_dir=candidate_master)
+        except Exception:
+            continue
+        candidates.append(path)
+        if os.path.exists(path):
+            return path
+    return candidates[0] if candidates else None
+
+
+def _load_raw_frames_for_movie(raw_movie_path, frames):
+    if raw_movie_path is None or not os.path.exists(str(raw_movie_path)):
+        return None, None
+    unique_frames = np.unique(np.asarray(frames, dtype=int))
+    stack = _load_raw_frame_indices(raw_movie_path, unique_frames)
+    if stack.ndim == 2:
+        stack = stack[np.newaxis, ...]
+    frame_to_index = {int(f): i for i, f in enumerate(unique_frames)}
+    return stack, frame_to_index
+
+
+def _add_scale_bar(ax, length_um, pixel_size_um, color="white", linewidth=2.2, fontsize=8):
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    length_px = float(length_um) / float(pixel_size_um)
+    x0 = min(xlim) + 0.08 * abs(xlim[1] - xlim[0])
+    y_span = abs(ylim[1] - ylim[0])
+    # Image-style inverted y: larger y is visually lower.
+    if ylim[0] > ylim[1]:
+        y0 = ylim[0] - 0.10 * y_span
+    else:
+        y0 = ylim[0] + 0.10 * y_span
+    ax.plot(
+        [x0, x0 + length_px],
+        [y0, y0],
+        color=color,
+        lw=linewidth,
+        solid_capstyle="butt",
+        zorder=8,
+        clip_on=True,
+    )
+    ax.text(
+        x0 + 0.5 * length_px,
+        y0,
+        f"{length_um:g} µm",
+        color=color,
+        fontsize=fontsize,
+        ha="center",
+        va="bottom",
+        zorder=8,
+        clip_on=True,
+    )
+
+
+def _hide_axes_chrome(ax):
+    """Seaborn whitegrid otherwise leaves grid/spine strokes on the track."""
+    ax.grid(False)
+    ax.set_axis_off()
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.patch.set_edgecolor("none")
+    ax.patch.set_linewidth(0)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+
+def _curved_polyline(x, y, states, samples_per_seg=1):
+    """Return denser coordinates, keeping the state of the originating segment."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    states = np.asarray(states)
+    n = len(x)
+    samples_per_seg = max(1, int(samples_per_seg))
+    if n < 2 or samples_per_seg == 1:
+        return x, y, states
+    if n < 4:
+        return x, y, states
+    from scipy.interpolate import interp1d
+
+    t = np.arange(n, dtype=float)
+    t_new = np.linspace(0.0, n - 1.0, (n - 1) * samples_per_seg + 1)
+    kind = "cubic"
+    xs = interp1d(t, x, kind=kind, bounds_error=False, fill_value="extrapolate")(t_new)
+    ys = interp1d(t, y, kind=kind, bounds_error=False, fill_value="extrapolate")(t_new)
+    src = np.clip(np.floor(t_new).astype(int), 0, n - 2)
+    return xs, ys, states[src]
+
+
+def _draw_state_colored_trail(
+    ax,
+    vis,
+    *,
+    x0,
+    y0,
+    state_colors,
+    track_linewidth,
+    gold,
+    flash_weight=0.0,
+    draw_gold=False,
+    curve_samples=1,
+):
+    """Draw the full visible trail as connected segments (no frame-gap skips)."""
+    if vis is None or len(vis) < 2:
+        return
+    vx = vis["x"].to_numpy(dtype=float) - float(x0)
+    vy = vis["y"].to_numpy(dtype=float) - float(y0)
+    states = vis["state"].astype(str).to_numpy()
+    vx, vy, states = _curved_polyline(vx, vy, states, samples_per_seg=curve_samples)
+    gold_lw = track_linewidth * (2.4 + 2.6 * flash_weight)
+    gold_alpha = 0.18 + 0.45 * flash_weight
+    for i in range(len(vx) - 1):
+        xs = (vx[i], vx[i + 1])
+        ys = (vy[i], vy[i + 1])
+        if draw_gold and flash_weight > 0:
+            ax.plot(
+                xs,
+                ys,
+                color=(*gold, gold_alpha),
+                lw=gold_lw,
+                solid_capstyle="round",
+                solid_joinstyle="round",
+                zorder=3,
+            )
+        ax.plot(
+            xs,
+            ys,
+            color=state_colors.get(states[i], "0.7"),
+            lw=track_linewidth,
+            solid_capstyle="round",
+            solid_joinstyle="round",
+            zorder=4,
+        )
+
+
+def render_state_change_track_movie(
+    instant_df,
+    unit_id,
+    *,
+    view_mode="superwindow",
+    superwindow_df=None,
+    state_col=None,
+    track_id_col=None,
+    state_colors=None,
+    state_order=None,
+    overlay_on_raw=True,
+    raw_movie_path=None,
+    master_dir=None,
+    use_fiji_lut=False,
+    fiji_lut=None,
+    fiji_lut_name=None,
+    fiji_lut_dir=r"D:\GITHUB_SOFTWARE\Fiji.app\luts",
+    fiji_lut_prefix="JDM",
+    raw_cmap="gray",
+    invert_raw=False,
+    background="black",
+    raw_contrast_limits=None,
+    fov_mode="track_crop",
+    crop_pad_px=16,
+    view_zoom=1.0,
+    box_size=48,
+    overlap_policy="later_window",
+    flash_modes=("head_pulse", "track_gold"),
+    flash_hold_frames=6,
+    flash_envelope="triangle",
+    lut_whiten_amount=0.55,
+    head_base_radius_px=2.2,
+    head_pulse_scale=2.4,
+    gold_color=GOLD_RGB,
+    track_linewidth=2.0,
+    track_smooth=0.0,
+    track_curve=1,
+    trail="cumulative",
+    pixel_size_um=None,
+    frame_interval=None,
+    show_timer=True,
+    show_state_label=True,
+    show_scale_bar=True,
+    scale_bar_length_um=1.0,
+    figsize=None,
+    dpi=160,
+    output_dir=None,
+    png_prefix=None,
+    write_png=True,
+    write_gif=True,
+    fps=20,
+    preview_frames=True,
+    show_plot=False,
+):
+    """
+    Write a PNG-stack movie of one superwindow or whole track, colored by state.
+
+    A state change inserts ``flash_hold_frames`` extra PNGs so the event is visible.
+    ``flash_modes`` can combine:
+
+    - ``lut_whiten``: raw LUT / canvas briefly lifts toward white
+    - ``head_pulse``: current spot grows then shrinks, gold translucent ring
+    - ``track_gold``: whole visible trail gets a gold glow/outline
+
+    ``background`` is ``"black"`` or ``"white"`` and is used only when
+    ``overlay_on_raw`` is False (or the raw TIFF cannot be loaded).
+
+    ``track_linewidth`` is the trail thickness in plot points.
+    ``track_smooth`` is a Gaussian sigma in frames (0 = off).
+    ``track_curve`` is extra cubic samples per segment (1 = straight chords).
+    ``view_zoom`` > 1 zooms in; < 1 zooms out. Also use ``crop_pad_px`` /
+    ``box_size`` for FOV.
+    """
+    view_mode = str(view_mode).strip().lower()
+    fov_mode = str(fov_mode).strip().lower()
+    if view_mode not in STATE_MOVIE_VIEW_MODES:
+        raise ValueError(f"view_mode must be one of {STATE_MOVIE_VIEW_MODES}")
+    if fov_mode not in STATE_MOVIE_FOV_MODES:
+        raise ValueError(f"fov_mode must be one of {STATE_MOVIE_FOV_MODES}")
+    if isinstance(flash_modes, str):
+        flash_modes = (flash_modes,)
+    flash_modes = tuple(str(m).strip().lower() for m in flash_modes)
+    unknown = [m for m in flash_modes if m not in STATE_MOVIE_FLASH_MODES]
+    if unknown:
+        raise ValueError(f"Unknown flash_modes {unknown}. Use {STATE_MOVIE_FLASH_MODES}")
+    if trail not in {"cumulative", "current_state"}:
+        raise ValueError("trail must be 'cumulative' or 'current_state'")
+    background = str(background).strip().lower()
+    if background not in {"black", "white"}:
+        raise ValueError("background must be 'black' or 'white'")
+
+    pixel_size_um = float(pixel_size_um if pixel_size_um is not None else getattr(config, "PIXELSIZE_MICRONS", 0.065))
+    frame_interval = float(frame_interval if frame_interval is not None else getattr(config, "TIME_BETWEEN_FRAMES", 0.01))
+
+    track_df, meta_row, used_state_col = _build_frame_track(
+        instant_df,
+        view_mode=view_mode,
+        unit_id=unit_id,
+        superwindow_df=superwindow_df,
+        state_col=state_col,
+        track_id_col=track_id_col,
+        pixel_size_um=pixel_size_um,
+        overlap_policy=overlap_policy,
+    )
+    if track_df.empty:
+        raise ValueError(f"No frames available for unit_id={unit_id!r}")
+
+    track_df = _smooth_track_coordinates(track_df, smooth=track_smooth)
+    track_df = track_df.reset_index(drop=True)
+
+    timeline = _expand_flash_timeline(
+        track_df, flash_hold_frames=flash_hold_frames, envelope=flash_envelope
+    )
+
+    observed_states = [s for s in (state_order or []) if s in set(track_df["state"])]
+    observed_states += [s for s in pd.unique(track_df["state"]) if s not in observed_states]
+    if state_colors is None:
+        cmap = plt.get_cmap("Dark2")
+        state_colors = {
+            state: mpl.colors.to_hex(cmap(i / max(len(observed_states) - 1, 1)))
+            for i, state in enumerate(observed_states)
+        }
+
+    resolved_raw_path = None
+    raw_stack = None
+    frame_to_index = None
+    raw_lut_obj = None
+    if overlay_on_raw:
+        if use_fiji_lut and fiji_lut is None:
+            try:
+                lut_dict, chosen = load_fiji_lut_collection(
+                    lut_dir=fiji_lut_dir,
+                    prefix=fiji_lut_prefix,
+                    default_lut_name=fiji_lut_name or "JDM_Ink Wash Yellow",
+                )
+                raw_lut_obj = lut_dict.get(fiji_lut_name, chosen) if fiji_lut_name else chosen
+            except Exception as exc:
+                print(f"[state-movie] Fiji LUT load failed ({exc}); falling back to {raw_cmap!r}")
+        else:
+            raw_lut_obj = fiji_lut
+        resolved_raw_path = _safe_raw_movie_path(meta_row, master_dir=master_dir, raw_movie_path=raw_movie_path)
+        raw_stack, frame_to_index = _load_raw_frames_for_movie(resolved_raw_path, track_df["frame"])
+        if raw_stack is None:
+            print(f"[state-movie] Raw movie not found ({resolved_raw_path}); drawing track only.")
+            overlay_on_raw = False
+
+    image_shape = None if raw_stack is None else raw_stack.shape
+    xs = track_df["x"].to_numpy(dtype=float)
+    ys = track_df["y"].to_numpy(dtype=float)
+    if fov_mode == "full" and image_shape is not None:
+        height, width = image_shape[-2:]
+        crop = (0, int(width), 0, int(height))
+    elif fov_mode == "particle":
+        crop = None
+    else:
+        crop = _track_crop_bounds(xs, ys, pad_px=crop_pad_px, image_shape=image_shape, square=True)
+        if float(view_zoom) != 1.0:
+            crop = _apply_view_zoom(*crop, zoom=view_zoom, image_shape=image_shape)
+
+    if output_dir is None:
+        tag = f"{view_mode}_{unit_id}"
+        output_dir = os.path.join(str(master_dir or getattr(config, "MASTER", ".")), "movies", "state_change", tag)
+    output_dir = str(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    if png_prefix is None:
+        png_prefix = f"{view_mode}_{unit_id}".replace(os.sep, "_")
+
+    base_cmap = _coerce_lut_colormap(raw_lut_obj, target="matplotlib", fallback=raw_cmap)
+    gold = _as_rgba_tuple(gold_color, alpha=1.0)[:3]
+    if overlay_on_raw:
+        text_color = "black" if invert_raw else "white"
+    else:
+        text_color = "black" if background == "white" else "white"
+    canvas_rgb = (1.0, 1.0, 1.0) if background == "white" else (0.0, 0.0, 0.0)
+    png_paths = []
+    gif_frames = []
+
+    for _, shot in timeline.iterrows():
+        end_i = int(shot["source_index"]) if "source_index" in shot else int(shot.name)
+        vis = track_df.iloc[: end_i + 1]
+        if trail == "current_state":
+            vis = vis.loc[vis["state"] == shot["state"]]
+        weight = float(shot["flash_weight"])
+        frame_i = int(shot["frame"])
+        head_x = float(vis["x"].iloc[-1]) if len(vis) else float(shot["x"])
+        head_y = float(vis["y"].iloc[-1]) if len(vis) else float(shot["y"])
+
+        if fov_mode == "particle":
+            particle_box = max(8.0, float(box_size) / max(float(view_zoom), 0.05))
+            x0, x1, y0, y1 = _particle_crop_bounds(head_x, head_y, particle_box, image_shape=image_shape)
+        else:
+            x0, x1, y0, y1 = crop
+
+        crop_w = max(8, x1 - x0)
+        crop_h = max(8, y1 - y0)
+        if figsize is None:
+            fig_w = max(3.0, crop_w / float(dpi) * 2.2)
+            fig_h = max(3.0, crop_h / float(dpi) * 2.2)
+        else:
+            fig_w, fig_h = figsize
+
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
+        fig.patch.set_edgecolor("none")
+        if overlay_on_raw and raw_stack is not None:
+            raw = raw_stack[frame_to_index[frame_i]]
+            raw_crop = raw[max(y0, 0):max(y1, 0), max(x0, 0):max(x1, 0)]
+            if raw_crop.size == 0:
+                raw_crop = np.zeros((crop_h, crop_w), dtype=float)
+            raw_norm = _normalize_raw_image(
+                raw_crop, contrast_limits=raw_contrast_limits, invert_image=invert_raw
+            )
+            cmap_now = base_cmap
+            if "lut_whiten" in flash_modes and weight > 0:
+                cmap_now = _whiten_cmap(base_cmap, lut_whiten_amount * weight)
+            ax.imshow(raw_norm, cmap=cmap_now, origin="upper", zorder=0, interpolation="nearest")
+            if "lut_whiten" in flash_modes and weight > 0:
+                veil_h, veil_w = raw_norm.shape[:2]
+                ax.imshow(
+                    np.ones((max(veil_h, 1), max(veil_w, 1), 4))
+                    * np.array([1.0, 1.0, 1.0, 0.22 * weight], dtype=float),
+                    origin="upper",
+                    interpolation="nearest",
+                    zorder=1,
+                )
+            face = None
+        else:
+            face = canvas_rgb
+            if "lut_whiten" in flash_modes and weight > 0:
+                face = tuple(
+                    np.clip(
+                        np.array(canvas_rgb) * (1.0 - lut_whiten_amount * weight)
+                        + lut_whiten_amount * weight,
+                        0,
+                        1,
+                    )
+                )
+            ax.set_facecolor(face)
+            fig.patch.set_facecolor(face)
+
+        _draw_state_colored_trail(
+            ax,
+            vis,
+            x0=x0,
+            y0=y0,
+            state_colors=state_colors,
+            track_linewidth=track_linewidth,
+            gold=gold,
+            flash_weight=weight,
+            draw_gold=("track_gold" in flash_modes),
+            curve_samples=track_curve,
+        )
+
+        hx, hy = head_x - float(x0), head_y - float(y0)
+        head_color = state_colors.get(str(shot["state"]), "0.85")
+        radius = head_base_radius_px * (1.0 + head_pulse_scale * weight) if "head_pulse" in flash_modes else head_base_radius_px
+        if "head_pulse" in flash_modes and weight > 0:
+            ring = plt.Circle(
+                (hx, hy),
+                radius=radius * 1.55,
+                facecolor=(*gold, 0.10 + 0.18 * weight),
+                edgecolor=(*gold, 0.40 + 0.45 * weight),
+                linewidth=2.0,
+                zorder=5,
+            )
+            ax.add_patch(ring)
+        ax.add_patch(
+            plt.Circle(
+                (hx, hy),
+                radius=radius,
+                facecolor=_as_rgba_tuple(head_color, alpha=1.0),
+                edgecolor="none",
+                linewidth=0,
+                zorder=6,
+            )
+        )
+
+        ax.set_xlim(0, crop_w)
+        ax.set_ylim(crop_h, 0)
+        ax.set_aspect("equal", adjustable="box")
+        _hide_axes_chrome(ax)
+
+        if show_timer:
+            t_s = float(shot["time_s"]) if "time_s" in shot and pd.notna(shot["time_s"]) else frame_i * frame_interval
+            ax.text(0.03, 0.96, f"{t_s:.2f} s", transform=ax.transAxes, color=text_color, fontsize=9, va="top")
+        if show_state_label:
+            label = str(shot["state"])
+            if weight > 0 and pd.notna(shot.get("change_label")):
+                label = str(shot["change_label"])
+            ax.text(0.03, 0.04, label, transform=ax.transAxes, color=text_color, fontsize=9, va="bottom")
+        if show_scale_bar:
+            _add_scale_bar(ax, scale_bar_length_um, pixel_size_um, color=text_color)
+
+        save_face = face if face is not None else "black"
+        save_kwargs = dict(
+            dpi=dpi,
+            bbox_inches="tight",
+            pad_inches=0.02,
+            facecolor=save_face,
+            edgecolor="none",
+        )
+        if write_png:
+            out_path = os.path.join(output_dir, f"{png_prefix}_f{frame_i:05d}_k{int(shot['output_index']):05d}.png")
+            fig.savefig(out_path, **save_kwargs)
+            png_paths.append(out_path)
+        if write_gif:
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", **save_kwargs)
+            buf.seek(0)
+            gif_frames.append(imageio.imread(buf))
+        plt.close(fig)
+
+    gif_path = None
+    if write_gif and gif_frames:
+        gif_path = os.path.join(output_dir, f"{png_prefix}.gif")
+        try:
+            imageio.mimsave(gif_path, gif_frames, fps=int(fps), loop=0)
+        except Exception as exc:
+            print(f"[state-movie] GIF write failed ({exc}).")
+            gif_path = None
+
+    preview = []
+    n_out = len(png_paths) if png_paths else len(gif_frames)
+    if preview_frames and n_out:
+        change_rows = timeline.index[timeline["is_state_change"]].tolist()
+        picks = [0, n_out // 2, n_out - 1]
+        if change_rows:
+            picks.insert(1, int(timeline.loc[change_rows[0], "output_index"]))
+        picks = [i for i in sorted(set(picks)) if 0 <= i < n_out]
+        if png_paths:
+            preview = [png_paths[i] for i in picks]
+        elif gif_path:
+            preview = [gif_path]
+        if show_plot:
+            try:
+                from IPython.display import Image, display
+
+                for path in preview:
+                    display(Image(filename=path))
+            except Exception:
+                pass
+
+    result = {
+        "output_dir": output_dir,
+        "png_paths": png_paths,
+        "gif_path": gif_path,
+        "preview_paths": preview,
+        "n_frames": int(len(track_df)),
+        "n_pngs": int(len(png_paths)),
+        "n_state_changes": int(track_df["is_state_change"].sum()),
+        "unit_id": unit_id,
+        "view_mode": view_mode,
+        "state_col": used_state_col,
+        "flash_modes": flash_modes,
+        "raw_movie_path": resolved_raw_path,
+        "overlay_on_raw": overlay_on_raw,
+        "track_df": track_df,
+        "timeline_df": timeline,
+        "meta": meta_row,
+        "state_colors": state_colors,
+    }
+    print(
+        f"[state-movie] {view_mode} {unit_id}: "
+        f"{len(png_paths)} PNGs, {len(gif_frames)} GIF frames, "
+        f"{int(track_df['is_state_change'].sum())} state changes → {output_dir}"
+    )
+    return result
+
+
+def make_state_change_track_movie(
+    instant_df,
+    superwindow_df=None,
+    *,
+    view_mode="superwindow",
+    unit_id=None,
+    state_col=None,
+    track_id_col=None,
+    target_state=None,
+    min_target_fraction=0.0,
+    max_target_fraction=1.0,
+    require_states=None,
+    exclude_states=None,
+    min_n_distinct_states=1,
+    max_n_distinct_states=None,
+    min_n_switches=1,
+    max_n_switches=None,
+    min_steps=None,
+    group_col=None,
+    group_values=None,
+    length=None,
+    prefer="most_switches",
+    n_select=1,
+    random_state=0,
+    exclude_ids=None,
+    state_colors=None,
+    state_order=None,
+    **render_kwargs,
+):
+    """
+    Filter tracks/superwindows by state composition, then render PNG movies.
+
+    Filtering knobs live at the top; remaining keywords go to
+    ``render_state_change_track_movie``.
+    """
+    summary = summarize_state_units_for_movie(
+        superwindow_df=superwindow_df,
+        instant_df=instant_df,
+        view_mode=view_mode,
+        state_col=state_col,
+        track_id_col=track_id_col,
+    )
+    if unit_id is not None:
+        picked = summary.loc[summary["unit_id"].astype(str) == str(unit_id)].copy()
+        if picked.empty:
+            raise ValueError(f"unit_id {unit_id!r} was not found in the {view_mode} summary")
+        filtered = {"summary_df": summary, "selected_df": picked, "selected_ids": [picked.iloc[0]["unit_id"]]}
+    else:
+        filtered = filter_state_units_for_movie(
+            summary,
+            target_state=target_state,
+            min_target_fraction=min_target_fraction,
+            max_target_fraction=max_target_fraction,
+            require_states=require_states,
+            exclude_states=exclude_states,
+            min_n_distinct_states=min_n_distinct_states,
+            max_n_distinct_states=max_n_distinct_states,
+            min_n_switches=min_n_switches,
+            max_n_switches=max_n_switches,
+            min_steps=min_steps,
+            group_col=group_col,
+            group_values=group_values,
+            length=length,
+            prefer=prefer,
+            n_select=n_select,
+            random_state=random_state,
+            exclude_ids=exclude_ids,
+        )
+
+    movies = []
+    base_output_dir = render_kwargs.pop("output_dir", None)
+    for chosen_id in filtered["selected_ids"]:
+        this_dir = None
+        if base_output_dir is not None:
+            this_dir = os.path.join(str(base_output_dir), str(chosen_id).replace(os.sep, "_"))
+        movies.append(
+            render_state_change_track_movie(
+                instant_df,
+                chosen_id,
+                view_mode=view_mode,
+                superwindow_df=superwindow_df,
+                state_col=state_col,
+                track_id_col=track_id_col,
+                state_colors=state_colors,
+                state_order=state_order,
+                output_dir=this_dir,
+                **render_kwargs,
+            )
+        )
+    return {
+        "summary_df": filtered["summary_df"],
+        "selected_df": filtered["selected_df"],
+        "selected_ids": filtered["selected_ids"],
+        "movies": movies,
     }

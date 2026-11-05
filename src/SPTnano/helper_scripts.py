@@ -1680,6 +1680,418 @@ def create_master_dataframes_polars(master_dir, instant_df_name="instant_df_proc
     return master_instant_df, master_windowed_df
 
 
+NEW_R3_MASTER_FOLDERS_202605 = {
+    "5_6_2026_ventral_kinesinRUES2_HTT72CAG_HTTKO_group-wtkomt_10ms_analyze",
+    "5_5_2026_KinesinCorticalNeurons_group-noco_analyze",
+    "5_7_2026_HTTinCortical_HTT_20H20S_group-noco_analyze",
+    "5_5_2026_KinesinCorticalNeurons_group-wtkomt_10ms_analyze",
+    "5_7_2026_HTTinVentral_HTT_20H20S_group-noco_analyze",
+    "5_6_2026_ventral_kinesinRUES2_10ms_group-noco_analyze",
+    "4_2_2026_HTTEScells_group-noco_analyze",
+    "4_2_2026_KinesinEScells_group-noco_analyze",
+    "4_1_2026_endogenousHTTvsoverexpressedHTT_group-endoH_analyze",
+}
+
+
+def extract_nocodazole_concentration(filename):
+    """
+    Extract nocodazole concentration from filenames containing noco-<dose>ngml.
+    """
+    match = re.search(r"noco-([0-9]+ngml)", str(filename), flags=re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return "none"
+
+
+def _stable_id_part(value):
+    """
+    Convert one metadata value into a stable ASCII-safe ID component.
+    """
+    if value is None:
+        return "na"
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return "na"
+    text = text.replace("\\", "/")
+    text = re.sub(r"[^A-Za-z0-9]+", "-", text)
+    text = re.sub(r"-+", "-", text).strip("-")
+    return text or "na"
+
+
+def _folder_basename_expr():
+    return (
+        pl.col("foldername")
+        .cast(pl.Utf8)
+        .str.replace_all(r"[\\/]+$", "")
+        .str.extract(r"([^\\/]+)$", 1)
+        .fill_null("unknown-folder")
+    )
+
+
+def create_global_unique_id_polars(df):
+    """
+    Replace local track IDs with a globally stable track ID.
+
+    The old preprocessing used file_id + particle, where file_id was only a
+    categorical code within the dataframe currently being processed. This makes
+    that local ID traceable as source_unique_id, then builds unique_id from
+    stable source metadata plus the particle/source ID.
+    """
+    if df is None or "unique_id" not in df.columns:
+        return df
+
+    out = df
+    if "source_unique_id" not in out.columns:
+        out = out.with_columns(
+            pl.col("unique_id").cast(pl.Utf8).alias("source_unique_id")
+        )
+
+    if "foldername" in out.columns:
+        out = out.with_columns(_folder_basename_expr().alias("source_folder"))
+    elif "source_folder" not in out.columns:
+        out = out.with_columns(pl.lit("unknown-folder").alias("source_folder"))
+
+    component_columns = ["source_folder"]
+    for col in ("condition", "filename", "replicate", "particle", "source_unique_id"):
+        if col in out.columns:
+            component_columns.append(col)
+
+    return out.with_columns(
+        pl.struct(component_columns)
+        .map_elements(
+            lambda row: "uid__"
+            + "__".join(
+                f"{col}-{_stable_id_part(row[col])}" for col in component_columns
+            ),
+            return_dtype=pl.Utf8,
+        )
+        .alias("unique_id")
+    )
+
+
+def load_dataframe_with_metadata_polars_202605_r3(
+    folder_path,
+    dataframe_name,
+    parent_folder_path,
+    new_r3_folders=None,
+    replicate_value="R3",
+):
+    """
+    Load a single dataframe with the original Polars metadata behavior plus
+    2026-05 additions:
+
+    - nocodazole_concentration parsed from filename values like noco-50ngml
+    - replicate/rep preservation, with exact new-data folders set to R3
+    - globally stable unique_id values derived from source folder, condition,
+      filename, replicate, particle, and the old local source_unique_id
+
+    The original load_dataframe_with_metadata_polars function is intentionally
+    left unchanged for compatibility.
+    """
+    csv_path = os.path.join(folder_path, f"{dataframe_name}.csv")
+
+    if not os.path.exists(csv_path):
+        print(f"Warning: {csv_path} not found")
+        return None
+
+    new_r3_folders = set(new_r3_folders or NEW_R3_MASTER_FOLDERS_202605)
+
+    try:
+        df = pl.read_csv(csv_path)
+
+        folder_name_with_slash = parent_folder_path + ('' if parent_folder_path.endswith(('\\', '/')) else '\\')
+        df = df.with_columns(pl.lit(folder_name_with_slash).alias("foldername"))
+
+        folder_basename = os.path.basename(parent_folder_path.rstrip('\\/'))
+        is_new_r3_folder = folder_basename in new_r3_folders
+
+        group = extract_metadata_from_foldername(folder_basename)
+        df = df.with_columns(pl.lit(group).alias("group"))
+
+        if "condition" in df.columns:
+            sample_condition = df.select("condition").head(1).to_pandas().iloc[0, 0]
+            metadata_keys = extract_metadata_from_condition(sample_condition)
+
+            for key in ['cell', 'type', 'mol', 'geno']:
+                if key in metadata_keys:
+                    pattern = f"{key}-([^_]+)"
+                    df = df.with_columns(
+                        pl.col("condition")
+                        .str.extract(pattern, 1)
+                        .fill_null("Unknown")
+                        .alias(key)
+                    )
+                else:
+                    df = df.with_columns(pl.lit("Unknown").alias(key))
+        else:
+            for key in ['cell', 'type', 'mol', 'geno']:
+                df = df.with_columns(pl.lit("Unknown").alias(key))
+
+        if "filename" in df.columns:
+            df = df.with_columns(
+                pl.col("filename")
+                .map_elements(extract_location, return_dtype=pl.Utf8)
+                .alias("location")
+            )
+            df = df.with_columns(
+                pl.col("filename")
+                .map_elements(extract_nocodazole_concentration, return_dtype=pl.Utf8)
+                .alias("nocodazole_concentration")
+            )
+
+            # Some newer processed CSVs use compact condition strings like
+            # "Condition_Ventral_RUES2_kinesin_10ms"; recover metadata from filename.
+            type_from_filename = pl.col("filename").str.extract(r"type-([^_]+)", 1)
+            mol_from_filename = pl.col("filename").str.extract(r"mol-([^_]+)", 1)
+            geno_from_filename = pl.col("filename").str.extract(r"geno-([^_]+)", 1)
+
+            df = df.with_columns([
+                pl.when((pl.col("type").cast(pl.Utf8) == "Unknown") & type_from_filename.is_not_null())
+                .then(type_from_filename)
+                .otherwise(pl.col("type"))
+                .alias("type"),
+                pl.when((pl.col("mol").cast(pl.Utf8) == "Unknown") & mol_from_filename.is_not_null())
+                .then(mol_from_filename)
+                .otherwise(pl.col("mol"))
+                .alias("mol"),
+                pl.when((pl.col("geno").cast(pl.Utf8) == "Unknown") & geno_from_filename.is_not_null())
+                .then(geno_from_filename)
+                .otherwise(pl.col("geno"))
+                .alias("geno"),
+            ])
+
+            df = df.with_columns(
+                pl.when(
+                    (pl.col("cell").cast(pl.Utf8) == "Unknown")
+                    & pl.col("type").cast(pl.Utf8).is_in(["cort", "vent"])
+                )
+                .then(pl.lit("neuron"))
+                .when((pl.col("cell").cast(pl.Utf8) == "Unknown") & (pl.col("type").cast(pl.Utf8) == "ES"))
+                .then(pl.lit("ES"))
+                .otherwise(pl.col("cell"))
+                .alias("cell")
+            )
+
+            legacy_metadata_updates = []
+            if "molecule" in df.columns:
+                legacy_metadata_updates.append(
+                    pl.when(pl.col("molecule").cast(pl.Utf8) == "Unknown")
+                    .then(pl.col("mol"))
+                    .otherwise(pl.col("molecule"))
+                    .alias("molecule")
+                )
+            if "genotype" in df.columns:
+                legacy_metadata_updates.append(
+                    pl.when(pl.col("genotype").cast(pl.Utf8) == "Unknown")
+                    .then(pl.col("geno"))
+                    .otherwise(pl.col("genotype"))
+                    .alias("genotype")
+                )
+            if "cell_type" in df.columns:
+                legacy_metadata_updates.append(
+                    pl.when(pl.col("cell_type").cast(pl.Utf8) == "Unknown")
+                    .then(pl.col("cell"))
+                    .otherwise(pl.col("cell_type"))
+                    .alias("cell_type")
+                )
+            if legacy_metadata_updates:
+                df = df.with_columns(legacy_metadata_updates)
+        else:
+            df = df.with_columns([
+                pl.lit("Unknown").alias("location"),
+                pl.lit("none").alias("nocodazole_concentration"),
+            ])
+
+        replicate_source_column = None
+        for candidate in ("replicate", "rep", "replicate_number"):
+            if candidate in df.columns:
+                replicate_source_column = candidate
+                break
+
+        if replicate_source_column is None:
+            df = df.with_columns(pl.lit("none").alias("replicate"))
+        else:
+            df = df.with_columns(pl.col(replicate_source_column).cast(pl.Utf8).alias("replicate"))
+            extra_replicate_columns = [
+                col for col in ("rep", "replicate_number")
+                if col in df.columns and col != "replicate"
+            ]
+            if extra_replicate_columns:
+                df = df.drop(extra_replicate_columns)
+
+        if is_new_r3_folder:
+            df = df.with_columns(pl.lit(replicate_value).alias("replicate"))
+
+
+        df = df.with_columns(
+            pl.struct(["cell", "type", "mol", "geno", "group"])
+            .map_elements(
+                lambda x: create_identifier_polars(
+                    x["cell"], x["type"], x["mol"], x["geno"], x["group"]
+                ),
+                return_dtype=pl.Utf8
+            )
+            .alias("identifier")
+        )
+
+        df = create_global_unique_id_polars(df)
+        df = fix_window_uid_polars(df)
+
+        return df
+
+    except Exception as e:
+        print(f"Error loading {csv_path}: {e}")
+        return None
+
+
+def create_master_dataframes_polars_202605_r3(
+    master_dir,
+    instant_df_name="instant_df_processed",
+    windowed_df_name="time_windowed_df_processed",
+    new_r3_folders=None,
+    replicate_value="R3",
+):
+    """
+    Create master instant and windowed dataframes using the original Polars
+    workflow plus 2026-05 R3/nocodazole metadata additions.
+
+    The original create_master_dataframes_polars function is preserved unchanged.
+    """
+    print(f"Scanning master directory: {master_dir}")
+
+    new_r3_folders = set(new_r3_folders or NEW_R3_MASTER_FOLDERS_202605)
+    instant_dataframes = []
+    windowed_dataframes = []
+    seen_folders = set()
+
+    for item in os.listdir(master_dir):
+        item_path = os.path.join(master_dir, item)
+        if os.path.isdir(item_path):
+            saved_data_path = os.path.join(item_path, "saved_data")
+            if os.path.exists(saved_data_path) and os.path.isdir(saved_data_path):
+                seen_folders.add(item)
+                r3_marker = " [new R3]" if item in new_r3_folders else ""
+                print(f"Processing folder: {item}{r3_marker}")
+
+                instant_df = load_dataframe_with_metadata_polars_202605_r3(
+                    saved_data_path,
+                    instant_df_name,
+                    item_path,
+                    new_r3_folders=new_r3_folders,
+                    replicate_value=replicate_value,
+                )
+                if instant_df is not None:
+                    instant_dataframes.append(instant_df)
+                    print(f"  ✓ Loaded {instant_df_name}.csv ({instant_df.shape[0]} rows)")
+
+                windowed_df = load_dataframe_with_metadata_polars_202605_r3(
+                    saved_data_path,
+                    windowed_df_name,
+                    item_path,
+                    new_r3_folders=new_r3_folders,
+                    replicate_value=replicate_value,
+                )
+                if windowed_df is not None:
+                    windowed_dataframes.append(windowed_df)
+                    print(f"  ✓ Loaded {windowed_df_name}.csv ({windowed_df.shape[0]} rows)")
+            else:
+                print(f"  ⚠ No saved_data directory found in {item}")
+
+    missing_new_folders = sorted(new_r3_folders - seen_folders)
+    if missing_new_folders:
+        print("\n⚠ Expected new R3 folders not found:")
+        for folder in missing_new_folders:
+            print(f"  - {folder}")
+
+    master_instant_df = None
+    master_windowed_df = None
+
+    if instant_dataframes:
+        print(f"\nConcatenating {len(instant_dataframes)} instant dataframes...")
+        master_instant_df = pl.concat(instant_dataframes, how="vertical")
+        print(f"Master instant dataframe shape: {master_instant_df.shape}")
+    else:
+        print("No instant dataframes found!")
+
+    if windowed_dataframes:
+        print(f"\nConcatenating {len(windowed_dataframes)} windowed dataframes...")
+        master_windowed_df = pl.concat(windowed_dataframes, how="vertical")
+        print(f"Master windowed dataframe shape: {master_windowed_df.shape}")
+    else:
+        print("No windowed dataframes found!")
+
+    return master_instant_df, master_windowed_df
+
+
+def fix_window_uid_polars(df):
+    """
+    Regenerate window_uid using the current globally stable unique_id plus the
+    window-specific coordinates.
+
+    Preferred new format:
+        unique_id_timeWindow_startFrame_endFrame
+
+    If explicit time/start/end columns are unavailable, this falls back to the
+    last three underscore-delimited fields from the existing window_uid. That
+    keeps old files repairable while avoiding the old assumption that unique_id
+    had exactly two underscore-delimited parts.
+    """
+    if df is None or "window_uid" not in df.columns or "unique_id" not in df.columns:
+        return df
+
+    out = df
+    if "source_window_uid" not in out.columns:
+        out = out.with_columns(
+            pl.col("window_uid").cast(pl.Utf8).alias("source_window_uid")
+        )
+
+    time_col = next(
+        (col for col in ("time_window", "time_window_num", "window_number") if col in out.columns),
+        None,
+    )
+    start_col = next(
+        (col for col in ("start_frame", "frame_start") if col in out.columns),
+        None,
+    )
+    end_col = next(
+        (col for col in ("end_frame", "frame_end") if col in out.columns),
+        None,
+    )
+
+    if time_col and start_col and end_col:
+        return out.with_columns(
+            (
+                pl.col("unique_id").cast(pl.Utf8)
+                + "_"
+                + pl.col(time_col).cast(pl.Int64).cast(pl.Utf8)
+                + "_"
+                + pl.col(start_col).cast(pl.Int64).cast(pl.Utf8)
+                + "_"
+                + pl.col(end_col).cast(pl.Int64).cast(pl.Utf8)
+            ).alias("window_uid")
+        )
+
+    return (
+        out.with_columns(
+            pl.col("source_window_uid")
+            .cast(pl.Utf8)
+            .map_elements(
+                lambda value: "_".join(str(value).split("_")[-3:]),
+                return_dtype=pl.Utf8,
+            )
+            .alias("window_parts")
+        )
+        .with_columns(
+            (
+                pl.col("unique_id").cast(pl.Utf8)
+                + "_"
+                + pl.col("window_parts")
+            ).alias("window_uid")
+        )
+        .drop("window_parts")
+    )
+
+
 def save_master_dataframes_polars(master_instant_df, master_windowed_df, save_dir, 
                                   instant_filename="master_instant_df", 
                                   windowed_filename="master_windowed_df",
@@ -1767,6 +2179,145 @@ def load_master_dataframes_polars(save_dir,
         print(f"⚠ Windowed dataframe not found: {windowed_path}")
     
     return master_instant_df, master_windowed_df
+
+
+def merge_population_label(
+    df,
+    population_col="final_population",
+    merge_from="mixed_exploratory_bound",
+    merge_to="fast_exploratory",
+    copy_pandas=True,
+    return_count=False,
+):
+    """
+    Relabel one final_population value in a pandas or Polars dataframe.
+
+    This is useful for merging the old five-class gating label
+    ``mixed_exploratory_bound`` into the four-class ``fast_exploratory`` label.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame or polars.DataFrame
+        Dataframe to relabel.
+    population_col : str, default "final_population"
+        Column containing population labels.
+    merge_from : str, default "mixed_exploratory_bound"
+        Label to replace.
+    merge_to : str, default "fast_exploratory"
+        Replacement label.
+    copy_pandas : bool, default True
+        If True, pandas dataframes are copied before mutation. Polars dataframes
+        are immutable and always return a new dataframe.
+    return_count : bool, default False
+        If True, return ``(new_df, n_relabelled_rows)``.
+
+    Returns
+    -------
+    dataframe or tuple
+        Relabelled dataframe, optionally with the number of rows changed.
+    """
+    if df is None or population_col not in getattr(df, "columns", []):
+        return (df, 0) if return_count else df
+
+    if isinstance(df, pd.DataFrame):
+        out = df.copy() if copy_pandas else df
+        mask = out[population_col].astype(str) == merge_from
+        n_changed = int(mask.sum())
+        if n_changed:
+            out.loc[mask, population_col] = merge_to
+        return (out, n_changed) if return_count else out
+
+    if isinstance(df, pl.DataFrame):
+        n_changed = int((df[population_col].cast(pl.Utf8) == merge_from).sum())
+        if n_changed == 0:
+            return (df, 0) if return_count else df
+        out = df.with_columns(
+            pl.when(pl.col(population_col).cast(pl.Utf8) == merge_from)
+            .then(pl.lit(merge_to))
+            .otherwise(pl.col(population_col))
+            .alias(population_col)
+        )
+        return (out, n_changed) if return_count else out
+
+    return (df, 0) if return_count else df
+
+
+def merge_population_label_in_globals(
+    namespace,
+    dataframe_names=None,
+    population_col="final_population",
+    merge_from="mixed_exploratory_bound",
+    merge_to="fast_exploratory",
+):
+    """
+    Relabel population values in common notebook dataframe globals.
+
+    Parameters
+    ----------
+    namespace : dict
+        Usually ``globals()`` from a notebook.
+    dataframe_names : list of str, optional
+        Specific dataframe global names to try. If None, common analysis table
+        names are tried first and then any remaining pandas/Polars dataframe
+        with ``population_col`` is relabelled.
+
+    Returns
+    -------
+    dict
+        Mapping of dataframe global name to number of relabelled rows.
+    """
+    if dataframe_names is None:
+        dataframe_names = [
+            "master_windowed_df",
+            "master_instant_df",
+            "windowed_df",
+            "instant_df",
+            "train_df",
+            "val_df",
+            "test_df",
+            "test_windowed_df",
+            "test_windowed_df_filtered",
+            "test_instant_df",
+            "test_instant_df_filtered",
+            "test_windowed_df_classified",
+            "windowed_df_classified",
+            "metadata_df",
+            "analysis_metadata",
+            "analysis_metadata_kmeans",
+            "cut_metadata",
+        ]
+
+    counts = {}
+    seen = set()
+
+    def _try_name(name):
+        if name in seen or name not in namespace:
+            return
+        seen.add(name)
+        obj = namespace[name]
+        if population_col not in getattr(obj, "columns", []):
+            return
+        new_obj, n_changed = merge_population_label(
+            obj,
+            population_col=population_col,
+            merge_from=merge_from,
+            merge_to=merge_to,
+            return_count=True,
+        )
+        namespace[name] = new_obj
+        if n_changed:
+            counts[name] = n_changed
+
+    for name in dataframe_names:
+        _try_name(name)
+
+    for name, obj in list(namespace.items()):
+        if name.startswith("_") or name in seen:
+            continue
+        if isinstance(obj, (pd.DataFrame, pl.DataFrame)) and population_col in obj.columns:
+            _try_name(name)
+
+    return counts
 
 
 def print_dataframe_summary_polars(df, df_name):
